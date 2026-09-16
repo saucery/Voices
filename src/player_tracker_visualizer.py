@@ -214,32 +214,27 @@ class PlayerTrackerVisualizer:
         # 1. Detect Player Icon on Minimap (~0.5ms)
         icon_found, icon_x, icon_y, icon_box = self.detect_minimap_player_icon(minimap_crop)
 
-        # 2. Reference Map Localization (Primary high-speed localization: ~2-5ms when locked)
-        loc_res = self.localizer.localize_player(minimap_crop, fast_track=True)
-        has_pos = loc_res.get("player_position") is not None and loc_res.get("confidence", 0.0) >= 0.15
+        # 2. Room Classification & Template Matching (Authoritative Ground-Truth Tracking: ~15-20ms)
+        # RoomClassifier matches live minimap features directly to the master map layout via RANSAC affine transform.
+        room_res = self.classifier.classify(minimap_crop, is_crop=True)
+        self.cached_room_res = room_res
 
-        # 3. Room Classification (Throttled/cached when player position is actively tracked)
-        # Full ORB feature matching takes ~140ms. If localizer is locked onto coordinates,
-        # we can reuse cached room metadata and only run classifier when tracking is lost or once every 30 frames.
-        if not has_pos or self.cached_room_res is None or (self.frame_idx % 30 == 0):
-            room_res = self.classifier.classify(minimap_crop, is_crop=True)
-            self.cached_room_res = room_res
+        # 3. Reference Map Localization (Only run when in Reference Map view or as secondary fallback)
+        if self.view_mode == self.VIEW_REFERENCE_MAP or not room_res.get("character_position"):
+            loc_res = self.localizer.localize_player(minimap_crop, fast_track=True)
         else:
-            room_res = dict(self.cached_room_res)
-            # Synchronize character position with active localizer position
-            if loc_res.get("player_position"):
-                room_res["character_position"] = loc_res["player_position"]
+            loc_res = {"player_position": None, "confidence": 0.0, "matched": False}
 
-        # 4. Dynamic World Map Stitching (Throttled during navigation, runs every 4 frames or when viewing World Map)
-        if self.view_mode == self.VIEW_WORLD_MAP or self.cached_map_res is None or (self.frame_idx % 4 == 0):
+        # 4. Dynamic World Map Stitching (Only run when viewing World Map or throttled)
+        if self.view_mode == self.VIEW_WORLD_MAP or self.cached_map_res is None or (self.frame_idx % 10 == 0):
             map_res = self.world_map.update(minimap_crop)
             self.cached_map_res = map_res
         else:
             map_res = self.cached_map_res
 
         # 5. Closed-loop Autonomous Route Navigation (WASD)
-        # Map localizer is authoritative when locked; room template match serves as fallback
-        curr_player_coords = loc_res.get("player_position") or room_res.get("character_position")
+        # RoomClassifier is authoritative ground-truth; reference map serves as fallback
+        curr_player_coords = room_res.get("character_position") or loc_res.get("player_position")
         nav_res = self.navigator.update(curr_player_coords)
         if nav_res.get("recovery_event"):
             self.notification_msg = nav_res["recovery_event"]

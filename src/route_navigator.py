@@ -2452,8 +2452,10 @@ class RouteNavigator:
         self.last_progress_time = now
         self.last_known_time = now
 
-    def release_all_keys(self):
+    def release_all_keys(self, force: bool = False):
         """Releases all currently held WASD movement keys."""
+        if not self.held_keys and not force and not self.is_simulating_key:
+            return
         self.is_simulating_key = False
         for key in list(self.held_keys):
             if pydirectinput:
@@ -2463,8 +2465,8 @@ class RouteNavigator:
                     pass
         self.held_keys.clear()
 
-        # Extra safety Win32 release for common keys
-        if pydirectinput:
+        # Extra safety Win32 release for common keys only on explicit force
+        if force and pydirectinput:
             for k in ["w", "a", "s", "d"]:
                 try:
                     pydirectinput.keyUp(k)

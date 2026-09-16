@@ -300,6 +300,8 @@ def test_zone_routine_step_execution_orbit_yellow_zone():
         best_zone=mp.orbit_zones[0],
         right_click_interval=0.5,
         zone_label="TEST_ZONE",
+        rolling_enabled=False,
+        rolling_interval=5.0,
     )
 
 

@@ -46,6 +46,8 @@
           "action": "orbit_yellow_zone",
           "duration": 50.0,
           "right_click_interval": 0.75,
+          "rolling_enabled": false,
+          "rolling_interval": 5.0,
           "description": "Orbit inside yellow zone for 50s"
         },
         {
@@ -103,6 +105,8 @@
           "action": "orbit_yellow_zone",
           "duration": 50.0,
           "right_click_interval": 0.75,
+          "rolling_enabled": false,
+          "rolling_interval": 5.0,
           "description": "Orbit inside yellow zone for 50s"
         },
         {
@@ -160,6 +164,8 @@
           "action": "orbit_yellow_zone",
           "duration": 45.0,
           "right_click_interval": 0.75,
+          "rolling_enabled": false,
+          "rolling_interval": 5.0,
           "description": "Orbit inside yellow zone for 45s"
         },
         {
@@ -217,6 +223,8 @@
           "action": "orbit_yellow_zone",
           "duration": 50.0,
           "right_click_interval": 0.75,
+          "rolling_enabled": false,
+          "rolling_interval": 5.0,
           "description": "Orbit inside yellow zone for 50s"
         },
         {
@@ -253,7 +261,9 @@
         {
           "action": "orbit_yellow_zone",
           "duration": 50.0,
-          "right_click_interval": 0.75
+          "right_click_interval": 0.75,
+          "rolling_enabled": false,
+          "rolling_interval": 5.0
         }
       ]
     }

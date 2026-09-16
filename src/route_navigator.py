@@ -346,6 +346,8 @@ class RouteNavigator:
         best_zone: Dict[str, Any],
         right_click_interval: float = 0.75,
         zone_label: str = "ZONE",
+        rolling_enabled: bool = False,
+        rolling_interval: float = 5.0,
     ) -> bool:
         """
         Actively runs character orbit around the yellow zone perimeter for the specified duration.
@@ -384,9 +386,13 @@ class RouteNavigator:
 
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
         self.move_mouse_inside_game()
-        _log(f"    [ACTION] Starting orbit inside yellow shape ({zone_id}) for {duration:.1f}s...")
+        if rolling_enabled:
+            _log(f"    [ACTION] Starting orbit inside yellow shape ({zone_id}) for {duration:.1f}s (ROLLING every {rolling_interval:.1f}s)...")
+        else:
+            _log(f"    [ACTION] Starting orbit inside yellow shape ({zone_id}) for {duration:.1f}s...")
         self.status_message = f"Orbiting Yellow Zone ({duration:.1f}s left)"
 
+        last_roll_time = time.time()
         orbit_start = time.time()
         try:
             while (time.time() - orbit_start) < duration:
@@ -480,6 +486,11 @@ class RouteNavigator:
                 key_str = "+".join(k.upper() for k in sorted(needed_keys))
                 self.status_message = f"[{zone_label}] Orbiting [{key_str}] ({rem:.1f}s left)"
 
+                # Determine if this step should be a roll
+                should_roll = False
+                if rolling_enabled and pydirectinput and (now - last_roll_time) >= rolling_interval:
+                    should_roll = True
+
                 self.is_simulating_key = True
                 try:
                     if pydirectinput:
@@ -488,7 +499,23 @@ class RouteNavigator:
                                 pydirectinput.keyDown(k)
                             except Exception:
                                 pass
-                        time.sleep(self.step_duration)
+
+                        if should_roll:
+                            # Rolling: press SPACE while holding a movement key
+                            time.sleep(0.05)  # brief hold before roll
+                            try:
+                                pydirectinput.keyDown('space')
+                                time.sleep(0.12)  # hold space briefly for roll registration
+                                pydirectinput.keyUp('space')
+                            except Exception:
+                                pass
+                            last_roll_time = now
+                            roll_key_str = "+".join(k.upper() for k in sorted(needed_keys))
+                            _log(f"    [ROLL] Dodge roll [{roll_key_str}+SPACE] at ({current_pos[0]:.0f}, {current_pos[1]:.0f})")
+                            time.sleep(self.step_duration * 0.5)  # shorter hold after roll
+                        else:
+                            time.sleep(self.step_duration)
+
                         for k in needed_keys:
                             try:
                                 pydirectinput.keyUp(k)
@@ -695,6 +722,8 @@ class RouteNavigator:
         elif action == "orbit_yellow_zone":
             orbit_duration = float(step.get("duration", self.orbit_duration))
             rc_interval = float(step.get("right_click_interval", self.orbit_right_click_interval_seconds))
+            roll_enabled = bool(step.get("rolling_enabled", False))
+            roll_interval = float(step.get("rolling_interval", 5.0))
             orbit_zones = self.movement_path.get_orbit_zones() if hasattr(self.movement_path, "get_orbit_zones") else []
             target = context.get("target")
             zone = context.get("zone")
@@ -718,6 +747,8 @@ class RouteNavigator:
                     best_zone=best_zone,
                     right_click_interval=rc_interval,
                     zone_label=zone_label,
+                    rolling_enabled=roll_enabled,
+                    rolling_interval=roll_interval,
                 )
             else:
                 _log(f"    [WARNING] No yellow orbit zone found for {zone_label}. Skipping orbit.")

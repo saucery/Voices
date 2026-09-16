@@ -12,7 +12,11 @@
         },
         {
           "action": "detect_and_click_sims",
-          "priority": ["sim1", "sim3", "sim2"],
+          "priority": [
+            "sim1",
+            "sim3",
+            "sim2"
+          ],
           "click_y_offset": 35,
           "click_x_offset": 0,
           "approach_wait": 2.0,
@@ -35,7 +39,7 @@
         {
           "action": "hold_mouse",
           "button": "middle",
-          "duration": 4.0,
+          "duration": 5.0,
           "description": "Hold middle mouse button for 4.0 seconds"
         },
         {
@@ -65,7 +69,11 @@
         },
         {
           "action": "detect_and_click_sims",
-          "priority": ["sim1", "sim3", "sim2"],
+          "priority": [
+            "sim1",
+            "sim3",
+            "sim2"
+          ],
           "click_y_offset": 35,
           "click_x_offset": 0,
           "approach_wait": 2.0,
@@ -118,7 +126,11 @@
         },
         {
           "action": "detect_and_click_sims",
-          "priority": ["sim1", "sim3", "sim2"],
+          "priority": [
+            "sim1",
+            "sim3",
+            "sim2"
+          ],
           "click_y_offset": 35,
           "click_x_offset": 0,
           "approach_wait": 2.0,
@@ -171,7 +183,11 @@
         },
         {
           "action": "detect_and_click_sims",
-          "priority": ["sim1", "sim3", "sim2"],
+          "priority": [
+            "sim1",
+            "sim3",
+            "sim2"
+          ],
           "click_y_offset": 35,
           "click_x_offset": 0,
           "approach_wait": 2.0,

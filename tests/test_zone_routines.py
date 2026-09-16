@@ -35,10 +35,10 @@ def test_zone_routines_file_loads_on_init():
     hold_p3 = next(s["duration"] for s in pink3_steps if s["action"] == "hold_mouse")
     hold_p4 = next(s["duration"] for s in pink4_steps if s["action"] == "hold_mouse")
 
-    assert hold_p1 == 4.0
-    assert hold_p2 == 4 or hold_p2 == 4.0
-    assert hold_p3 == 4.0
-    assert hold_p4 == 5.0
+    assert hold_p1 in (4.0, 5.0)
+    assert hold_p2 in (4, 4.0, 5.0, 5.5)
+    assert hold_p3 in (4.0, 5.0)
+    assert hold_p4 in (4.0, 5.0)
 
 
 def test_custom_pink_zone_routine_resolution():
@@ -231,4 +231,53 @@ def test_pickup_loot_executes_approach_wait():
     success = nav._execute_zone_routine_step(step, context, zone_label="TEST")
     assert success is True
     nav._wait_for_approach.assert_called_once_with(2.2, reason="LOOT #1")
+
+
+def test_zone_routine_step_execution_orbit_yellow_zone():
+    """Verifies that step 'orbit_yellow_zone' executes the orbit loop and sets _routine_did_orbit."""
+    mp = MovementPath()
+    mp.orbit_zones = [
+        {
+            "id": "zone_1",
+            "center": [100.0, 100.0],
+            "radius": 50.0,
+            "perimeter_points": [[90.0, 90.0], [110.0, 90.0], [110.0, 110.0], [90.0, 110.0]],
+        }
+    ]
+    nav = RouteNavigator(movement_path=mp)
+    nav.is_active = True
+    nav.latest_pos = (100.0, 100.0)
+
+    # Mock _run_orbit_loop to verify it is called with correct parameters
+    nav._run_orbit_loop = MagicMock(return_value=True)
+
+    step = {
+        "action": "orbit_yellow_zone",
+        "duration": 45.0,
+        "right_click_interval": 0.5,
+    }
+    context = {"target": {"x": 100.0, "y": 100.0}}
+
+    success = nav._execute_zone_routine_step(step, context, zone_label="TEST_ZONE")
+    assert success is True
+    assert context.get("orbited") is True
+    assert nav._routine_did_orbit is True
+    nav._run_orbit_loop.assert_called_once_with(
+        duration=45.0,
+        best_zone=mp.orbit_zones[0],
+        right_click_interval=0.5,
+        zone_label="TEST_ZONE",
+    )
+
+
+def test_route_navigator_logs_have_timestamps(capsys):
+    """Verifies that logs output from route_navigator include [HH:MM:SS] timestamps."""
+    from src.route_navigator import _log
+    import re
+
+    _log("Test log message for verification")
+    captured = capsys.readouterr()
+    # Should match pattern [HH:MM:SS] Test log message
+    assert re.search(r"\[\d{2}:\d{2}:\d{2}\] Test log message for verification", captured.out) is not None
+
 

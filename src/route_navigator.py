@@ -10,6 +10,7 @@ import math
 import os
 import time
 import threading
+from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple, Set
 
 import cv2
@@ -32,6 +33,19 @@ from .screen_capturer import ScreenCapturer
 from .stop_handler import stop_handler
 from .window_focus import window_focuser
 
+
+
+def _log(msg: str = "") -> None:
+    """Prints a message prefixed with the current timestamp [HH:MM:SS]."""
+    if not msg:
+        print()
+        return
+    ts = datetime.now().strftime("%H:%M:%S")
+    prefix = ""
+    if msg.startswith("\n"):
+        prefix = "\n"
+        msg = msg[1:]
+    print(f"{prefix}[{ts}] {msg}")
 
 class RouteNavigator:
     """
@@ -92,6 +106,8 @@ class RouteNavigator:
         self.last_held_keys: List[str] = []
         self.latest_recovery_event: Optional[str] = None
         self.is_interacting: bool = False
+        self._routine_did_orbit: bool = False
+        self._log = _log
 
         # Yellow Shape Orbit Navigation State
         self.is_orbiting: bool = False
@@ -202,9 +218,9 @@ class RouteNavigator:
         if keyboard:
             try:
                 keyboard.add_hotkey("f4", self.toggle_pause, suppress=False)
-                print("[NAVIGATOR] Global F4 Pause/Resume listener active.")
+                _log("[NAVIGATOR] Global F4 Pause/Resume listener active.")
             except Exception as e:
-                print(f"[NAVIGATOR] Warning: Could not register global F4 hotkey: {e}")
+                _log(f"[NAVIGATOR] Warning: Could not register global F4 hotkey: {e}")
 
     def _load_sim_templates(self):
         """Loads sim1, sim2, and sim3 template images if present on disk."""
@@ -246,10 +262,10 @@ class RouteNavigator:
                         self.zone_routines = json.load(f)
                     p_count = len(self.zone_routines.get("pink_zones", {}))
                     y_count = len(self.zone_routines.get("yellow_zones", {}))
-                    print(f"[ROUTINES] Loaded custom zone routines from '{candidate}': {p_count} pink zone(s), {y_count} yellow zone(s)")
+                    _log(f"[ROUTINES] Loaded custom zone routines from '{candidate}': {p_count} pink zone(s), {y_count} yellow zone(s)")
                     return True
                 except Exception as e:
-                    print(f"[ROUTINES] Warning: Error parsing '{candidate}': {e}")
+                    _log(f"[ROUTINES] Warning: Error parsing '{candidate}': {e}")
         return False
 
     def _get_pink_zone_routine(self, target: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
@@ -324,6 +340,163 @@ class RouteNavigator:
 
         return None
 
+    def _run_orbit_loop(
+        self,
+        duration: float,
+        best_zone: Dict[str, Any],
+        right_click_interval: float = 0.75,
+        zone_label: str = "ZONE",
+    ) -> bool:
+        """
+        Actively runs character orbit around the yellow zone perimeter for the specified duration.
+        Drives WASD movement, right-click skill execution, and stuck recovery until duration expires.
+        """
+        zone_id = best_zone.get("id", "zone")
+        if zone_id:
+            self.interacted_zones.add(zone_id)
+
+        self.is_orbiting = True
+        self.orbit_start_time = time.time()
+        self.last_orbit_right_click = time.time()
+        self.orbit_duration = duration
+        self.current_orbit_zone = best_zone
+        self.orbit_perimeter_pts = best_zone.get("perimeter_points", [])
+
+        c_pos = self.latest_pos or best_zone.get("center", [0.0, 0.0])
+        if self.orbit_perimeter_pts:
+            best_p_idx = 0
+            best_p_dist = float("inf")
+            for p_i, p_pt in enumerate(self.orbit_perimeter_pts):
+                d = math.hypot(p_pt[0] - c_pos[0], p_pt[1] - c_pos[1])
+                if d < best_p_dist:
+                    best_p_dist = d
+                    best_p_idx = p_i
+            self.orbit_point_idx = best_p_idx
+
+        orbit_grace_until = time.time() + 4.0
+        stuck_counter = 0
+        last_progress_pos = self.latest_pos or c_pos
+        last_progress_time = time.time() + 4.0
+        last_right_click = time.time()
+
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+        self.move_mouse_inside_game()
+        _log(f"    [ACTION] Starting orbit inside yellow shape ({zone_id}) for {duration:.1f}s...")
+        self.status_message = f"Orbiting Yellow Zone ({duration:.1f}s left)"
+
+        orbit_start = time.time()
+        try:
+            while (time.time() - orbit_start) < duration:
+                if stop_handler.is_stopped() or not self.is_active:
+                    _log(f"    [ACTION] Orbit cancelled by stop handler / inactive state.")
+                    return False
+
+                if self.is_paused:
+                    self.release_all_keys()
+                    time.sleep(0.05)
+                    orbit_start += 0.05
+                    continue
+
+                now = time.time()
+                rem = max(0.0, duration - (now - orbit_start))
+
+                # Periodic right-click
+                if self.orbit_constant_right_click_enabled and right_click_interval > 0:
+                    if (now - last_right_click) >= right_click_interval:
+                        last_right_click = now
+                        self.move_mouse_inside_game()
+                        if pydirectinput:
+                            try:
+                                pydirectinput.rightClick()
+                                time.sleep(0.02)
+                                pydirectinput.mouseUp(button="right")
+                            except Exception:
+                                pass
+
+                current_pos = self.latest_pos
+                if current_pos is None:
+                    time.sleep(0.04)
+                    continue
+
+                # Orbiting around perimeter of yellow shape
+                if self.orbit_perimeter_pts:
+                    opt = self.orbit_perimeter_pts[self.orbit_point_idx % len(self.orbit_perimeter_pts)]
+                    dist_opt = math.hypot(opt[0] - current_pos[0], opt[1] - current_pos[1])
+                    orbit_reach_dist = min(13.0, max(9.0, self.arrival_threshold * 0.5))
+                    if dist_opt <= orbit_reach_dist:
+                        self.orbit_point_idx = (self.orbit_point_idx + 1) % len(self.orbit_perimeter_pts)
+                        opt = self.orbit_perimeter_pts[self.orbit_point_idx]
+                        dist_opt = math.hypot(opt[0] - current_pos[0], opt[1] - current_pos[1])
+                    target_pos = (opt[0], opt[1])
+                else:
+                    zc = best_zone.get("center", current_pos)
+                    target_pos = (zc[0], zc[1])
+
+                # Stuck check
+                if now < orbit_grace_until:
+                    stuck_counter = 0
+                    last_progress_pos = current_pos
+                    last_progress_time = now
+                elif last_progress_pos is not None:
+                    dist_moved = math.hypot(current_pos[0] - last_progress_pos[0], current_pos[1] - last_progress_pos[1])
+                    if dist_moved < 4.5:
+                        stuck_counter += 1
+                        if stuck_counter >= self.orbit_stuck_step_limit or (now - last_progress_time) > self.orbit_stuck_timeout_sec:
+                            self._execute_stuck_recovery(reason=f"Stuck at ({current_pos[0]:.0f}, {current_pos[1]:.0f}) - no movement for {stuck_counter} steps during Yellow Orbit")
+                            orbit_grace_until = time.time() + 4.0
+                            stuck_counter = 0
+                            last_progress_pos = current_pos
+                            last_progress_time = time.time() + 4.0
+                            continue
+                    else:
+                        stuck_counter = 0
+                        last_progress_pos = current_pos
+                        last_progress_time = now
+                else:
+                    last_progress_pos = current_pos
+                    last_progress_time = now
+
+                needed_keys = self.compute_wasd_keys(current_pos, target_pos)
+                if not needed_keys:
+                    time.sleep(0.04)
+                    continue
+
+                self.last_held_keys = list(needed_keys)
+                window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+                self.held_keys = set(needed_keys)
+                key_str = "+".join(k.upper() for k in sorted(needed_keys))
+                self.status_message = f"[{zone_label}] Orbiting [{key_str}] ({rem:.1f}s left)"
+
+                self.is_simulating_key = True
+                try:
+                    if pydirectinput:
+                        for k in needed_keys:
+                            try:
+                                pydirectinput.keyDown(k)
+                            except Exception:
+                                pass
+                        time.sleep(self.step_duration)
+                        for k in needed_keys:
+                            try:
+                                pydirectinput.keyUp(k)
+                            except Exception:
+                                pass
+                    else:
+                        time.sleep(self.step_duration)
+                finally:
+                    self.is_simulating_key = False
+                    self.held_keys.clear()
+
+                time.sleep(0.02)
+        finally:
+            self.release_all_keys()
+            self.is_orbiting = False
+            self.current_orbit_zone = None
+            self.orbit_perimeter_pts = []
+
+        _log(f"    [ACTION] Finished orbiting yellow shape ({zone_id}) ({duration:.1f}s elapsed)!")
+        return True
+
     def _execute_zone_routine(
         self,
         routine: Dict[str, Any],
@@ -332,9 +505,10 @@ class RouteNavigator:
         zone: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Executes a list of configured steps for a specific pink or yellow zone."""
+        self._routine_did_orbit = False
         steps = routine.get("steps", [])
         routine_name = routine.get("name", zone_label)
-        print(f"\n[ROUTINE] >>> Starting custom routine '{routine_name}' ({len(steps)} steps) for {zone_label}...")
+        _log(f"\n[ROUTINE] >>> Starting custom routine '{routine_name}' ({len(steps)} steps) for {zone_label}...")
         self.status_message = f"[{zone_label}] Executing Routine..."
         context: Dict[str, Any] = {
             "target": target,
@@ -345,18 +519,18 @@ class RouteNavigator:
 
         for idx, step in enumerate(steps, 1):
             if stop_handler.is_stopped() or not self.is_active:
-                print(f"  [ROUTINE] Stopped during step {idx}/{len(steps)}.")
+                _log(f"  [ROUTINE] Stopped during step {idx}/{len(steps)}.")
                 return False
 
             action = step.get("action", "").lower().strip()
             desc = step.get("description", action)
-            print(f"  [ROUTINE STEP {idx}/{len(steps)}] {desc} (action={action})")
+            _log(f"  [ROUTINE STEP {idx}/{len(steps)}] {desc} (action={action})")
 
             success = self._execute_zone_routine_step(step, context, zone_label=zone_label)
             if not success and (stop_handler.is_stopped() or not self.is_active):
                 return False
 
-        print(f"[ROUTINE] <<< Finished custom routine '{routine_name}' for {zone_label}!\n")
+        _log(f"[ROUTINE] <<< Finished custom routine '{routine_name}' for {zone_label}!\n")
         return True
 
     def _execute_zone_routine_step(
@@ -386,7 +560,7 @@ class RouteNavigator:
             duration = float(step.get("duration", self.middle_click_hold_seconds))
             window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
             self.move_mouse_inside_game()
-            print(f"    [ACTION] Holding mouse '{button}' button for {duration:.1f}s inside game...")
+            _log(f"    [ACTION] Holding mouse '{button}' button for {duration:.1f}s inside game...")
             try:
                 if pydirectinput:
                     pydirectinput.mouseDown(button=button)
@@ -406,7 +580,7 @@ class RouteNavigator:
                     ctypes.windll.user32.mouse_event(flag, 0, 0, 0, 0)
                 except Exception:
                     pass
-                print(f"    [ACTION] Mouse '{button}' button released.")
+                _log(f"    [ACTION] Mouse '{button}' button released.")
             time.sleep(0.1)
             return True
 
@@ -447,7 +621,7 @@ class RouteNavigator:
 
         elif action == "click_encounter_banner":
             if step.get("only_if_no_sims", True) and context.get("sims_clicked", False):
-                print(f"    [STEP] Sims were already selected. Skipping banner click.")
+                _log(f"    [STEP] Sims were already selected. Skipping banner click.")
                 return True
 
             app_wait = float(step.get("approach_wait", self.banner_approach_wait_seconds))
@@ -466,7 +640,7 @@ class RouteNavigator:
 
             if banner_pos is not None:
                 bx, by = self.move_mouse_inside_game(banner_pos[0], banner_pos[1])
-                print(f"    [ACTION] Clicking encounter banner at ({bx}, {by})...")
+                _log(f"    [ACTION] Clicking encounter banner at ({bx}, {by})...")
                 self.status_message = f"[{zone_label}] Clicking Banner ({bx}, {by})"
                 if pydirectinput:
                     pydirectinput.click()
@@ -482,7 +656,7 @@ class RouteNavigator:
                         in_range_pos = self.locate_encounter_banner()
                         if in_range_pos is not None:
                             rx, ry = self.move_mouse_inside_game(in_range_pos[0], in_range_pos[1])
-                            print(f"    [ACTION] Re-clicking encounter banner in-range at ({rx}, {ry})...")
+                            _log(f"    [ACTION] Re-clicking encounter banner in-range at ({rx}, {ry})...")
                             if pydirectinput:
                                 pydirectinput.click()
                                 time.sleep(0.08)
@@ -490,12 +664,13 @@ class RouteNavigator:
                             time.sleep(0.15)
                 context["banner_clicked"] = True
             else:
-                print(f"    [WARNING] Encounter banner not detected on screen.")
+                _log(f"    [WARNING] Encounter banner not detected on screen.")
                 self.move_mouse_inside_game()
             return True
 
         elif action == "orbit_yellow_zone":
             orbit_duration = float(step.get("duration", self.orbit_duration))
+            rc_interval = float(step.get("right_click_interval", self.orbit_right_click_interval_seconds))
             orbit_zones = self.movement_path.get_orbit_zones() if hasattr(self.movement_path, "get_orbit_zones") else []
             target = context.get("target")
             zone = context.get("zone")
@@ -512,33 +687,17 @@ class RouteNavigator:
                             best_zone = z
 
             if best_zone is not None:
-                zone_id = best_zone.get("id")
-                if zone_id:
-                    self.interacted_zones.add(zone_id)
-                self.is_orbiting = True
-                self.orbit_start_time = time.time()
-                self.last_orbit_right_click = time.time()
-                self.orbit_duration = orbit_duration
-                self.current_orbit_zone = best_zone
-                self.orbit_perimeter_pts = best_zone.get("perimeter_points", [])
-                if self.orbit_perimeter_pts:
-                    best_p_idx = 0
-                    best_p_dist = float("inf")
-                    for p_i, p_pt in enumerate(self.orbit_perimeter_pts):
-                        d = math.hypot(p_pt[0] - c_pos[0], p_pt[1] - c_pos[1])
-                        if d < best_p_dist:
-                            best_p_dist = d
-                            best_p_idx = p_i
-                    self.orbit_point_idx = best_p_idx
-                self.orbit_grace_until = time.time() + 4.0
-                self.stuck_counter = 0
-                self.last_progress_pos = self.latest_pos or c_pos
-                self.last_progress_time = time.time() + 4.0
-                window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
-                self.move_mouse_inside_game()
-                print(f"    [ACTION] Starting orbit inside yellow shape ({best_zone.get('id', 'zone')}) for {self.orbit_duration:.1f}s...")
-                self.status_message = f"Orbiting Yellow Zone ({self.orbit_duration:.1f}s left)"
-            return True
+                context["orbited"] = True
+                self._routine_did_orbit = True
+                return self._run_orbit_loop(
+                    duration=orbit_duration,
+                    best_zone=best_zone,
+                    right_click_interval=rc_interval,
+                    zone_label=zone_label,
+                )
+            else:
+                _log(f"    [WARNING] No yellow orbit zone found for {zone_label}. Skipping orbit.")
+                return True
 
         elif action == "pickup_loot":
             max_pickups = int(step.get("max_items", self.max_loot_pickups))
@@ -556,7 +715,18 @@ class RouteNavigator:
                 self.release_all_keys()
                 self.waiting_for_green_light = True
                 self.status_message = "WAITING FOR GREEN LIGHT (Verify Loot Pickup - Press 'G' to Resume)"
-                print("\n[AUTOPILOT] >>> LOOT PICKUP FINISHED! Waiting for GREEN LIGHT to continue...")
+                _log("\n[AUTOPILOT] >>> LOOT PICKUP FINISHED! Waiting for GREEN LIGHT to continue...")
+                while self.waiting_for_green_light:
+                    if stop_handler.is_stopped() or not self.is_active:
+                        return False
+                    if keyboard:
+                        try:
+                            if keyboard.is_pressed('g') or keyboard.is_pressed('G') or keyboard.is_pressed('enter'):
+                                self.give_green_light()
+                                break
+                        except Exception:
+                            pass
+                    time.sleep(0.05)
             return True
 
         elif action == "press_key":
@@ -564,7 +734,7 @@ class RouteNavigator:
             duration = float(step.get("duration", 0.1))
             window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
             self.move_mouse_inside_game()
-            print(f"    [ACTION] Pressing key '{key}' for {duration:.2f}s...")
+            _log(f"    [ACTION] Pressing key '{key}' for {duration:.2f}s...")
             self.status_message = f"[{zone_label}] Key '{key.upper()}' ({duration:.1f}s)..."
             if pydirectinput:
                 pydirectinput.keyDown(key)
@@ -589,7 +759,7 @@ class RouteNavigator:
             return True
 
         else:
-            print(f"    [WARNING] Unknown routine action '{action}'. Skipping...")
+            _log(f"    [WARNING] Unknown routine action '{action}'. Skipping...")
             return True
 
     @staticmethod
@@ -635,7 +805,7 @@ class RouteNavigator:
         """Enables autopilot navigation."""
         if not self.movement_path.is_configured:
             self.status_message = "No route waypoints loaded"
-            print("[NAVIGATOR] Cannot start: No route waypoints loaded.")
+            _log("[NAVIGATOR] Cannot start: No route waypoints loaded.")
             return
 
         if monitor_idx is not None:
@@ -667,7 +837,7 @@ class RouteNavigator:
         self.is_active = True
         self.is_completed = False
         self.status_message = "Autopilot Active (Press 'A' to stop | 'F4' to pause)"
-        print(f"[NAVIGATOR] Autopilot Navigation ACTIVATED. Press 'A' to stop | 'F4' to pause.")
+        _log(f"[NAVIGATOR] Autopilot Navigation ACTIVATED. Press 'A' to stop | 'F4' to pause.")
 
         if self.start_at_pink_dot > 0 and self.movement_path.is_configured:
             self.set_start_pink_dot(self.start_at_pink_dot)
@@ -691,7 +861,7 @@ class RouteNavigator:
         self.interacted_pink_dots.clear()
         self.release_all_keys()
         self.status_message = "Autopilot Paused (Press 'A' to resume)"
-        print("[NAVIGATOR] Autopilot Navigation STOPPED.")
+        _log("[NAVIGATOR] Autopilot Navigation STOPPED.")
 
     def pause(self):
         """Pauses navigation, releases all movement keys, and holds current waypoint position."""
@@ -702,7 +872,7 @@ class RouteNavigator:
         self.status_message = "Autopilot PAUSED (Press 'F4' to resume)"
         curr_wp = self.movement_path.get_current_target()
         wp_name = curr_wp.get("name") if curr_wp else f"WP #{self.movement_path.current_idx}"
-        print(f"\n[AUTOPILOT] >>> PAUSED at WP #{self.movement_path.current_idx} ({wp_name}). Press 'F4' to resume.")
+        _log(f"\n[AUTOPILOT] >>> PAUSED at WP #{self.movement_path.current_idx} ({wp_name}). Press 'F4' to resume.")
 
     def resume(self):
         """Resumes navigation towards current target waypoint from where it was paused."""
@@ -718,7 +888,7 @@ class RouteNavigator:
         curr_wp = self.movement_path.get_current_target()
         wp_name = curr_wp.get("name") if curr_wp else f"WP #{self.movement_path.current_idx}"
         self.status_message = f"Autopilot Resumed -> {wp_name} (Press 'F4' to pause)"
-        print(f"\n[AUTOPILOT] >>> RESUMED navigation towards WP #{self.movement_path.current_idx} ({wp_name}).")
+        _log(f"\n[AUTOPILOT] >>> RESUMED navigation towards WP #{self.movement_path.current_idx} ({wp_name}).")
 
     def toggle_pause(self) -> bool:
         """Toggles autopilot pause state on/off via F4."""
@@ -728,7 +898,7 @@ class RouteNavigator:
         self._last_f4_time = now
 
         if not self.is_active:
-            print("[NAVIGATOR] Autopilot is not currently running. Press 'A' or 'G' to start.")
+            _log("[NAVIGATOR] Autopilot is not currently running. Press 'A' or 'G' to start.")
             return False
 
         if self.waiting_for_green_light:
@@ -749,7 +919,7 @@ class RouteNavigator:
         if self.waiting_for_green_light:
             self.waiting_for_green_light = False
             self.status_message = "GREEN LIGHT GIVEN! Advancing to next waypoint..."
-            print("\n[AUTOPILOT] >>> GREEN LIGHT RECEIVED! Advancing to next waypoint...")
+            _log("\n[AUTOPILOT] >>> GREEN LIGHT RECEIVED! Advancing to next waypoint...")
             # If in single-step/update mode (no background worker thread), advance waypoint now:
             if not (self._worker_thread and self._worker_thread.is_alive()):
                 self.movement_path.advance()
@@ -783,7 +953,7 @@ class RouteNavigator:
                 self.movement_path.current_idx = 0
             self.load_zone_routines()
             self.status_message = f"Route Reloaded ({len(self.movement_path.waypoints)} waypoints)"
-            print(f"[NAVIGATOR] Route reloaded. Total waypoints: {len(self.movement_path.waypoints)}")
+            _log(f"[NAVIGATOR] Route reloaded. Total waypoints: {len(self.movement_path.waypoints)}")
         return success
 
     def set_start_pink_dot(self, pink_number: int, save_to_config: bool = False) -> bool:
@@ -841,7 +1011,7 @@ class RouteNavigator:
             self.status_message = f"Route Target: Start ({t_name})"
             if save_to_config:
                 self._save_start_pink_dot_to_config(0)
-            print(f"[AUTOPILOT] Starting route from beginning (WP #0: {t_name}). All encounters active.")
+            _log(f"[AUTOPILOT] Starting route from beginning (WP #0: {t_name}). All encounters active.")
             return True
 
         # Clamp pink_number to valid range
@@ -915,9 +1085,9 @@ class RouteNavigator:
         self.status_message = f"Next Target: Pink #{pink_idx} (from WP #{start_wp_idx}: {curr_name})"
         if save_to_config:
             self._save_start_pink_dot_to_config(pink_idx)
-        print(f"\n[AUTOPILOT] >>> ROUTE TARGET SET: Pink Dot #{pink_idx} ({target_name} at WP #{target_wp_idx})")
-        print(f"  Starting navigation at WP #{start_wp_idx} ({curr_name})")
-        print(f"  Preceding pink dots skipped/completed: {len(self.interacted_pink_dots)}")
+        _log(f"\n[AUTOPILOT] >>> ROUTE TARGET SET: Pink Dot #{pink_idx} ({target_name} at WP #{target_wp_idx})")
+        _log(f"  Starting navigation at WP #{start_wp_idx} ({curr_name})")
+        _log(f"  Preceding pink dots skipped/completed: {len(self.interacted_pink_dots)}")
         return True
 
     def _save_start_pink_dot_to_config(self, pink_number: int):
@@ -990,7 +1160,7 @@ class RouteNavigator:
         try:
             screen = capt.capture()
         except Exception as e:
-            print(f"  [WARNING] Screen capture failed during banner search: {e}")
+            _log(f"  [WARNING] Screen capture failed during banner search: {e}")
             return None
 
         if screen is None or screen.size == 0:
@@ -1042,7 +1212,7 @@ class RouteNavigator:
             cy = int(best_loc[1] + (th * best_scale) / 2)
             desktop_x = mon_left + cx
             desktop_y = mon_top + cy
-            print(f"  [BANNER MATCH] Found encounter banner (conf={best_val:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
+            _log(f"  [BANNER MATCH] Found encounter banner (conf={best_val:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
             return desktop_x, desktop_y
 
         return None
@@ -1064,7 +1234,7 @@ class RouteNavigator:
         try:
             screen = capt.capture()
         except Exception as e:
-            print(f"  [WARNING] Screen capture failed during {sim_key} search: {e}")
+            _log(f"  [WARNING] Screen capture failed during {sim_key} search: {e}")
             return None
 
         if screen is None or screen.size == 0:
@@ -1112,7 +1282,7 @@ class RouteNavigator:
             cy = int(best_loc[1] + (th * best_scale) / 2)
             desktop_x = mon_left + cx
             desktop_y = mon_top + cy
-            print(f"  [SIM MATCH] Found {sim_key} (conf={best_val:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
+            _log(f"  [SIM MATCH] Found {sim_key} (conf={best_val:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
             return desktop_x, desktop_y
 
         return None
@@ -1141,7 +1311,7 @@ class RouteNavigator:
             target_y = detected_pos[1] + eff_y_offset
             cx, cy = self.move_mouse_inside_game(target_x, target_y)
             offset_info = f" [offset: +{eff_y_offset}px Y]" if eff_y_offset != 0 else ""
-            print(f"  [SIM DETECTED] Clicking {sim_label} at ({cx}, {cy}){offset_info} (detected at ({detected_pos[0]}, {detected_pos[1]}))...")
+            _log(f"  [SIM DETECTED] Clicking {sim_label} at ({cx}, {cy}){offset_info} (detected at ({detected_pos[0]}, {detected_pos[1]}))...")
             self.status_message = f"{prefix} Clicked {sim_label} ({cx}, {cy})"
             if pydirectinput:
                 pydirectinput.click()
@@ -1159,7 +1329,7 @@ class RouteNavigator:
                             in_range_pos[0] + eff_x_offset,
                             in_range_pos[1] + eff_y_offset
                         )
-                        print(f"  [SIM IN-RANGE] Re-clicking {sim_label} in-range at ({rx}, {ry})...")
+                        _log(f"  [SIM IN-RANGE] Re-clicking {sim_label} in-range at ({rx}, {ry})...")
                         if pydirectinput:
                             pydirectinput.click()
                             time.sleep(0.08)
@@ -1257,7 +1427,7 @@ class RouteNavigator:
         last_move_time = start_time
         last_check_pos = start_pos
 
-        print(f"  [{reason}] Character approaching target (allowing up to {max_wait_seconds:.1f}s)...")
+        _log(f"  [{reason}] Character approaching target (allowing up to {max_wait_seconds:.1f}s)...")
 
         max_ticks = max(10, int(max_wait_seconds / 0.05) + 5)
         tick = 0
@@ -1277,7 +1447,7 @@ class RouteNavigator:
                     last_move_time = now
                     last_check_pos = curr_pos
                 elif has_moved and (now - last_move_time) >= 0.4:
-                    print(f"  [{reason}] Character reached target and settled ({now - start_time:.2f}s).")
+                    _log(f"  [{reason}] Character reached target and settled ({now - start_time:.2f}s).")
                     break
 
             rem = max(0.0, max_wait_seconds - (now - start_time))
@@ -1285,7 +1455,7 @@ class RouteNavigator:
             time.sleep(0.05)
 
         elapsed = time.time() - start_time
-        print(f"  [{reason}] Approach window finished ({elapsed:.2f}s).")
+        _log(f"  [{reason}] Approach window finished ({elapsed:.2f}s).")
 
     def locate_loot(self) -> Optional[Tuple[int, int]]:
         """
@@ -1302,7 +1472,7 @@ class RouteNavigator:
         try:
             screen = capt.capture()
         except Exception as e:
-            print(f"  [WARNING] Screen capture failed during loot search: {e}")
+            _log(f"  [WARNING] Screen capture failed during loot search: {e}")
             return None
 
         if screen is None or screen.size == 0:
@@ -1350,7 +1520,7 @@ class RouteNavigator:
             cy = int(best_loc[1] + (th * best_scale) / 2)
             desktop_x = mon_left + cx
             desktop_y = mon_top + cy
-            print(f"  [LOOT MATCH] Found loot1 (conf={best_val:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
+            _log(f"  [LOOT MATCH] Found loot1 (conf={best_val:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
             return desktop_x, desktop_y
 
         return None
@@ -1370,7 +1540,7 @@ class RouteNavigator:
 
         try:
             limit = max_pickups if max_pickups is not None else self.max_loot_pickups
-            print("\n[AUTOPILOT] >>> Scanning screen for LOOT (ui/loot1.png)...")
+            _log("\n[AUTOPILOT] >>> Scanning screen for LOOT (ui/loot1.png)...")
             self.status_message = "[LOOT] Scanning screen for loot..."
 
             picked_count = 0
@@ -1381,14 +1551,14 @@ class RouteNavigator:
                 loot_pos = self.locate_loot()
                 if loot_pos is None:
                     if picked_count == 0:
-                        print("  [LOOT] No loot detected on screen.")
+                        _log("  [LOOT] No loot detected on screen.")
                     else:
-                        print(f"  [LOOT] Finished picking up {picked_count} loot item(s). None remaining.")
+                        _log(f"  [LOOT] Finished picking up {picked_count} loot item(s). None remaining.")
                     break
 
                 lx, ly = self.move_mouse_inside_game(loot_pos[0], loot_pos[1])
                 picked_count += 1
-                print(f"  [LOOT #{picked_count}] Found loot at ({lx}, {ly}). Clicking left mouse button...")
+                _log(f"  [LOOT #{picked_count}] Found loot at ({lx}, {ly}). Clicking left mouse button...")
                 self.status_message = f"[LOOT] Picking #{picked_count} at ({lx}, {ly})"
 
                 if pydirectinput:
@@ -1500,6 +1670,7 @@ class RouteNavigator:
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
 
         try:
+            self._routine_did_orbit = False
             # Check for custom zone routine first
             custom_routine = self._get_yellow_zone_routine(orbit_zone)
             if custom_routine and custom_routine.get("steps"):
@@ -1514,12 +1685,12 @@ class RouteNavigator:
                 return True
 
             self.status_message = "[YELLOW ZONE] Interacting..."
-            print("\n[AUTOPILOT] >>> REACHED YELLOW ZONE! Executing encounter activation sequence...")
+            _log("\n[AUTOPILOT] >>> REACHED YELLOW ZONE! Executing encounter activation sequence...")
 
             # 0. Check for Sims first! (Fallback safety in case dynamic resync landed on yellow zone directly)
             sims = self._detect_and_click_sims(prefix="[YELLOW ZONE]")
             if sims:
-                print(f"  [YELLOW ZONE] Sims selected ({', '.join(sims)}). Encounter activated via Sim!")
+                _log(f"  [YELLOW ZONE] Sims selected ({', '.join(sims)}). Encounter activated via Sim!")
                 return True
 
             # 1. Locate and click banner if enabled
@@ -1536,7 +1707,7 @@ class RouteNavigator:
 
                 if banner_pos is not None:
                     bx, by = self.move_mouse_inside_game(banner_pos[0], banner_pos[1])
-                    print(f"  [ACTION 1/3] Clicking encounter banner at ({bx}, {by})...")
+                    _log(f"  [ACTION 1/3] Clicking encounter banner at ({bx}, {by})...")
                     self.status_message = f"[YELLOW ZONE] Clicking Banner ({bx}, {by})"
                     if pydirectinput:
                         pydirectinput.click()
@@ -1553,17 +1724,17 @@ class RouteNavigator:
                             in_range_pos = self.locate_encounter_banner()
                             if in_range_pos is not None:
                                 rx, ry = self.move_mouse_inside_game(in_range_pos[0], in_range_pos[1])
-                                print(f"  [ACTION 1/3] Re-clicking encounter banner in-range at ({rx}, {ry})...")
+                                _log(f"  [ACTION 1/3] Re-clicking encounter banner in-range at ({rx}, {ry})...")
                                 if pydirectinput:
                                     pydirectinput.click()
                                     time.sleep(0.08)
                                     pydirectinput.mouseUp(button="left")
                                 time.sleep(0.15)
                 else:
-                    print(f"  [WARNING] Encounter banner not detected on screen after {self.banner_search_attempts} attempts. Cursor positioned inside game.")
+                    _log(f"  [WARNING] Encounter banner not detected on screen after {self.banner_search_attempts} attempts. Cursor positioned inside game.")
                     self.move_mouse_inside_game()
             else:
-                print("  [CONFIG] Banner clicking disabled (click_banner_enabled=false). Skipping...")
+                _log("  [CONFIG] Banner clicking disabled (click_banner_enabled=false). Skipping...")
                 self.move_mouse_inside_game()
 
             if stop_handler.is_stopped() or not self.is_active:
@@ -1572,7 +1743,7 @@ class RouteNavigator:
             # 2. Click right mouse button once if enabled
             if self.right_click_after_banner_enabled:
                 self.move_mouse_inside_game()
-                print("  [ACTION 2/3] Clicking right mouse button once inside game...")
+                _log("  [ACTION 2/3] Clicking right mouse button once inside game...")
                 self.status_message = "[YELLOW ZONE] Right-Clicking..."
                 if pydirectinput:
                     pydirectinput.rightClick()
@@ -1580,7 +1751,7 @@ class RouteNavigator:
                     pydirectinput.mouseUp(button="right")
                 time.sleep(0.15)
             else:
-                print("  [CONFIG] Right click after banner disabled. Skipping...")
+                _log("  [CONFIG] Right click after banner disabled. Skipping...")
 
             if stop_handler.is_stopped() or not self.is_active:
                 return False
@@ -1589,7 +1760,7 @@ class RouteNavigator:
             if self.middle_click_hold_enabled:
                 self.move_mouse_inside_game()
                 hold_sec = self.middle_click_hold_seconds
-                print(f"  [ACTION 3/3] Pressing and holding middle mouse button for {hold_sec:.1f}s inside game...")
+                _log(f"  [ACTION 3/3] Pressing and holding middle mouse button for {hold_sec:.1f}s inside game...")
                 try:
                     if pydirectinput:
                         pydirectinput.mouseDown(button="middle")
@@ -1608,10 +1779,10 @@ class RouteNavigator:
                         ctypes.windll.user32.mouse_event(0x0040, 0, 0, 0, 0)
                     except Exception:
                         pass
-                    print("  [ACTION 3/3] Middle mouse button released.")
+                    _log("  [ACTION 3/3] Middle mouse button released.")
                 time.sleep(0.1)
             else:
-                print("  [CONFIG] Middle click hold disabled (middle_click_hold_enabled=false). Skipping...")
+                _log("  [CONFIG] Middle click hold disabled (middle_click_hold_enabled=false). Skipping...")
 
             return True
         finally:
@@ -1638,6 +1809,7 @@ class RouteNavigator:
         self.release_all_keys()
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
         try:
+            self._routine_did_orbit = False
             return self._do_execute_pink_dot_interaction(target)
         finally:
             self.is_interacting = False
@@ -1658,7 +1830,7 @@ class RouteNavigator:
         self.move_mouse_inside_game()
 
         self.status_message = "[PINK DOT] Arrived! Stopping movement..."
-        print(f"\n[AUTOPILOT] >>> REACHED PINK DOT! Stopping character for {self.pink_dot_stop_seconds:.1f}s...")
+        _log(f"\n[AUTOPILOT] >>> REACHED PINK DOT! Stopping character for {self.pink_dot_stop_seconds:.1f}s...")
 
         # 1. Halt movement for configured seconds
         stop_start = time.time()
@@ -1680,7 +1852,7 @@ class RouteNavigator:
 
         # 3. Fallback: If no sims are available, click encounter_banner, right-click, middle-click for 4s
         if not sims_clicked:
-            print("  [PINK DOT] No sims available. Falling back to Encounter Banner sequence...")
+            _log("  [PINK DOT] No sims available. Falling back to Encounter Banner sequence...")
             self.status_message = "[PINK DOT] Finding Encounter Banner..."
             banner_pos = None
             for attempt in range(1, self.banner_search_attempts + 1):
@@ -1693,7 +1865,7 @@ class RouteNavigator:
 
             if banner_pos is not None:
                 bx, by = self.move_mouse_inside_game(banner_pos[0], banner_pos[1])
-                print(f"  [ACTION 1/3] Clicking encounter banner at ({bx}, {by})...")
+                _log(f"  [ACTION 1/3] Clicking encounter banner at ({bx}, {by})...")
                 self.status_message = f"[PINK DOT] Clicking Banner ({bx}, {by})"
                 if pydirectinput:
                     pydirectinput.click()
@@ -1710,14 +1882,14 @@ class RouteNavigator:
                         in_range_pos = self.locate_encounter_banner()
                         if in_range_pos is not None:
                             rx, ry = self.move_mouse_inside_game(in_range_pos[0], in_range_pos[1])
-                            print(f"  [ACTION 1/3] Re-clicking encounter banner in-range at ({rx}, {ry})...")
+                            _log(f"  [ACTION 1/3] Re-clicking encounter banner in-range at ({rx}, {ry})...")
                             if pydirectinput:
                                 pydirectinput.click()
                                 time.sleep(0.08)
                                 pydirectinput.mouseUp(button="left")
                             time.sleep(0.15)
             else:
-                print(f"  [WARNING] Encounter banner not detected on screen. Positioning cursor inside game.")
+                _log(f"  [WARNING] Encounter banner not detected on screen. Positioning cursor inside game.")
                 self.move_mouse_inside_game()
 
             if stop_handler.is_stopped() or not self.is_active:
@@ -1725,7 +1897,7 @@ class RouteNavigator:
 
             # Click right button of mouse
             self.move_mouse_inside_game()
-            print("  [ACTION 2/3] Clicking right mouse button once inside game...")
+            _log("  [ACTION 2/3] Clicking right mouse button once inside game...")
             self.status_message = "[PINK DOT] Right-Clicking..."
             if pydirectinput:
                 pydirectinput.rightClick()
@@ -1739,7 +1911,7 @@ class RouteNavigator:
             # Press and hold middle button of mouse for 4 seconds
             self.move_mouse_inside_game()
             hold_sec = self.middle_click_hold_seconds
-            print(f"  [ACTION 3/3] Pressing and holding middle mouse button for {hold_sec:.1f}s inside game...")
+            _log(f"  [ACTION 3/3] Pressing and holding middle mouse button for {hold_sec:.1f}s inside game...")
             try:
                 if pydirectinput:
                     pydirectinput.mouseDown(button="middle")
@@ -1758,7 +1930,7 @@ class RouteNavigator:
                     ctypes.windll.user32.mouse_event(0x0040, 0, 0, 0, 0)
                 except Exception:
                     pass
-                print("  [ACTION 3/3] Middle mouse button released.")
+                _log("  [ACTION 3/3] Middle mouse button released.")
             time.sleep(0.1)
 
             if stop_handler.is_stopped() or not self.is_active:
@@ -1801,20 +1973,20 @@ class RouteNavigator:
                 self.last_progress_time = time.time() + 4.0
                 window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
                 self.move_mouse_inside_game()
-                print(f"  [AUTOPILOT] Pink dot encounter complete -> Starting orbit inside yellow shape ({best_zone.get('id', 'zone')}) for {self.orbit_duration:.1f}s...")
+                _log(f"  [AUTOPILOT] Pink dot encounter complete -> Starting orbit inside yellow shape ({best_zone.get('id', 'zone')}) for {self.orbit_duration:.1f}s...")
                 self.status_message = f"Orbiting Yellow Zone ({self.orbit_duration:.1f}s left)"
             else:
-                print("  [PINK DOT] No yellow orbit shape found on route. Scanning for loot...")
+                _log("  [PINK DOT] No yellow orbit shape found on route. Scanning for loot...")
                 self.collect_loot()
                 if self.wait_for_loot_confirmation:
                     self.release_all_keys()
                     self.waiting_for_green_light = True
                     self.status_message = "WAITING FOR GREEN LIGHT (Verify Loot Pickup - Press 'G' to Resume)"
-                    print("\n[AUTOPILOT] >>> LOOT PICKUP FINISHED! Waiting for GREEN LIGHT to continue...")
+                    _log("\n[AUTOPILOT] >>> LOOT PICKUP FINISHED! Waiting for GREEN LIGHT to continue...")
 
         if not self.is_orbiting:
             self.status_message = "[PINK DOT] Sequence completed. Resuming route..."
-            print("  [AUTOPILOT] Finished Pink Dot interaction! Resuming green route navigation...")
+            _log("  [AUTOPILOT] Finished Pink Dot interaction! Resuming green route navigation...")
         else:
             self.status_message = f"Orbiting Yellow Zone ({self.orbit_duration:.1f}s left)"
         return True
@@ -1834,14 +2006,14 @@ class RouteNavigator:
             msg = f"SKIPPED: WP #{curr_idx} -> Target is {name}"
             self.latest_recovery_event = msg
             self.status_message = msg
-            print(f"\n[NAVIGATOR] Skipped WP #{curr_idx} -> Target is now {name} (WP #{self.movement_path.current_idx})")
+            _log(f"\n[NAVIGATOR] Skipped WP #{curr_idx} -> Target is now {name} (WP #{self.movement_path.current_idx})")
             return next_wp
         else:
             self.is_completed = True
             self.is_active = False
             self.release_all_keys()
             self.status_message = "Route Finished!"
-            print(f"\n[NAVIGATOR] Skipped final waypoint. Destination reached.")
+            _log(f"\n[NAVIGATOR] Skipped final waypoint. Destination reached.")
             return None
 
     def _execute_stuck_recovery(self, reason: str = "Stuck"):
@@ -1854,8 +2026,8 @@ class RouteNavigator:
         4. Resumes navigation towards the next waypoint / perimeter point ahead.
         """
         if self.is_orbiting:
-            print(f"\n[AUTOPILOT RECOVERY] {reason} during Yellow Zone Orbit.")
-            print(f"[AUTOPILOT RECOVERY] Unsticking from geometry inside yellow area...")
+            _log(f"\n[AUTOPILOT RECOVERY] {reason} during Yellow Zone Orbit.")
+            _log(f"[AUTOPILOT RECOVERY] Unsticking from geometry inside yellow area...")
             self.release_all_keys()
 
             backtrack_keys = []
@@ -1896,7 +2068,7 @@ class RouteNavigator:
             msg = f"ORBIT RECOVERY: Unstuck in yellow zone -> Next point #{self.orbit_point_idx}"
             self.latest_recovery_event = msg
             self.status_message = msg
-            print(f"[AUTOPILOT RECOVERY] Unstuck! Switched to next yellow orbit point #{self.orbit_point_idx}")
+            _log(f"[AUTOPILOT RECOVERY] Unstuck! Switched to next yellow orbit point #{self.orbit_point_idx}")
 
             now = time.time()
             self.stuck_counter = 0
@@ -1913,8 +2085,8 @@ class RouteNavigator:
         curr_idx = self.movement_path.current_idx if curr_wp else 0
         curr_name = curr_wp.get("name", f"WP #{curr_idx}") if curr_wp else f"WP #{curr_idx}"
 
-        print(f"\n[AUTOPILOT RECOVERY] {reason} at {curr_name} (WP #{curr_idx}).")
-        print(f"[AUTOPILOT RECOVERY] Moving back to previously known location...")
+        _log(f"\n[AUTOPILOT RECOVERY] {reason} at {curr_name} (WP #{curr_idx}).")
+        _log(f"[AUTOPILOT RECOVERY] Moving back to previously known location...")
 
         # 1. Release current movement keys
         self.release_all_keys()
@@ -1977,12 +2149,12 @@ class RouteNavigator:
             msg = f"RECOVERY: Skipped WP #{curr_idx} -> Target: {next_name} (WP #{self.movement_path.current_idx})"
             self.latest_recovery_event = msg
             self.status_message = msg
-            print(f"[AUTOPILOT RECOVERY] Backtracked! Skipped WP #{curr_idx} -> Target is now {next_name} (WP #{self.movement_path.current_idx})")
+            _log(f"[AUTOPILOT RECOVERY] Backtracked! Skipped WP #{curr_idx} -> Target is now {next_name} (WP #{self.movement_path.current_idx})")
         else:
             self.is_completed = True
             self.is_active = False
             self.status_message = "Route Finished after final recovery!"
-            print("[AUTOPILOT RECOVERY] Final waypoint reached.")
+            _log("[AUTOPILOT RECOVERY] Final waypoint reached.")
 
         # Reset stuck detection timers
         now = time.time()
@@ -2071,7 +2243,7 @@ class RouteNavigator:
                 elapsed = now - self.orbit_start_time
                 rem = max(0.0, self.orbit_duration - elapsed)
                 if elapsed >= self.orbit_duration:
-                    print(f"\n[AUTOPILOT] Finished orbiting yellow shape ({self.orbit_duration:.1f}s elapsed)! Scanning for loot...")
+                    _log(f"\n[AUTOPILOT] Finished orbiting yellow shape ({self.orbit_duration:.1f}s elapsed)! Scanning for loot...")
                     self.is_orbiting = False
                     self.current_orbit_zone = None
                     self.orbit_perimeter_pts = []
@@ -2081,7 +2253,7 @@ class RouteNavigator:
                         self.release_all_keys()
                         self.waiting_for_green_light = True
                         self.status_message = "WAITING FOR GREEN LIGHT (Verify Loot Pickup - Press 'G' to Resume)"
-                        print("\n[AUTOPILOT] >>> LOOT PICKUP FINISHED! Waiting for GREEN LIGHT to continue...")
+                        _log("\n[AUTOPILOT] >>> LOOT PICKUP FINISHED! Waiting for GREEN LIGHT to continue...")
                         time.sleep(0.04)
                         continue
 
@@ -2142,7 +2314,7 @@ class RouteNavigator:
                     self.is_active = False
                     self.release_all_keys()
                     self.status_message = "Route Completed!"
-                    print("\n[AUTOPILOT] >>> ALL WAYPOINTS COMPLETED! Reached destination.")
+                    _log("\n[AUTOPILOT] >>> ALL WAYPOINTS COMPLETED! Reached destination.")
                     break
 
                 target_pos = (target["x"], target["y"])
@@ -2163,41 +2335,42 @@ class RouteNavigator:
                     if target.get("action") == "orbit":
                         orbit_zone = target.get("orbit_zone") or self.movement_path.get_orbit_zone_for_waypoint(target.get("index", 0))
                         if orbit_zone and not self.orbit_yellow_zone_enabled:
-                            print(f"\n[AUTOPILOT] Reached Yellow Shape ({orbit_zone.get('id', 'zone')}) but orbit is disabled in config. Advancing route...")
+                            _log(f"\n[AUTOPILOT] Reached Yellow Shape ({orbit_zone.get('id', 'zone')}) but orbit is disabled in config. Advancing route...")
                         elif orbit_zone:
                             zone_id = orbit_zone.get("id") or f"zone_{target.get('index', 0)}"
                             if zone_id in self.interacted_zones:
-                                print(f"\n[AUTOPILOT] Yellow Zone ({zone_id}) already completed. Advancing...")
+                                _log(f"\n[AUTOPILOT] Yellow Zone ({zone_id}) already completed. Advancing...")
                             else:
                                 self.interacted_zones.add(zone_id)
                                 self.execute_yellow_zone_interaction(orbit_zone)
                                 if stop_handler.is_stopped() or not self.is_active:
                                     break
-                                self.is_orbiting = True
-                                self.orbit_start_time = time.time()
-                                self.last_orbit_right_click = time.time()
-                                self.orbit_duration = float(orbit_zone.get("duration", getattr(self.movement_path, "orbit_duration_seconds", 10.0)))
-                                self.current_orbit_zone = orbit_zone
-                                self.orbit_perimeter_pts = orbit_zone.get("perimeter_points", [])
-                                if self.orbit_perimeter_pts:
-                                    best_p_idx = 0
-                                    best_p_dist = float("inf")
-                                    for p_i, p_pt in enumerate(self.orbit_perimeter_pts):
-                                        d = math.hypot(p_pt[0] - current_pos[0], p_pt[1] - current_pos[1])
-                                        if d < best_p_dist:
-                                            best_p_dist = d
-                                            best_p_idx = p_i
-                                    self.orbit_point_idx = best_p_idx
-                                self.orbit_grace_until = time.time() + 4.0
-                                self.stuck_counter = 0
-                                self.last_progress_pos = current_pos
-                                self.last_progress_time = time.time() + 4.0
-                                window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
-                                self.move_mouse_inside_game()
-                                print(f"\n[AUTOPILOT] Reached Yellow Shape ({orbit_zone.get('id', 'zone')})! Running around shape for {self.orbit_duration:.1f}s...")
-                                self.status_message = f"Orbiting Yellow Zone ({self.orbit_duration:.1f}s left)"
-                                time.sleep(0.04)
-                                continue
+                                if not getattr(self, "_routine_did_orbit", False):
+                                    self.is_orbiting = True
+                                    self.orbit_start_time = time.time()
+                                    self.last_orbit_right_click = time.time()
+                                    self.orbit_duration = float(orbit_zone.get("duration", getattr(self.movement_path, "orbit_duration_seconds", 10.0)))
+                                    self.current_orbit_zone = orbit_zone
+                                    self.orbit_perimeter_pts = orbit_zone.get("perimeter_points", [])
+                                    if self.orbit_perimeter_pts:
+                                        best_p_idx = 0
+                                        best_p_dist = float("inf")
+                                        for p_i, p_pt in enumerate(self.orbit_perimeter_pts):
+                                            d = math.hypot(p_pt[0] - current_pos[0], p_pt[1] - current_pos[1])
+                                            if d < best_p_dist:
+                                                best_p_dist = d
+                                                best_p_idx = p_i
+                                        self.orbit_point_idx = best_p_idx
+                                    self.orbit_grace_until = time.time() + 4.0
+                                    self.stuck_counter = 0
+                                    self.last_progress_pos = current_pos
+                                    self.last_progress_time = time.time() + 4.0
+                                    window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+                                    self.move_mouse_inside_game()
+                                    _log(f"\n[AUTOPILOT] Reached Yellow Shape ({orbit_zone.get('id', 'zone')})! Running around shape for {self.orbit_duration:.1f}s...")
+                                    self.status_message = f"Orbiting Yellow Zone ({self.orbit_duration:.1f}s left)"
+                                    time.sleep(0.04)
+                                    continue
 
                     elif target.get("action") == "pink_encounter":
                         wp_idx = target.get("index", 0)
@@ -2213,14 +2386,14 @@ class RouteNavigator:
                                 time.sleep(0.04)
                                 continue
 
-                    print(f"\n[AUTOPILOT] Reached WP #{target.get('index', 0)} ({target.get('name', 'WP')}) at ({current_pos[0]:.0f}, {current_pos[1]:.0f})! Advancing...")
+                    _log(f"\n[AUTOPILOT] Reached WP #{target.get('index', 0)} ({target.get('name', 'WP')}) at ({current_pos[0]:.0f}, {current_pos[1]:.0f})! Advancing...")
                     next_target = self.movement_path.advance()
                     if next_target is None:
                         self.is_completed = True
                         self.is_active = False
                         self.release_all_keys()
                         self.status_message = "Route Finished!"
-                        print("\n[AUTOPILOT] >>> DESTINATION REACHED!")
+                        _log("\n[AUTOPILOT] >>> DESTINATION REACHED!")
                         break
                     target = next_target
                     target_pos = (target["x"], target["y"])
@@ -2314,7 +2487,7 @@ class RouteNavigator:
         # Safety: F1 emergency stop takes immediate priority
         if stop_handler.is_stopped():
             if self.is_active:
-                print("[NAVIGATOR] Emergency stop detected! Halting navigation.")
+                _log("[NAVIGATOR] Emergency stop detected! Halting navigation.")
                 self.stop()
             return self.get_telemetry(None, 0.0, [])
 
@@ -2362,7 +2535,7 @@ class RouteNavigator:
                     self.release_all_keys()
                     self.waiting_for_green_light = True
                     self.status_message = "WAITING FOR GREEN LIGHT (Verify Loot Pickup - Press 'G' to Resume)"
-                    print("\n[AUTOPILOT] >>> LOOT PICKUP FINISHED! Waiting for GREEN LIGHT to continue...")
+                    _log("\n[AUTOPILOT] >>> LOOT PICKUP FINISHED! Waiting for GREEN LIGHT to continue...")
                     target = self.movement_path.get_current_target()
                     dist = self.movement_path.distance_to_target(current_pos) if current_pos and target else 0.0
                     return self.get_telemetry(target, dist, [])
@@ -2436,33 +2609,34 @@ class RouteNavigator:
                 if target.get("action") == "orbit":
                     orbit_zone = target.get("orbit_zone") or self.movement_path.get_orbit_zone_for_waypoint(target.get("index", 0))
                     if orbit_zone and not self.orbit_yellow_zone_enabled:
-                        print(f"\n[AUTOPILOT] Reached Yellow Shape ({orbit_zone.get('id', 'zone')}) but orbit is disabled in config. Advancing route...")
+                        _log(f"\n[AUTOPILOT] Reached Yellow Shape ({orbit_zone.get('id', 'zone')}) but orbit is disabled in config. Advancing route...")
                     elif orbit_zone:
                         zone_id = orbit_zone.get("id") or f"zone_{target.get('index', 0)}"
                         if zone_id in self.interacted_zones:
-                            print(f"\n[AUTOPILOT] Yellow Zone ({zone_id}) already completed. Advancing...")
+                            _log(f"\n[AUTOPILOT] Yellow Zone ({zone_id}) already completed. Advancing...")
                         else:
                             self.interacted_zones.add(zone_id)
                             self.execute_yellow_zone_interaction(orbit_zone)
                             if stop_handler.is_stopped() or not self.is_active:
                                 return self.get_telemetry(None, 0.0, [])
-                            self.is_orbiting = True
-                            self.orbit_start_time = time.time()
-                            self.last_orbit_right_click = time.time()
-                            self.orbit_duration = float(orbit_zone.get("duration", getattr(self.movement_path, "orbit_duration_seconds", 10.0)))
-                            self.current_orbit_zone = orbit_zone
-                            self.orbit_perimeter_pts = orbit_zone.get("perimeter_points", [])
-                            if self.orbit_perimeter_pts:
-                                best_p_idx = 0
-                                best_p_dist = float("inf")
-                                for p_i, p_pt in enumerate(self.orbit_perimeter_pts):
-                                    d = math.hypot(p_pt[0] - current_pos[0], p_pt[1] - current_pos[1])
-                                    if d < best_p_dist:
-                                        best_p_dist = d
-                                        best_p_idx = p_i
-                                self.orbit_point_idx = best_p_idx
-                            self.status_message = f"Orbiting Yellow Zone ({self.orbit_duration:.1f}s left)"
-                            return self.get_telemetry(target, dist, list(self.held_keys))
+                            if not getattr(self, "_routine_did_orbit", False):
+                                self.is_orbiting = True
+                                self.orbit_start_time = time.time()
+                                self.last_orbit_right_click = time.time()
+                                self.orbit_duration = float(orbit_zone.get("duration", getattr(self.movement_path, "orbit_duration_seconds", 10.0)))
+                                self.current_orbit_zone = orbit_zone
+                                self.orbit_perimeter_pts = orbit_zone.get("perimeter_points", [])
+                                if self.orbit_perimeter_pts:
+                                    best_p_idx = 0
+                                    best_p_dist = float("inf")
+                                    for p_i, p_pt in enumerate(self.orbit_perimeter_pts):
+                                        d = math.hypot(p_pt[0] - current_pos[0], p_pt[1] - current_pos[1])
+                                        if d < best_p_dist:
+                                            best_p_dist = d
+                                            best_p_idx = p_i
+                                    self.orbit_point_idx = best_p_idx
+                                self.status_message = f"Orbiting Yellow Zone ({self.orbit_duration:.1f}s left)"
+                                return self.get_telemetry(target, dist, list(self.held_keys))
 
                 elif target.get("action") == "pink_encounter":
                     wp_idx = target.get("index", 0)

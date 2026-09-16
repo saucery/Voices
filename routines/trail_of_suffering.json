@@ -1,0 +1,54 @@
+{
+  "name": "Trail of Suffering Encounter Routine",
+  "description": "Walk to room, single right-click, verify banner, left-click (disabled), press Q for 3s, and run WASD key loop for 50s",
+  "steps": [
+    {
+      "action": "follow_edge",
+      "target_distance": 20.0,
+      "duration": 40.0,
+      "direction": "counter_clockwise",
+      "description": "Navigate around map boundary maintaining 20px distance from edge"
+    },
+    {
+      "action": "press_key",
+      "key": "w",
+      "duration": 2.5,
+      "description": "Walk towards room (Hold W for 2.5s)"
+    },
+    {
+      "action": "click",
+      "button": "right",
+      "description": "Single Right Click once"
+    },
+    {
+      "action": "wait_for_detection",
+      "target": "TRAIL OF SUFFERING",
+      "timeout": 8.0,
+      "description": "Verify Trail of Suffering encounter banner is visible on screen"
+    },
+    {
+      "action": "click",
+      "button": "left",
+      "disabled": true,
+      "description": "Left-click Trail of Suffering banner (DISABLED for now)"
+    },
+    {
+      "action": "press_key",
+      "key": "q",
+      "duration": 3.0,
+      "description": "Press Q for 3 seconds and release it"
+    },
+    {
+      "action": "key_loop",
+      "keys": [
+        "s",
+        "d",
+        "w",
+        "a"
+      ],
+      "key_duration": 2.0,
+      "total_duration": 50.0,
+      "description": "Run around room using S, D, W, A (2s each) in a loop for 50 seconds"
+    }
+  ]
+}

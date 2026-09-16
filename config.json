@@ -1,0 +1,87 @@
+{
+  "game_window_title": "Path of Exile 2",
+  "map_layout_file": "templates/room_1_entry.png",
+  "movement_file": "paths/movement_route.json",
+  "minimap_roi": {
+    "top_pct": 0.0,
+    "bottom_pct": 0.26,
+    "left_pct": 0.85,
+    "right_pct": 1.0
+  },
+  "matching": {
+    "method": "edge_only",
+    "canny_threshold1": 50,
+    "canny_threshold2": 150,
+    "match_threshold": 0.5,
+    "orb_features": 2500
+  },
+  "autopilot": {
+    "auto_click_encounters": false,
+    "interaction_key": "e",
+    "click_target": "center",
+    "orbit_yellow_zone_enabled": true,
+    "orbit_duration_seconds": 50.0,
+    "orbit_margin_px": 2.0,
+    "orbit_mode": "inside",
+    "orbit_constant_right_click_enabled": true,
+    "orbit_right_click_interval_seconds": 0.75,
+    "click_banner_enabled": true,
+    "encounter_banner_file": "ui/encounter_banner.png",
+    "right_click_after_banner_enabled": true,
+    "middle_click_hold_enabled": true,
+    "middle_click_hold_seconds": 5.0,
+    "banner_approach_wait_seconds": 1.0,
+    "sim_approach_wait_seconds": 2.0,
+    "reclick_after_approach": false,
+    "pink_dot_stop_seconds": 2.5,
+    "sim1_template_file": "ui/sim1.png",
+    "sim2_template_file": "ui/sim2.png",
+    "sim3_template_file": "ui/sim3.png",
+    "sim_match_threshold": 0.5,
+    "sim_click_y_offset_px": 35,
+    "sim_click_x_offset_px": 0,
+    "loot1_template_file": "ui/loot1.png",
+    "loot_match_threshold": 0.5,
+    "loot_pickup_wait_seconds": 0.4,
+    "max_loot_pickups": 15,
+    "wait_for_loot_confirmation": true,
+    "start_at_pink_dot": 0
+  },
+  "rooms": [
+    {
+      "id": "room_1",
+      "name": "Room 1",
+      "threshold": 0.5
+    },
+    {
+      "id": "room_2",
+      "name": "Room 2",
+      "threshold": 0.5
+    },
+    {
+      "id": "room_3",
+      "name": "Room 3",
+      "threshold": 0.5
+    },
+    {
+      "id": "room_4",
+      "name": "Room 4",
+      "threshold": 0.5
+    },
+    {
+      "id": "room_5",
+      "name": "Room 5",
+      "threshold": 0.5
+    },
+    {
+      "id": "room_6",
+      "name": "Room 6",
+      "threshold": 0.5
+    },
+    {
+      "id": "room_7",
+      "name": "Room 7",
+      "threshold": 0.5
+    }
+  ]
+}

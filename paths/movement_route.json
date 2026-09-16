@@ -1,0 +1,857 @@
+{
+  "route_name": "Painted Route",
+  "version": "1.1",
+  "description": "Auto-extracted from templates/route.png (Blue start, Green path, Red finish)",
+  "source_image": "templates/route.png",
+  "settings": {
+    "arrival_distance": 25.0,
+    "loop": false,
+    "orbit_duration_seconds": 50.0,
+    "orbit_margin_px": 2.0,
+    "orbit_mode": "inside"
+  },
+  "orbit_zones": [
+    {
+      "id": "zone_1",
+      "center": [
+        156.9,
+        360.6
+      ],
+      "radius": 51.0,
+      "orbit_radius": 47.0,
+      "orbit_mode": "inside",
+      "bbox": [
+        107,
+        335,
+        100,
+        49
+      ],
+      "duration": 50.0,
+      "perimeter_points": [
+        [
+          203.9,
+          360.6
+        ],
+        [
+          170.2,
+          373.9
+        ],
+        [
+          156.9,
+          374.7
+        ],
+        [
+          140.3,
+          377.3
+        ],
+        [
+          109.9,
+          360.6
+        ],
+        [
+          137.0,
+          340.7
+        ],
+        [
+          156.9,
+          337.2
+        ],
+        [
+          180.1,
+          337.4
+        ]
+      ],
+      "entry_waypoint_index": 7
+    },
+    {
+      "id": "zone_2",
+      "center": [
+        339.0,
+        230.5
+      ],
+      "radius": 50.1,
+      "orbit_radius": 46.1,
+      "orbit_mode": "inside",
+      "bbox": [
+        291,
+        197,
+        98,
+        67
+      ],
+      "duration": 50.0,
+      "perimeter_points": [
+        [
+          385.1,
+          230.5
+        ],
+        [
+          365.1,
+          256.6
+        ],
+        [
+          339.0,
+          262.8
+        ],
+        [
+          316.2,
+          253.3
+        ],
+        [
+          292.9,
+          230.5
+        ],
+        [
+          312.9,
+          204.4
+        ],
+        [
+          339.0,
+          198.2
+        ],
+        [
+          365.1,
+          204.4
+        ]
+      ],
+      "entry_waypoint_index": 19
+    },
+    {
+      "id": "zone_3",
+      "center": [
+        471.5,
+        365.5
+      ],
+      "radius": 72.8,
+      "orbit_radius": 68.8,
+      "orbit_mode": "inside",
+      "bbox": [
+        406,
+        316,
+        128,
+        98
+      ],
+      "duration": 50.0,
+      "perimeter_points": [
+        [
+          505.9,
+          365.5
+        ],
+        [
+          481.2,
+          375.2
+        ],
+        [
+          471.5,
+          386.1
+        ],
+        [
+          427.7,
+          409.3
+        ],
+        [
+          416.5,
+          365.5
+        ],
+        [
+          442.3,
+          336.3
+        ],
+        [
+          471.5,
+          317.3
+        ],
+        [
+          515.3,
+          321.7
+        ]
+      ],
+      "entry_waypoint_index": 27
+    },
+    {
+      "id": "zone_4",
+      "center": [
+        610.2,
+        408.2
+      ],
+      "radius": 55.6,
+      "orbit_radius": 51.6,
+      "orbit_mode": "inside",
+      "bbox": [
+        562,
+        361,
+        92,
+        89
+      ],
+      "duration": 50.0,
+      "perimeter_points": [
+        [
+          646.3,
+          408.2
+        ],
+        [
+          646.7,
+          444.7
+        ],
+        [
+          610.2,
+          439.1
+        ],
+        [
+          592.0,
+          426.4
+        ],
+        [
+          579.2,
+          408.2
+        ],
+        [
+          573.7,
+          371.7
+        ],
+        [
+          610.2,
+          377.2
+        ],
+        [
+          628.4,
+          390.0
+        ]
+      ],
+      "entry_waypoint_index": 34
+    }
+  ],
+  "pink_zones": [
+    {
+      "id": "pink_1",
+      "x": 136,
+      "y": 361,
+      "area": 216.0
+    },
+    {
+      "id": "pink_2",
+      "x": 312,
+      "y": 231,
+      "area": 415.0
+    },
+    {
+      "id": "pink_3",
+      "x": 460,
+      "y": 341,
+      "area": 307.0
+    },
+    {
+      "id": "pink_4",
+      "x": 597,
+      "y": 393,
+      "area": 320.0
+    }
+  ],
+  "waypoints": [
+    {
+      "index": 0,
+      "name": "Start",
+      "x": 130.0,
+      "y": 505.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 1,
+      "name": "Waypoint 1",
+      "x": 130.0,
+      "y": 485.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 2,
+      "name": "Waypoint 2",
+      "x": 130.0,
+      "y": 465.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 3,
+      "name": "Waypoint 3",
+      "x": 130.0,
+      "y": 445.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 4,
+      "name": "Waypoint 4",
+      "x": 130.0,
+      "y": 425.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 5,
+      "name": "Waypoint 5",
+      "x": 130.0,
+      "y": 405.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 6,
+      "name": "Waypoint 6",
+      "x": 132.0,
+      "y": 385.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 7,
+      "name": "Pink Marker (pink_1)",
+      "x": 148.0,
+      "y": 376.0,
+      "action": "pink_encounter",
+      "wait_after": 0.0,
+      "orbit_zone": {
+        "id": "zone_1",
+        "center": [
+          156.9,
+          360.6
+        ],
+        "radius": 51.0,
+        "orbit_radius": 47.0,
+        "orbit_mode": "inside",
+        "bbox": [
+          107,
+          335,
+          100,
+          49
+        ],
+        "duration": 50.0,
+        "perimeter_points": [
+          [
+            203.9,
+            360.6
+          ],
+          [
+            170.2,
+            373.9
+          ],
+          [
+            156.9,
+            374.7
+          ],
+          [
+            140.3,
+            377.3
+          ],
+          [
+            109.9,
+            360.6
+          ],
+          [
+            137.0,
+            340.7
+          ],
+          [
+            156.9,
+            337.2
+          ],
+          [
+            180.1,
+            337.4
+          ]
+        ],
+        "entry_waypoint_index": 7
+      },
+      "pink_pos": [
+        136,
+        361
+      ]
+    },
+    {
+      "index": 8,
+      "name": "Waypoint 8",
+      "x": 168.0,
+      "y": 376.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 9,
+      "name": "Waypoint 9",
+      "x": 188.0,
+      "y": 374.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 10,
+      "name": "Waypoint 10",
+      "x": 201.0,
+      "y": 360.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 11,
+      "name": "Waypoint 11",
+      "x": 206.0,
+      "y": 341.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 12,
+      "name": "Waypoint 12",
+      "x": 222.0,
+      "y": 331.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 13,
+      "name": "Waypoint 13",
+      "x": 238.0,
+      "y": 321.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 14,
+      "name": "Waypoint 14",
+      "x": 254.0,
+      "y": 309.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 15,
+      "name": "Waypoint 15",
+      "x": 270.0,
+      "y": 296.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 16,
+      "name": "Waypoint 16",
+      "x": 286.0,
+      "y": 284.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 17,
+      "name": "Waypoint 17",
+      "x": 301.0,
+      "y": 271.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 18,
+      "name": "Pink Marker (pink_2)",
+      "x": 316.0,
+      "y": 257.0,
+      "action": "pink_encounter",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": [
+        312,
+        231
+      ]
+    },
+    {
+      "index": 19,
+      "name": "Orbit Zone (zone_2)",
+      "x": 336.0,
+      "y": 259.0,
+      "action": "orbit",
+      "wait_after": 0.0,
+      "orbit_zone": {
+        "id": "zone_2",
+        "center": [
+          339.0,
+          230.5
+        ],
+        "radius": 50.1,
+        "orbit_radius": 46.1,
+        "orbit_mode": "inside",
+        "bbox": [
+          291,
+          197,
+          98,
+          67
+        ],
+        "duration": 50.0,
+        "perimeter_points": [
+          [
+            385.1,
+            230.5
+          ],
+          [
+            365.1,
+            256.6
+          ],
+          [
+            339.0,
+            262.8
+          ],
+          [
+            316.2,
+            253.3
+          ],
+          [
+            292.9,
+            230.5
+          ],
+          [
+            312.9,
+            204.4
+          ],
+          [
+            339.0,
+            198.2
+          ],
+          [
+            365.1,
+            204.4
+          ]
+        ],
+        "entry_waypoint_index": 19
+      },
+      "pink_pos": null
+    },
+    {
+      "index": 20,
+      "name": "Waypoint 20",
+      "x": 356.0,
+      "y": 259.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 21,
+      "name": "Waypoint 21",
+      "x": 375.0,
+      "y": 256.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 22,
+      "name": "Waypoint 22",
+      "x": 395.0,
+      "y": 259.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 23,
+      "name": "Waypoint 23",
+      "x": 410.0,
+      "y": 274.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 24,
+      "name": "Waypoint 24",
+      "x": 425.0,
+      "y": 289.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 25,
+      "name": "Waypoint 25",
+      "x": 440.0,
+      "y": 304.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 26,
+      "name": "Pink Marker (pink_3)",
+      "x": 455.0,
+      "y": 319.0,
+      "action": "pink_encounter",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": [
+        460,
+        341
+      ]
+    },
+    {
+      "index": 27,
+      "name": "Orbit Zone (zone_3)",
+      "x": 475.0,
+      "y": 321.0,
+      "action": "orbit",
+      "wait_after": 0.0,
+      "orbit_zone": {
+        "id": "zone_3",
+        "center": [
+          471.5,
+          365.5
+        ],
+        "radius": 72.8,
+        "orbit_radius": 68.8,
+        "orbit_mode": "inside",
+        "bbox": [
+          406,
+          316,
+          128,
+          98
+        ],
+        "duration": 50.0,
+        "perimeter_points": [
+          [
+            505.9,
+            365.5
+          ],
+          [
+            481.2,
+            375.2
+          ],
+          [
+            471.5,
+            386.1
+          ],
+          [
+            427.7,
+            409.3
+          ],
+          [
+            416.5,
+            365.5
+          ],
+          [
+            442.3,
+            336.3
+          ],
+          [
+            471.5,
+            317.3
+          ],
+          [
+            515.3,
+            321.7
+          ]
+        ],
+        "entry_waypoint_index": 27
+      },
+      "pink_pos": null
+    },
+    {
+      "index": 28,
+      "name": "Waypoint 28",
+      "x": 495.0,
+      "y": 321.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 29,
+      "name": "Waypoint 29",
+      "x": 515.0,
+      "y": 323.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 30,
+      "name": "Waypoint 30",
+      "x": 527.0,
+      "y": 339.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 31,
+      "name": "Waypoint 31",
+      "x": 542.0,
+      "y": 354.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 32,
+      "name": "Waypoint 32",
+      "x": 557.0,
+      "y": 369.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 33,
+      "name": "Waypoint 33",
+      "x": 565.0,
+      "y": 386.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 34,
+      "name": "Pink Marker (pink_4)",
+      "x": 568.0,
+      "y": 405.0,
+      "action": "pink_encounter",
+      "wait_after": 0.0,
+      "orbit_zone": {
+        "id": "zone_4",
+        "center": [
+          610.2,
+          408.2
+        ],
+        "radius": 55.6,
+        "orbit_radius": 51.6,
+        "orbit_mode": "inside",
+        "bbox": [
+          562,
+          361,
+          92,
+          89
+        ],
+        "duration": 50.0,
+        "perimeter_points": [
+          [
+            646.3,
+            408.2
+          ],
+          [
+            646.7,
+            444.7
+          ],
+          [
+            610.2,
+            439.1
+          ],
+          [
+            592.0,
+            426.4
+          ],
+          [
+            579.2,
+            408.2
+          ],
+          [
+            573.7,
+            371.7
+          ],
+          [
+            610.2,
+            377.2
+          ],
+          [
+            628.4,
+            390.0
+          ]
+        ],
+        "entry_waypoint_index": 34
+      },
+      "pink_pos": [
+        597,
+        393
+      ]
+    },
+    {
+      "index": 35,
+      "name": "Waypoint 35",
+      "x": 567.0,
+      "y": 424.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 36,
+      "name": "Waypoint 36",
+      "x": 552.0,
+      "y": 439.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 37,
+      "name": "Waypoint 37",
+      "x": 537.0,
+      "y": 454.0,
+      "action": "walk",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    },
+    {
+      "index": 38,
+      "name": "Finish",
+      "x": 528.0,
+      "y": 463.0,
+      "action": "interact",
+      "wait_after": 0.0,
+      "orbit_zone": null,
+      "pink_pos": null
+    }
+  ]
+}

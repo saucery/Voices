@@ -140,6 +140,7 @@ class RouteNavigator:
         self.persistent_right_click_interval: float = 0.65
         self._combat_thread: Optional[threading.Thread] = None
         self.is_holding_mouse: bool = False
+        self.has_executed_initial_hold: bool = False
 
         # Pink Dot Sim & Banner Encounter State
         self.pink_dot_stop_seconds: float = 2.5
@@ -163,11 +164,8 @@ class RouteNavigator:
         self.max_loot_pickups: int = 15
         self.wait_for_loot_confirmation: bool = True
         self.waiting_for_green_light: bool = False
-        self.loot1_img: Optional[np.ndarray] = None
-
-        # Zone Routines (Per-zone step sequences and timings)
         self.zone_routines_file: str = "routines/zone_routines.json"
-        self.zone_routines: Dict[str, Any] = {}
+        self.zone_routines: Optional[Dict[str, Any]] = None
 
         if os.path.exists(config_path):
             try:
@@ -225,6 +223,11 @@ class RouteNavigator:
                 _log("[NAVIGATOR] Global F4 Pause/Resume listener active.")
             except Exception as e:
                 _log(f"[NAVIGATOR] Warning: Could not register global F4 hotkey: {e}")
+            try:
+                keyboard.add_hotkey("f3", self.toggle_persistent_right_click, suppress=False)
+                _log("[NAVIGATOR] Global F3 Right-Click Combat Attack Toggle active.")
+            except Exception as e:
+                _log(f"[NAVIGATOR] Warning: Could not register global F3 hotkey: {e}")
 
     def _load_sim_templates(self):
         """Loads sim1, sim2, and sim3 template images if present on disk."""
@@ -282,6 +285,22 @@ class RouteNavigator:
     def disable_persistent_right_click(self):
         """Disables persistent combat right-clicking."""
         self.persistent_right_click_active = False
+        if self._combat_thread is not None and self._combat_thread.is_alive() and threading.current_thread() != self._combat_thread:
+            self._combat_thread.join(timeout=0.5)
+            self._combat_thread = None
+
+    def toggle_persistent_right_click(self) -> bool:
+        """Toggles persistent combat right-clicking ON and OFF."""
+        if self.persistent_right_click_active:
+            self.disable_persistent_right_click()
+            self.latest_recovery_event = "Right-Click Combat PAUSED [F3]"
+            _log("\n[COMBAT] >>> Persistent right-click attack PAUSED by hotkey [F3].")
+            return False
+        else:
+            self.enable_persistent_right_click()
+            self.latest_recovery_event = f"Right-Click Combat RESUMED [F3] ({self.persistent_right_click_interval:.2f}s)"
+            _log(f"\n[COMBAT] >>> Persistent right-click attack RESUMED by hotkey [F3] ({self.persistent_right_click_interval:.2f}s).")
+            return True
 
     def _start_persistent_combat_thread(self):
         """Spawns background combat thread to continuously pulse right click every interval."""
@@ -784,14 +803,20 @@ class RouteNavigator:
             return True
 
         elif action == "hold_mouse":
+            if self.has_executed_initial_hold:
+                _log(f"    [STEP] Hold mouse already executed once in this session. Skipping hold for {zone_label}.")
+                return True
+
             button = str(step.get("button", "middle")).lower().strip()
             if button == "middle" and not getattr(self, "middle_click_hold_enabled", True):
                 _log(f"    [CONFIG] Middle click hold disabled (middle_click_hold_enabled=false). Skipping...")
+                self.has_executed_initial_hold = True
+                self.enable_persistent_right_click()
                 return True
             duration = float(step.get("duration", self.middle_click_hold_seconds))
             window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
             self.move_mouse_inside_game()
-            _log(f"    [ACTION] Holding mouse '{button}' button for {duration:.1f}s inside game...")
+            _log(f"    [ACTION] Holding mouse '{button}' button for {duration:.1f}s inside game (ONCE on first pink encounter)...")
             self.is_holding_mouse = True
             try:
                 if pydirectinput:
@@ -814,7 +839,8 @@ class RouteNavigator:
                 except Exception:
                     pass
                 _log(f"    [ACTION] Mouse '{button}' button released.")
-            # Enable persistent right click attack starting after Pink Dot #1 hold_mouse
+            # Mark initial hold as completed so subsequent pink dots never hold again in this run
+            self.has_executed_initial_hold = True
             rc_int = step.get("right_click_interval") or step.get("persistent_right_click_interval")
             self.enable_persistent_right_click(interval=rc_int)
             _log(f"    [COMBAT] Persistent right-click attack ACTIVATED (interval={self.persistent_right_click_interval:.2f}s) until destination reached.")
@@ -822,6 +848,10 @@ class RouteNavigator:
             return True
 
         elif action == "click_mouse":
+            if self.has_executed_initial_hold:
+                _log(f"    [STEP] Initial skill click already executed in this session. Skipping click for {zone_label}.")
+                return True
+
             button = str(step.get("button", "right")).lower().strip()
             if button == "right" and not getattr(self, "right_click_after_banner_enabled", True):
                 _log(f"    [CONFIG] Right click after banner disabled (right_click_after_banner_enabled=false). Skipping...")
@@ -1153,6 +1183,7 @@ class RouteNavigator:
 
         self.is_active = True
         self.is_completed = False
+        self.has_executed_initial_hold = False
         self.status_message = "Autopilot Active (Press 'A' to stop | 'F4' to pause)"
         _log(f"[NAVIGATOR] Autopilot Navigation ACTIVATED. Press 'A' to stop | 'F4' to pause.")
 
@@ -1261,7 +1292,8 @@ class RouteNavigator:
             self.waiting_for_green_light = False
             self.is_orbiting = False
             self.current_orbit_zone = None
-            self.persistent_right_click_active = False
+            self.disable_persistent_right_click()
+            self.has_executed_initial_hold = False
             self.interacted_zones.clear()
             self.interacted_pink_dots.clear()
             if self.start_at_pink_dot > 0 and self.movement_path.is_configured:
@@ -1390,6 +1422,7 @@ class RouteNavigator:
         self.is_orbiting = False
         self.current_orbit_zone = None
         self.waiting_for_green_light = False
+        self.has_executed_initial_hold = False
         self.release_all_keys()
 
         # Reset stuck detection
@@ -3114,5 +3147,8 @@ class RouteNavigator:
             "target_pink_name": getattr(self, "target_pink_name", None),
             "target_pink_pos": getattr(self, "target_pink_pos", None),
             "interacted_pink_dots": list(self.interacted_pink_dots),
+            "persistent_combat": self.persistent_right_click_active,
+            "persistent_combat_interval": self.persistent_right_click_interval,
+            "has_executed_initial_hold": self.has_executed_initial_hold,
         }
 

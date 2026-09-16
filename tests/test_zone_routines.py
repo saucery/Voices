@@ -591,3 +591,51 @@ def test_persistent_right_click_during_all_events():
 
     nav.stop()
     assert nav.persistent_right_click_active is False
+
+
+def test_hold_mouse_and_click_mouse_only_once_on_first_pink_dot():
+    """Verifies that hold_mouse and click_mouse only run ONCE on first pink encounter and are skipped on subsequent ones."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    assert nav.has_executed_initial_hold is False
+
+    step_hold = {"action": "hold_mouse", "button": "middle", "duration": 0.05, "right_click_interval": 0.65}
+    step_click = {"action": "click_mouse", "button": "right", "clicks": 1}
+
+    with patch("src.route_navigator.pydirectinput") as mock_pdi:
+        # First pink encounter: executes click and hold
+        nav._execute_zone_routine_step(step_click, {}, zone_label="Pink 1")
+        assert mock_pdi.rightClick.call_count == 1
+
+        nav._execute_zone_routine_step(step_hold, {}, zone_label="Pink 1")
+        assert mock_pdi.mouseDown.call_count == 1
+        assert nav.has_executed_initial_hold is True
+        assert nav.persistent_right_click_active is True
+
+        # Second pink encounter: skips click and hold
+        mock_pdi.reset_mock()
+        nav._execute_zone_routine_step(step_click, {}, zone_label="Pink 2")
+        assert mock_pdi.rightClick.call_count == 0
+
+        nav._execute_zone_routine_step(step_hold, {}, zone_label="Pink 2")
+        assert mock_pdi.mouseDown.call_count == 0
+
+    nav.stop()
+
+
+def test_toggle_persistent_right_click_hotkey():
+    """Verifies that F3 / toggle_persistent_right_click turns combat attacking on/off."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    assert nav.persistent_right_click_active is False
+
+    # Toggle ON
+    active = nav.toggle_persistent_right_click()
+    assert active is True
+    assert nav.persistent_right_click_active is True
+
+    # Toggle OFF
+    active = nav.toggle_persistent_right_click()
+    assert active is False
+    assert nav.persistent_right_click_active is False
+    nav.stop()

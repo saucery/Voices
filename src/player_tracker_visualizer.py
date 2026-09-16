@@ -878,21 +878,26 @@ class PlayerTrackerVisualizer:
         room_disp = f"{room_name} ({room_conf:.0%})" if room_recognized else "Unknown Room"
         cv2.putText(dashboard, room_disp, (room_col_x, telemetry_y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (230, 230, 235), 1, cv2.LINE_AA)
 
-        # Col 4: Monitor & Performance
-        perf_x = left_x + 820
-        cv2.putText(dashboard, "SYSTEM TELEMETRY", (perf_x, telemetry_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
-        perf_txt = f"Mon: {self.monitor_idx}  |  Lat: {self.latency_ms:.0f}ms  |  FPS: {self.fps:.1f}"
-        cv2.putText(dashboard, perf_txt, (perf_x, telemetry_y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (180, 210, 240), 1, cv2.LINE_AA)
+        # Col 4: Monitor, Performance & Combat Attack State
+        perf_x = left_x + 800
+        cv2.putText(dashboard, "SYSTEM & COMBAT HUD", (perf_x, telemetry_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
+        combat_on = nav_res.get("persistent_combat", False)
+        combat_txt = "[F3] Attack: ON" if combat_on else "[F3] Attack: OFF"
+        combat_col = (0, 255, 120) if combat_on else (130, 140, 160)
+        perf_txt = f"Mon: {self.monitor_idx} | {self.fps:.1f} FPS | "
+        cv2.putText(dashboard, perf_txt, (perf_x, telemetry_y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 210, 240), 1, cv2.LINE_AA)
+        t_sz = cv2.getTextSize(perf_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
+        cv2.putText(dashboard, combat_txt, (perf_x + t_sz[0], telemetry_y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.40, combat_col, 1, cv2.LINE_AA)
 
         # =========================================================================
         # 5. FOOTER / KEY SHORTCUTS BAR
         # =========================================================================
         footer_y = canvas_h - 20
         if nav_res.get("waiting_for_green_light"):
-            shortcuts = "[G / CLICK] GREEN LIGHT (RESUME)  |  [P] Pink Dot  |  [F4] Pause  |  [N] Skip WP  |  [R] Reload  |  [V] Map View  |  [Q] Exit"
+            shortcuts = "[G / CLICK] GREEN LIGHT (RESUME)  |  [F3 / X] Pause/Resume Attack  |  [P] Pink Dot  |  [F4] Pause  |  [N] Skip WP  |  [R] Reload  |  [Q] Exit"
             shortcut_color = (0, 255, 160)
         else:
-            shortcuts = "[A / G] Autopilot  |  [P] Pink Dot Target  |  [F4] Pause/Resume  |  [N] Skip WP  |  [R] Reload  |  [V] View  |  [E] Edges  |  [T] Trail  |  [Q] Exit"
+            shortcuts = "[A / G] Autopilot  |  [F3 / X] Attack ON/OFF  |  [P] Pink Dot  |  [F4] Pause/Resume  |  [N] Skip WP  |  [R] Reload  |  [V] View  |  [Q] Exit"
             shortcut_color = (140, 150, 165)
         cv2.putText(
             dashboard,
@@ -1040,6 +1045,10 @@ class PlayerTrackerVisualizer:
                     self.switch_monitor()
                     capturer = self.get_or_create_capturer()
                     last_captured_frame = None
+                elif key in [ord("x"), ord("X")]:
+                    active = self.navigator.toggle_persistent_right_click()
+                    self.notification_msg = "COMBAT ATTACK: ACTIVE" if active else "COMBAT ATTACK: PAUSED"
+                    self.notification_expiry = time.time() + 3.0
                 elif key in [ord("s"), ord("S")]:
                     if last_captured_frame is not None:
                         self.save_snapshot(dashboard)

@@ -136,6 +136,8 @@ class RouteNavigator:
         self.reclick_after_approach: bool = False
         self.interacted_zones: Set[str] = set()
         self.last_orbit_right_click: float = 0.0
+        self.persistent_right_click_active: bool = False
+        self.persistent_right_click_interval: float = 0.65
 
         # Pink Dot Sim & Banner Encounter State
         self.pink_dot_stop_seconds: float = 2.5
@@ -608,6 +610,20 @@ class RouteNavigator:
                 key_str = "+".join(k.upper() for k in sorted(needed_keys))
                 self.status_message = f"[{label}] Walking [{key_str}] (dist={dist:.0f}px, {rem:.1f}s)"
 
+                # Periodic right-click attack if persistent combat is active
+                if self.persistent_right_click_active:
+                    rc_int = getattr(self, "persistent_right_click_interval", 0.65)
+                    if (now - self.last_orbit_right_click) >= rc_int:
+                        self.last_orbit_right_click = now
+                        self.move_mouse_inside_game()
+                        if pydirectinput:
+                            try:
+                                pydirectinput.rightClick()
+                                time.sleep(0.02)
+                                pydirectinput.mouseUp(button="right")
+                            except Exception:
+                                pass
+
                 self.is_simulating_key = True
                 try:
                     if pydirectinput:
@@ -734,6 +750,12 @@ class RouteNavigator:
                 except Exception:
                     pass
                 _log(f"    [ACTION] Mouse '{button}' button released.")
+            # Enable persistent right click attack starting after Pink Dot #1 hold_mouse
+            self.persistent_right_click_active = True
+            rc_int = step.get("right_click_interval") or step.get("persistent_right_click_interval")
+            if rc_int:
+                self.persistent_right_click_interval = float(rc_int)
+            _log(f"    [COMBAT] Persistent right-click attack ACTIVATED (interval={self.persistent_right_click_interval:.2f}s) until destination reached.")
             time.sleep(0.1)
             return True
 
@@ -1088,6 +1110,7 @@ class RouteNavigator:
         self.waiting_for_green_light = False
         self.is_orbiting = False
         self.current_orbit_zone = None
+        self.persistent_right_click_active = False
         self.interacted_zones.clear()
         self.interacted_pink_dots.clear()
         self.release_all_keys()
@@ -1174,6 +1197,7 @@ class RouteNavigator:
             self.waiting_for_green_light = False
             self.is_orbiting = False
             self.current_orbit_zone = None
+            self.persistent_right_click_active = False
             self.interacted_zones.clear()
             self.interacted_pink_dots.clear()
             if self.start_at_pink_dot > 0 and self.movement_path.is_configured:
@@ -2577,9 +2601,10 @@ class RouteNavigator:
                 if target is None:
                     self.is_completed = True
                     self.is_active = False
+                    self.persistent_right_click_active = False
                     self.release_all_keys()
                     self.status_message = "Route Completed!"
-                    _log("\n[AUTOPILOT] >>> ALL WAYPOINTS COMPLETED! Reached destination.")
+                    _log("\n[AUTOPILOT] >>> ALL WAYPOINTS COMPLETED! Reached destination (Red Dot).")
                     break
 
                 target_pos = (target["x"], target["y"])
@@ -2656,9 +2681,10 @@ class RouteNavigator:
                     if next_target is None:
                         self.is_completed = True
                         self.is_active = False
+                        self.persistent_right_click_active = False
                         self.release_all_keys()
                         self.status_message = "Route Finished!"
-                        _log("\n[AUTOPILOT] >>> DESTINATION REACHED!")
+                        _log("\n[AUTOPILOT] >>> DESTINATION REACHED (Red Dot)!")
                         break
                     target = next_target
                     target_pos = (target["x"], target["y"])
@@ -2714,6 +2740,20 @@ class RouteNavigator:
                 self.status_message = f"Orbiting Shape [{key_str}] ({rem:.1f}s left)"
             else:
                 self.status_message = f"WP #{target.get('index', 0)} ({target.get('name', 'WP')}) | [{key_str}] ({dist:.0f}px)"
+
+            # Periodic right-click attack during transit if persistent combat is active
+            if self.persistent_right_click_active and not self.is_orbiting:
+                rc_int = getattr(self, "persistent_right_click_interval", 0.65)
+                if (now - self.last_orbit_right_click) >= rc_int:
+                    self.last_orbit_right_click = now
+                    self.move_mouse_inside_game()
+                    if pydirectinput:
+                        try:
+                            pydirectinput.rightClick()
+                            time.sleep(0.02)
+                            pydirectinput.mouseUp(button="right")
+                        except Exception:
+                            pass
 
             # Sustained step pulse directly into game
             self.is_simulating_key = True
@@ -2814,6 +2854,7 @@ class RouteNavigator:
                     self.release_all_keys()
                     self.is_active = False
                     self.is_completed = True
+                    self.persistent_right_click_active = False
                     self.status_message = "Route Completed!"
                     return self.get_telemetry(None, 0.0, [])
                 target_pos = (target["x"], target["y"])
@@ -2944,6 +2985,7 @@ class RouteNavigator:
                     self.release_all_keys()
                     self.is_active = False
                     self.is_completed = True
+                    self.persistent_right_click_active = False
                     self.status_message = "Route Finished!"
                     return self.get_telemetry(None, 0.0, [])
                 target = next_target

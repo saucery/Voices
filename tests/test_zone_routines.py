@@ -541,6 +541,20 @@ def test_update_orbit_does_not_trigger_loot_when_worker_thread_alive():
     assert telemetry is not None
 
 
+def test_persistent_right_click_activation_and_reset():
+    """Verifies that persistent right-click activates on hold_mouse and resets on stop/destination."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    assert nav.persistent_right_click_active is False
 
+    # Simulate hold_mouse execution
+    step = {"action": "hold_mouse", "button": "middle", "duration": 0.05, "right_click_interval": 0.65}
+    with patch("src.route_navigator.pydirectinput"):
+        nav._execute_zone_routine_step(step, {}, zone_label="Pink 1")
 
+    assert nav.persistent_right_click_active is True
+    assert nav.persistent_right_click_interval == 0.65
 
+    # Test stop() resets it
+    nav.stop()
+    assert nav.persistent_right_click_active is False

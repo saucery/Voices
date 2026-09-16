@@ -558,3 +558,36 @@ def test_persistent_right_click_activation_and_reset():
     # Test stop() resets it
     nav.stop()
     assert nav.persistent_right_click_active is False
+
+
+def test_persistent_right_click_during_all_events():
+    """Verifies that right-clicking continues during waiting_for_green_light, stop, and update ticks."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.enable_persistent_right_click(interval=0.05)
+    assert nav.persistent_right_click_active is True
+
+    with patch("src.route_navigator.pydirectinput") as mock_pdi:
+        # 1. Test update() tick triggers right click
+        nav.last_orbit_right_click = time.time() - 1.0
+        nav.update((100, 100))
+        assert mock_pdi.rightClick.call_count >= 1
+
+        # 2. Test during stop step
+        mock_pdi.rightClick.reset_mock()
+        nav.last_orbit_right_click = time.time() - 1.0
+        stop_step = {"action": "stop", "duration": 0.1}
+        nav._execute_zone_routine_step(stop_step, {}, zone_label="Test")
+        assert mock_pdi.rightClick.call_count >= 1
+
+        # 3. Test during waiting_for_green_light
+        mock_pdi.rightClick.reset_mock()
+        nav.last_orbit_right_click = time.time() - 1.0
+        nav.waiting_for_green_light = True
+        # trigger check
+        triggered = nav._trigger_persistent_right_click_if_due()
+        assert triggered is True
+        assert mock_pdi.rightClick.call_count >= 1
+
+    nav.stop()
+    assert nav.persistent_right_click_active is False

@@ -36,6 +36,8 @@ class MovementPath:
         self.waypoints: List[Dict[str, Any]] = []
         self.orbit_zones: List[Dict[str, Any]] = []
         self.pink_zones: List[Dict[str, Any]] = []
+        self.cyan_zones: List[Dict[str, Any]] = []
+        self.loot_zones: List[Dict[str, Any]] = []
         self.orbit_duration_seconds: float = 10.0
         self.orbit_margin_px: float = 8.0
         self.orbit_mode: str = "inside"
@@ -120,6 +122,8 @@ class MovementPath:
             self.orbit_mode = str(settings.get("orbit_mode", self.orbit_mode)).lower()
             self.orbit_zones = data.get("orbit_zones", [])
             self.pink_zones = data.get("pink_zones", [])
+            self.cyan_zones = data.get("cyan_zones", [])
+            self.loot_zones = data.get("loot_zones", [])
 
             self.waypoints = []
             for idx, wp in enumerate(raw_waypoints):
@@ -133,6 +137,8 @@ class MovementPath:
                         "wait_after": float(wp.get("wait_after", 0.0)),
                         "orbit_zone": wp.get("orbit_zone", None),
                         "pink_pos": wp.get("pink_pos", None),
+                        "sim_pos": wp.get("sim_pos", None),
+                        "loot_pos": wp.get("loot_pos", None),
                     })
 
             self.current_idx = 0
@@ -184,8 +190,55 @@ class MovementPath:
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         h, w = img.shape[:2]
 
-        # 1. Detect Blue Start Dot (H: 90..140, S: 80..255, V: 80..255)
-        blue_mask = cv2.inRange(hsv, (90, 80, 80), (140, 255, 255))
+        b_chan, g_chan, r_chan = cv2.split(img)
+        h_chan, s_chan, v_chan = cv2.split(hsv)
+
+        # 0a. Detect Cyan Dots (SIM Locations: B >= 180, G >= 180, R <= 100, H 80..98, S >= 100, V >= 150)
+        cyan_mask_bool = (b_chan >= 180) & (g_chan >= 180) & (r_chan <= 100) & (h_chan >= 80) & (h_chan <= 98) & (s_chan >= 100) & (v_chan >= 150)
+        cyan_mask = (cyan_mask_bool.astype(np.uint8) * 255)
+        c_cnts, _ = cv2.findContours(cyan_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        self.cyan_zones = []
+        for cc in c_cnts:
+            area = cv2.contourArea(cc)
+            if area >= 8.0:
+                M = cv2.moments(cc)
+                if M["m00"] > 0:
+                    cx_c = int(M["m10"] / M["m00"])
+                    cy_c = int(M["m01"] / M["m00"])
+                    self.cyan_zones.append({
+                        "id": f"cyan_{len(self.cyan_zones) + 1}",
+                        "x": cx_c,
+                        "y": cy_c,
+                        "area": float(area),
+                    })
+
+        # 0b. Detect White Dots (Loot Locations: R >= 220, G >= 220, B >= 220, S <= 40, V >= 220)
+        white_mask_bool = (r_chan >= 220) & (g_chan >= 220) & (b_chan >= 220) & (s_chan <= 40) & (v_chan >= 220)
+        white_mask = (white_mask_bool.astype(np.uint8) * 255)
+        w_cnts, _ = cv2.findContours(white_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        self.loot_zones = []
+        for wc in w_cnts:
+            area = cv2.contourArea(wc)
+            if area >= 8.0:
+                M = cv2.moments(wc)
+                if M["m00"] > 0:
+                    wx_c = int(M["m10"] / M["m00"])
+                    wy_c = int(M["m01"] / M["m00"])
+                    if wx_c <= 5 or wy_c <= 5 or wx_c >= (w - 5) or wy_c >= (h - 5):
+                        continue
+                    self.loot_zones.append({
+                        "id": f"loot_{len(self.loot_zones) + 1}",
+                        "x": wx_c,
+                        "y": wy_c,
+                        "area": float(area),
+                    })
+
+        # 1. Detect Blue Start Dot (H: 98..135, S: 80..255, V: 80..255, B > G + 30, B > 140, R < 120)
+        blue_mask_raw = cv2.inRange(hsv, (98, 80, 80), (140, 255, 255))
+        is_blue_color = (b_chan.astype(int) > g_chan.astype(int) + 30) & (b_chan > 140) & (r_chan < 120)
+        blue_mask = cv2.bitwise_and(blue_mask_raw, (is_blue_color.astype(np.uint8) * 255))
+        blue_mask = cv2.bitwise_and(blue_mask, cv2.bitwise_not(cyan_mask))
+        blue_mask = cv2.bitwise_and(blue_mask, cv2.bitwise_not(white_mask))
         b_cnts, _ = cv2.findContours(blue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         start_pt = None
         best_b_area = 0.0
@@ -197,10 +250,12 @@ class MovementPath:
                     start_pt = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
                     best_b_area = area
 
-        # 2. Detect Red Finish Dot (H: 0..12 or 168..180, S: 80..255, V: 80..255)
+        # 2. Detect Red Finish Dot (H: 0..12 or 168..180, S: 80..255, V: 80..255, B < 80, G < 80)
         red1 = cv2.inRange(hsv, (0, 80, 80), (12, 255, 255))
         red2 = cv2.inRange(hsv, (168, 80, 80), (180, 255, 255))
-        red_mask = cv2.bitwise_or(red1, red2)
+        red_mask_raw = cv2.bitwise_or(red1, red2)
+        is_red_color = (r_chan >= 120) & (b_chan < 80) & (g_chan < 80)
+        red_mask = cv2.bitwise_and(red_mask_raw, (is_red_color.astype(np.uint8) * 255))
         r_cnts, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         finish_pt = None
         best_r_area = 0.0
@@ -300,13 +355,15 @@ class MovementPath:
         has_blue = (b_chan.astype(int) > (g_chan.astype(int) * 0.65)) | (b_chan >= 60) | (h_chan <= 168)
         is_pink = is_pink & has_blue
 
-        # Explicit exclusions of other map features (yellow zones, blue start, green line, pure red finish)
+        # Explicit exclusions of other map features (yellow zones, blue start, green line, pure red finish, cyan, white)
         not_yellow = ~((r_chan > 140) & (g_chan > 140) & (b_chan < 130))
         not_blue = ~((b_chan > 140) & (r_chan < 100))
+        not_cyan = ~cyan_mask_bool
+        not_white = ~white_mask_bool
         not_green = ~(g_chan.astype(int) > r_chan.astype(int) + 15)
         not_pure_red = ~((r_chan >= 120) & (b_chan < 55) & (g_chan < 55) & ((h_chan <= 10) | (h_chan >= 170)))
 
-        pink_mask_bool = is_pink & not_yellow & not_blue & not_green & not_pure_red
+        pink_mask_bool = is_pink & not_yellow & not_blue & not_cyan & not_white & not_green & not_pure_red
         pink_mask = (pink_mask_bool.astype(np.uint8) * 255)
         pink_mask_clean = cv2.morphologyEx(pink_mask, cv2.MORPH_OPEN, open_kernel)
 
@@ -321,7 +378,7 @@ class MovementPath:
                     py_c = int(M["m01"] / M["m00"])
                     if len(route_pts) > 0:
                         d_to_route = np.min(np.hypot(route_pts[:, 0] - px_c, route_pts[:, 1] - py_c))
-                        if d_to_route > 65.0:
+                        if d_to_route > 150.0:
                             continue
                     self.pink_zones.append({
                         "id": f"pink_{len(self.pink_zones) + 1}",
@@ -330,9 +387,13 @@ class MovementPath:
                         "area": float(area),
                     })
 
-        # Incorporate pink dots into path_canvas so route can bridge through cleanly
+        # Incorporate pink, cyan, and white dots into path_canvas so route can bridge through cleanly
         if len(self.pink_zones) > 0:
             path_canvas = cv2.bitwise_or(path_canvas, pink_mask_clean)
+        if len(self.cyan_zones) > 0:
+            path_canvas = cv2.bitwise_or(path_canvas, cyan_mask)
+        if len(self.loot_zones) > 0:
+            path_canvas = cv2.bitwise_or(path_canvas, white_mask)
 
         # Fallback endpoints if dots were omitted (use line extremities)
         if start_pt is None or finish_pt is None:
@@ -425,37 +486,57 @@ class MovementPath:
                 "wait_after": 0.0,
                 "orbit_zone": None,
                 "pink_pos": None,
+                "sim_pos": None,
+                "loot_pos": None,
             }
             for i, pt in enumerate(sampled)
         ]
 
-        # Associate detected yellow orbit zones with closest sampled waypoint and sort along route
-        matched_zones = []
-        for zone in self.orbit_zones:
-            zc = zone["center"]
-            best_idx = None
-            best_d = float("inf")
-            for idx, wp in enumerate(self.waypoints):
-                if 0 < idx < len(self.waypoints) - 1:
-                    d = math.hypot(wp["x"] - zc[0], wp["y"] - zc[1])
-                    if d < best_d:
-                        best_d = d
-                        best_idx = idx
+        # Pre-link ALL detected pink dots to their nearest Cyan SIM, White Loot, and Yellow Orbit zone
+        for p_i, pz in enumerate(self.pink_zones, start=1):
+            pz["id"] = f"pink_{p_i}"
+            px_c, py_c = pz["x"], pz["y"]
 
-            if best_idx is not None and best_d <= (zone["radius"] * 2.0 + 20.0):
-                matched_zones.append((best_idx, zone))
+            # Associate nearest cyan dot (SIM location) within 150px
+            best_c = None
+            best_c_dist = float("inf")
+            for cz in self.cyan_zones:
+                d = math.hypot(cz["x"] - px_c, cz["y"] - py_c)
+                if d < best_c_dist:
+                    best_c_dist = d
+                    best_c = cz
+            if best_c is not None and best_c_dist <= 150.0:
+                pz["sim_pos"] = [best_c["x"], best_c["y"]]
+                best_c["associated_pink"] = pz["id"]
 
-        matched_zones.sort(key=lambda item: item[0])
-        self.orbit_zones = []
-        for z_i, (best_idx, zone) in enumerate(matched_zones, start=1):
-            zone["id"] = f"zone_{z_i}"
-            zone["entry_waypoint_index"] = best_idx
-            self.waypoints[best_idx]["action"] = "orbit"
-            self.waypoints[best_idx]["name"] = f"Orbit Zone ({zone['id']})"
-            self.waypoints[best_idx]["orbit_zone"] = zone
-            self.orbit_zones.append(zone)
+            # Associate nearest white dot (LOOT location) within 180px
+            best_w = None
+            best_w_dist = float("inf")
+            for wz in self.loot_zones:
+                d = math.hypot(wz["x"] - px_c, wz["y"] - py_c)
+                if d < best_w_dist:
+                    best_w_dist = d
+                    best_w = wz
+            if best_w is not None and best_w_dist <= 180.0:
+                pz["loot_pos"] = [best_w["x"], best_w["y"]]
+                best_w["associated_pink"] = pz["id"]
 
-        # Associate detected pink encounter dots with closest sampled waypoint and sort along route
+            # Associate nearest yellow orbit zone within 80px
+            best_y = None
+            best_y_dist = float("inf")
+            for yz in self.orbit_zones:
+                zc = yz.get("center", [0, 0])
+                d = math.hypot(zc[0] - px_c, zc[1] - py_c)
+                if d < best_y_dist:
+                    best_y_dist = d
+                    best_y = yz
+            if best_y is not None and best_y_dist <= 80.0:
+                pz["orbit_zone"] = best_y
+                best_y["associated_pink"] = pz["id"]
+                if pz.get("loot_pos") and not best_y.get("loot_pos"):
+                    best_y["loot_pos"] = pz["loot_pos"]
+
+        # Associate detected pink encounter dots with closest sampled waypoint along route
         matched_pinks = []
         for pz in self.pink_zones:
             px_c, py_c = pz["x"], pz["y"]
@@ -468,38 +549,86 @@ class MovementPath:
                         best_d = d
                         best_idx = idx
 
-            if best_idx is not None and best_d <= 55.0:
+            if best_idx is not None and best_d <= 75.0:
                 matched_pinks.append((best_idx, pz))
 
         matched_pinks.sort(key=lambda item: item[0])
-        self.pink_zones = []
         for p_i, (best_idx, pz) in enumerate(matched_pinks, start=1):
-            pz["id"] = f"pink_{p_i}"
+            pz["route_order"] = p_i
             self.waypoints[best_idx]["action"] = "pink_encounter"
             self.waypoints[best_idx]["name"] = f"Pink Marker ({pz['id']})"
             self.waypoints[best_idx]["pink_pos"] = [pz["x"], pz["y"]]
-            self.pink_zones.append(pz)
+            if pz.get("sim_pos"):
+                self.waypoints[best_idx]["sim_pos"] = pz["sim_pos"]
+            if pz.get("loot_pos"):
+                self.waypoints[best_idx]["loot_pos"] = pz["loot_pos"]
+            if pz.get("orbit_zone"):
+                self.waypoints[best_idx]["orbit_zone"] = pz["orbit_zone"]
+                pz["orbit_zone"]["entry_waypoint_index"] = best_idx
+
+        # Associate standalone yellow orbit zones (not part of a pink encounter)
+        for z_i, zone in enumerate(self.orbit_zones, start=1):
+            zone["id"] = f"zone_{z_i}"
+            zc = zone["center"]
+            if zone.get("associated_pink"):
+                continue  # Managed directly through pink encounter routine
+
+            best_idx = None
+            best_d = float("inf")
+            for idx, wp in enumerate(self.waypoints):
+                if 0 < idx < len(self.waypoints) - 1:
+                    d = math.hypot(wp["x"] - zc[0], wp["y"] - zc[1])
+                    if d < best_d:
+                        best_d = d
+                        best_idx = idx
+
+            if best_idx is not None and best_d <= (zone["radius"] * 2.0 + 20.0):
+                zone["entry_waypoint_index"] = best_idx
+                self.waypoints[best_idx]["action"] = "orbit"
+                self.waypoints[best_idx]["name"] = f"Orbit Zone ({zone['id']})"
+                self.waypoints[best_idx]["orbit_zone"] = zone
+
+        # Also associate white dots with yellow orbit zones if any orbit zone does not have loot_pos yet
+        for zone in self.orbit_zones:
+            zc = zone.get("center", [0, 0])
+            best_w = None
+            best_w_dist = float("inf")
+            for wz in self.loot_zones:
+                d = math.hypot(wz["x"] - zc[0], wz["y"] - zc[1])
+                if d < best_w_dist:
+                    best_w_dist = d
+                    best_w = wz
+            if best_w is not None and best_w_dist <= 150.0:
+                zone["loot_pos"] = [best_w["x"], best_w["y"]]
+                e_idx = zone.get("entry_waypoint_index")
+                if e_idx is not None and 0 <= e_idx < len(self.waypoints):
+                    if not self.waypoints[e_idx].get("loot_pos"):
+                        self.waypoints[e_idx]["loot_pos"] = [best_w["x"], best_w["y"]]
 
         self.current_idx = 0
         self.is_loaded = True
 
         zones_log = f", {len(self.orbit_zones)} yellow shape(s)" if self.orbit_zones else ""
         pink_log = f", {len(self.pink_zones)} pink marker(s)" if self.pink_zones else ""
-        print(f"[MOVEMENT] Successfully extracted {len(self.waypoints)} waypoints{zones_log}{pink_log} from '{image_path}':")
+        cyan_log = f", {len(self.cyan_zones)} cyan sim(s)" if self.cyan_zones else ""
+        loot_log = f", {len(self.loot_zones)} white loot(s)" if self.loot_zones else ""
+        print(f"[MOVEMENT] Successfully extracted {len(self.waypoints)} waypoints{zones_log}{pink_log}{cyan_log}{loot_log} from '{image_path}':")
         print(f"  Start  (Blue): {start_pt}")
         print(f"  Finish (Red):  {finish_pt}")
         print(f"  Path Length:   {len(full_path)} px")
         for zone in self.orbit_zones:
             print(f"  Yellow Orbit Zone: Center={zone['center']}, Radius={zone['radius']}px, OrbitRadius={zone['orbit_radius']}px ({zone.get('orbit_mode', 'inside')}), Duration={zone['duration']}s")
         for pz in self.pink_zones:
-            print(f"  Pink Encounter Marker: Center=({pz['x']}, {pz['y']}), Area={pz.get('area', 0.0)}px")
+            sim_info = f", SimPos={pz.get('sim_pos')}" if pz.get('sim_pos') else ""
+            loot_info = f", LootPos={pz.get('loot_pos')}" if pz.get('loot_pos') else ""
+            print(f"  Pink Encounter Marker: Center=({pz['x']}, {pz['y']}), Area={pz.get('area', 0.0)}px{sim_info}{loot_info}")
 
         # Save to JSON for caching & user inspection
         if save_json_path:
             os.makedirs(os.path.dirname(os.path.abspath(save_json_path)), exist_ok=True)
             export_data = {
                 "route_name": self.route_name,
-                "version": "1.1",
+                "version": "1.2",
                 "description": self.description,
                 "source_image": image_path,
                 "settings": {
@@ -511,6 +640,8 @@ class MovementPath:
                 },
                 "orbit_zones": self.orbit_zones,
                 "pink_zones": self.pink_zones,
+                "cyan_zones": self.cyan_zones,
+                "loot_zones": self.loot_zones,
                 "waypoints": self.waypoints,
             }
             with open(save_json_path, "w", encoding="utf-8") as f:
@@ -615,6 +746,14 @@ class MovementPath:
     def get_pink_zones(self) -> List[Dict[str, Any]]:
         """Returns list of all detected pink encounter/sim markers."""
         return self.pink_zones
+
+    def get_cyan_zones(self) -> List[Dict[str, Any]]:
+        """Returns list of all detected cyan SIM markers."""
+        return self.cyan_zones
+
+    def get_loot_zones(self) -> List[Dict[str, Any]]:
+        """Returns list of all detected white loot markers."""
+        return self.loot_zones
 
     def get_pink_waypoints(self) -> List[Tuple[int, Dict[str, Any]]]:
         """

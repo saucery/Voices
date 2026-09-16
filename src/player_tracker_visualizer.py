@@ -759,6 +759,28 @@ class PlayerTrackerVisualizer:
                         cv2.putText(right_view_img, f"PINK #{p_idx}", (max(0, px - 20), max(12, py - 10)),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.32, (255, 180, 255), 1, cv2.LINE_AA)
 
+                    # Associated Cyan SIM Marker
+                    sim_p = p_wp.get("sim_pos")
+                    if sim_p:
+                        sx, sy = int(sim_p[0]), int(sim_p[1])
+                        if 0 <= sx < rw and 0 <= sy < rh:
+                            cv2.line(right_view_img, (px, py), (sx, sy), (200, 200, 0), 1, cv2.LINE_AA)
+                            cv2.circle(right_view_img, (sx, sy), 5, (255, 255, 0), -1, cv2.LINE_AA)
+                            cv2.circle(right_view_img, (sx, sy), 7, (200, 200, 0), 1, cv2.LINE_AA)
+                            cv2.putText(right_view_img, f"SIM #{p_idx}", (max(0, sx - 16), max(10, sy - 8)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.28, (255, 255, 0), 1, cv2.LINE_AA)
+
+                    # Associated White Loot Marker
+                    loot_p = p_wp.get("loot_pos")
+                    if loot_p:
+                        lx, ly = int(loot_p[0]), int(loot_p[1])
+                        if 0 <= lx < rw and 0 <= ly < rh:
+                            cv2.line(right_view_img, (px, py), (lx, ly), (180, 180, 180), 1, cv2.LINE_AA)
+                            cv2.circle(right_view_img, (lx, ly), 5, (255, 255, 255), -1, cv2.LINE_AA)
+                            cv2.circle(right_view_img, (lx, ly), 7, (200, 200, 200), 1, cv2.LINE_AA)
+                            cv2.putText(right_view_img, f"LOOT #{p_idx}", (max(0, lx - 18), max(10, ly - 8)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.28, (255, 255, 255), 1, cv2.LINE_AA)
+
             # 2. Live Character Trajectory
             if self.show_trajectory and len(self.trajectory_history) > 1:
                 pts = [h["pos"] for h in self.trajectory_history if h.get("pos")]

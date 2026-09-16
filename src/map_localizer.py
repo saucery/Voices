@@ -188,6 +188,72 @@ class MapLocalizer:
         c_h, c_w = minimap_crop.shape[:2]
         crop_features = self.extract_features(minimap_crop, is_crop=True)
 
+        # Fast ROI search when previously locked (reduces search time from ~500ms to ~2ms)
+        if fast_track and self.last_player_pos is not None and self.locked_counter >= 1:
+            lx, ly = self.last_player_pos
+            roi_margin = 100
+            rx1 = max(0, int(lx - roi_margin))
+            ry1 = max(0, int(ly - roi_margin))
+            rx2 = min(self.ref_w, int(lx + roi_margin))
+            ry2 = min(self.ref_h, int(ly + roi_margin))
+            ref_roi = self.ref_edges[ry1:ry2, rx1:rx2]
+
+            cur_scale = self.last_scale or 0.22
+            roi_scales = [max(self.min_scale, cur_scale - 0.015), cur_scale, min(self.max_scale, cur_scale + 0.015)]
+            roi_best_score = -1.0
+            roi_best_loc = None
+            roi_best_scale = cur_scale
+            roi_best_size = (1, 1)
+
+            for s in roi_scales:
+                tw = max(10, int(c_w * s))
+                th = max(10, int(c_h * s))
+                if tw >= (rx2 - rx1) or th >= (ry2 - ry1):
+                    continue
+                resized = cv2.resize(crop_features, (tw, th), interpolation=cv2.INTER_AREA)
+                res = cv2.matchTemplate(ref_roi, resized, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if float(max_val) > roi_best_score:
+                    roi_best_score = float(max_val)
+                    roi_best_loc = (max_loc[0] + rx1, max_loc[1] + ry1)
+                    roi_best_scale = s
+                    roi_best_size = (tw, th)
+
+            if roi_best_score >= 0.15 and roi_best_loc is not None:
+                tw, th = roi_best_size
+                player_x = int(roi_best_loc[0] + tw // 2)
+                player_y = int(roi_best_loc[1] + th // 2)
+
+                step_dist = ((player_x - lx) ** 2 + (player_y - ly) ** 2) ** 0.5
+                if step_dist < 20.0:
+                    player_x = int(round(0.65 * player_x + 0.35 * lx))
+                    player_y = int(round(0.65 * player_y + 0.35 * ly))
+
+                self.last_player_pos = (player_x, player_y)
+                self.last_confidence = roi_best_score
+                self.last_scale = roi_best_scale
+                self.locked_counter = min(10, self.locked_counter + 1)
+                bounding_box = (
+                    max(0, roi_best_loc[0]),
+                    max(0, roi_best_loc[1]),
+                    min(self.ref_w, roi_best_loc[0] + tw),
+                    min(self.ref_h, roi_best_loc[1] + th),
+                )
+                return {
+                    "located": True,
+                    "confidence": round(roi_best_score, 4),
+                    "player_position": (player_x, player_y),
+                    "player_x": player_x,
+                    "player_y": player_y,
+                    "bounding_box": bounding_box,
+                    "matched_scale": round(roi_best_scale, 4),
+                    "target_size": (tw, th),
+                    "map_width": self.ref_w,
+                    "map_height": self.ref_h,
+                    "red_zone_bounds": self.red_zone_bounds,
+                    "minimap_crop": minimap_crop,
+                }
+
         # Multi-scale search strategy:
         # If previously locked with high confidence, do a fast narrow search around last_scale
         candidate_scales: List[float] = []

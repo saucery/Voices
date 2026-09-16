@@ -30,7 +30,7 @@ def test_visualizer_has_route_navigator():
     assert visualizer.navigator is not None
     assert visualizer.navigator.monitor_idx == 2
     assert visualizer.navigator.movement_path.is_configured is True
-    assert len(visualizer.navigator.movement_path.waypoints) >= 5
+    assert len(visualizer.navigator.movement_path.waypoints) >= 3
     assert visualizer.navigator.is_active is False
 
 

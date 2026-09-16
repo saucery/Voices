@@ -109,3 +109,79 @@ def test_gap_bridging_and_reload(tmp_path):
     assert len(path_mgr.get_waypoints()) >= 4
 
 
+def test_cyan_and_white_dot_extraction_and_linking(tmp_path):
+    """
+    Verifies that:
+    1. Cyan dots (SIM locations) and White dots (Loot locations) are detected.
+    2. Blue start dot is not confused with Cyan dot.
+    3. Red finish dot is not confused with Pink dot.
+    4. Pink encounter waypoints correctly link nearest Cyan (sim_pos) and White (loot_pos).
+    5. JSON export and import preserve sim_pos and loot_pos.
+    """
+    import cv2
+    import numpy as np
+
+    canvas = np.zeros((300, 300, 3), dtype=np.uint8)
+
+    # Blue Start dot at (30, 30) (BGR: 255, 0, 0)
+    cv2.circle(canvas, (30, 30), 6, (255, 0, 0), -1)
+
+    # Green path from (30, 30) through (100, 100) to (250, 250)
+    cv2.line(canvas, (30, 30), (100, 100), (0, 255, 0), 3)
+    cv2.line(canvas, (100, 100), (250, 250), (0, 255, 0), 3)
+
+    # Pink encounter dot at (100, 100) (BGR: 201, 174, 255)
+    cv2.circle(canvas, (100, 100), 6, (201, 174, 255), -1)
+
+    # Cyan SIM dot near pink at (115, 110) (BGR: 255, 255, 0)
+    cv2.circle(canvas, (115, 110), 6, (255, 255, 0), -1)
+
+    # White Loot dot near pink at (120, 95) (BGR: 255, 255, 255)
+    cv2.circle(canvas, (120, 95), 6, (255, 255, 255), -1)
+
+    # Red Finish dot at (250, 250) (BGR: 0, 0, 255)
+    cv2.circle(canvas, (250, 250), 6, (0, 0, 255), -1)
+
+    img_path = str(tmp_path / "triplet_route.png")
+    json_path = str(tmp_path / "triplet_route.json")
+    cv2.imwrite(img_path, canvas)
+
+    path_mgr = MovementPath(movement_file_path=json_path)
+    ok = path_mgr.load_from_painted_image(img_path, save_json_path=json_path)
+    assert ok is True
+
+    # Check detected dots
+    assert len(path_mgr.get_pink_zones()) == 1
+    assert len(path_mgr.get_cyan_zones()) == 1
+    assert len(path_mgr.get_loot_zones()) == 1
+
+    pink_wps = path_mgr.get_pink_waypoints()
+    assert len(pink_wps) == 1
+    idx, wp = pink_wps[0]
+
+    # Verify positions linked to waypoint
+    assert wp.get("pink_pos") is not None
+    assert abs(wp["pink_pos"][0] - 100) <= 2
+    assert abs(wp["pink_pos"][1] - 100) <= 2
+
+    assert wp.get("sim_pos") is not None
+    assert abs(wp["sim_pos"][0] - 115) <= 2
+    assert abs(wp["sim_pos"][1] - 110) <= 2
+
+    assert wp.get("loot_pos") is not None
+    assert abs(wp["loot_pos"][0] - 120) <= 2
+    assert abs(wp["loot_pos"][1] - 95) <= 2
+
+    # Verify JSON roundtrip
+    reloaded_mgr = MovementPath(movement_file_path=json_path)
+    assert reloaded_mgr.is_configured is True
+    reloaded_pinks = reloaded_mgr.get_pink_waypoints()
+    assert len(reloaded_pinks) == 1
+    _, r_wp = reloaded_pinks[0]
+    assert r_wp.get("sim_pos") is not None
+    assert r_wp.get("loot_pos") is not None
+    assert abs(r_wp["sim_pos"][0] - 115) <= 2
+    assert abs(r_wp["loot_pos"][0] - 120) <= 2
+
+
+

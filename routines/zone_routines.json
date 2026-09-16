@@ -2,13 +2,19 @@
   "description": "Per-zone encounter and combat routine configuration for Pink Dots and Yellow Orbit Zones. Edit steps and timings individually per zone.",
   "pink_zones": {
     "pink_1": {
-      "name": "Pink Dot #1 (WP #8)",
-      "description": "First encounter banner / sims",
+      "name": "Pink Dot #1 (WP #6)",
+      "description": "First encounter banner / sims / orbit / loot",
       "steps": [
         {
           "action": "stop",
           "duration": 2.5,
           "description": "Halt character movement"
+        },
+        {
+          "action": "navigate_to_sim_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to SIM location (cyan dot)"
         },
         {
           "action": "detect_and_click_sims",
@@ -23,6 +29,12 @@
           "description": "Attempt to detect and select sim banners with approach wait"
         },
         {
+          "action": "navigate_to_pink_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk back to encounter banner (pink dot)"
+        },
+        {
           "action": "click_encounter_banner",
           "approach_wait": 2.0,
           "reclick": false,
@@ -39,21 +51,27 @@
         {
           "action": "hold_mouse",
           "button": "middle",
-          "duration": 5.0,
+          "duration": 4.0,
           "description": "Hold middle mouse button for 4.0 seconds"
         },
         {
           "action": "orbit_yellow_zone",
           "duration": 50.0,
-          "right_click_interval": 0.75,
-          "rolling_enabled": false,
-          "rolling_interval": 5.0,
+          "right_click_interval": 0.65,
+          "rolling_enabled": true,
+          "rolling_interval": 2.0,
           "description": "Orbit inside yellow zone for 50s"
+        },
+        {
+          "action": "navigate_to_loot_location",
+          "timeout": 10.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to LOOT location (white dot)"
         },
         {
           "action": "pickup_loot",
           "max_items": 15,
-          "pickup_delay": 0.4,
+          "pickup_delay": 1,
           "approach_wait": 1.5,
           "wait_for_green_light": true,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
@@ -61,13 +79,19 @@
       ]
     },
     "pink_2": {
-      "name": "Pink Dot #2 (WP #18)",
-      "description": "Second encounter banner / sims",
+      "name": "Pink Dot #2 (WP #17)",
+      "description": "Second encounter banner / sims / orbit / loot",
       "steps": [
         {
           "action": "stop",
           "duration": 2.5,
           "description": "Halt character movement"
+        },
+        {
+          "action": "navigate_to_sim_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to SIM location (cyan dot)"
         },
         {
           "action": "detect_and_click_sims",
@@ -80,6 +104,12 @@
           "click_x_offset": 0,
           "approach_wait": 2.0,
           "description": "Attempt to detect and select sim banners"
+        },
+        {
+          "action": "navigate_to_pink_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk back to encounter banner (pink dot)"
         },
         {
           "action": "click_encounter_banner",
@@ -98,21 +128,27 @@
         {
           "action": "hold_mouse",
           "button": "middle",
-          "duration": 4,
-          "description": "Hold middle mouse button for 5.5 seconds"
+          "duration": 4.0,
+          "description": "Hold middle mouse button for 4.0 seconds"
         },
         {
           "action": "orbit_yellow_zone",
           "duration": 50.0,
           "right_click_interval": 0.75,
-          "rolling_enabled": false,
-          "rolling_interval": 5.0,
+          "rolling_enabled": true,
+          "rolling_interval": 2.0,
           "description": "Orbit inside yellow zone for 50s"
+        },
+        {
+          "action": "navigate_to_loot_location",
+          "timeout": 10.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to LOOT location (white dot)"
         },
         {
           "action": "pickup_loot",
           "max_items": 15,
-          "pickup_delay": 0.4,
+          "pickup_delay": 1,
           "approach_wait": 1.5,
           "wait_for_green_light": true,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
@@ -120,13 +156,19 @@
       ]
     },
     "pink_3": {
-      "name": "Pink Dot #3 (WP #26)",
-      "description": "Third encounter banner / sims",
+      "name": "Pink Dot #3 (WP #25)",
+      "description": "Third encounter banner / sims / orbit / loot",
       "steps": [
         {
           "action": "stop",
           "duration": 2.5,
           "description": "Halt character movement"
+        },
+        {
+          "action": "navigate_to_sim_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to SIM location (cyan dot)"
         },
         {
           "action": "detect_and_click_sims",
@@ -139,6 +181,12 @@
           "click_x_offset": 0,
           "approach_wait": 2.0,
           "description": "Attempt to detect and select sim banners"
+        },
+        {
+          "action": "navigate_to_pink_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk back to encounter banner (pink dot)"
         },
         {
           "action": "click_encounter_banner",
@@ -157,21 +205,27 @@
         {
           "action": "hold_mouse",
           "button": "middle",
-          "duration": 3.0,
+          "duration": 3.5,
           "description": "Hold middle mouse button for 4.0 seconds"
         },
         {
           "action": "orbit_yellow_zone",
-          "duration": 45.0,
+          "duration": 50.0,
           "right_click_interval": 0.75,
-          "rolling_enabled": false,
-          "rolling_interval": 5.0,
-          "description": "Orbit inside yellow zone for 45s"
+          "rolling_enabled": true,
+          "rolling_interval": 2,
+          "description": "Orbit inside yellow zone for 50s"
+        },
+        {
+          "action": "navigate_to_loot_location",
+          "timeout": 10.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to LOOT location (white dot)"
         },
         {
           "action": "pickup_loot",
           "max_items": 15,
-          "pickup_delay": 0.4,
+          "pickup_delay": 1,
           "approach_wait": 1.5,
           "wait_for_green_light": true,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
@@ -179,13 +233,19 @@
       ]
     },
     "pink_4": {
-      "name": "Pink Dot #4 (WP #36)",
-      "description": "Fourth encounter banner / sims",
+      "name": "Pink Dot #4 (WP #33)",
+      "description": "Fourth encounter banner / sims / orbit / loot",
       "steps": [
         {
           "action": "stop",
           "duration": 2.5,
           "description": "Halt character movement"
+        },
+        {
+          "action": "navigate_to_sim_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to SIM location (cyan dot)"
         },
         {
           "action": "detect_and_click_sims",
@@ -198,6 +258,12 @@
           "click_x_offset": 0,
           "approach_wait": 2.0,
           "description": "Attempt to detect and select sim banners"
+        },
+        {
+          "action": "navigate_to_pink_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk back to encounter banner (pink dot)"
         },
         {
           "action": "click_encounter_banner",
@@ -216,21 +282,250 @@
         {
           "action": "hold_mouse",
           "button": "middle",
-          "duration": 5.0,
-          "description": "Hold middle mouse button for 5.0 seconds"
+          "duration": 3.5,
+          "description": "Hold middle mouse button for 4.0 seconds"
         },
         {
           "action": "orbit_yellow_zone",
           "duration": 50.0,
           "right_click_interval": 0.75,
-          "rolling_enabled": false,
-          "rolling_interval": 5.0,
+          "rolling_enabled": true,
+          "rolling_interval": 2,
           "description": "Orbit inside yellow zone for 50s"
+        },
+        {
+          "action": "navigate_to_loot_location",
+          "timeout": 10.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to LOOT location (white dot)"
         },
         {
           "action": "pickup_loot",
           "max_items": 15,
-          "pickup_delay": 0.4,
+          "pickup_delay": 1,
+          "approach_wait": 1.5,
+          "wait_for_green_light": true,
+          "description": "Collect loot with approach wait and wait for manual green light confirmation"
+        }
+      ]
+    },
+    "pink_5": {
+      "name": "Pink Dot #5 (WP #39)",
+      "description": "Fifth encounter banner / sims / orbit / loot",
+      "steps": [
+        {
+          "action": "stop",
+          "duration": 2.5,
+          "description": "Halt character movement"
+        },
+        {
+          "action": "navigate_to_sim_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to SIM location (cyan dot)"
+        },
+        {
+          "action": "detect_and_click_sims",
+          "priority": [
+            "sim1",
+            "sim3",
+            "sim2"
+          ],
+          "click_y_offset": 35,
+          "click_x_offset": 0,
+          "approach_wait": 2.0,
+          "description": "Attempt to detect and select sim banners"
+        },
+        {
+          "action": "navigate_to_pink_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk back to encounter banner (pink dot)"
+        },
+        {
+          "action": "click_encounter_banner",
+          "approach_wait": 2.0,
+          "reclick": false,
+          "search_attempts": 5,
+          "description": "Click encounter banner to start encounter"
+        },
+        {
+          "action": "click_mouse",
+          "button": "right",
+          "clicks": 1,
+          "delay": 0.15,
+          "description": "Single right-click skill"
+        },
+        {
+          "action": "hold_mouse",
+          "button": "middle",
+          "duration": 3.5,
+          "description": "Hold middle mouse button for 4.0 seconds"
+        },
+        {
+          "action": "orbit_yellow_zone",
+          "duration": 50.0,
+          "right_click_interval": 0.75,
+          "rolling_enabled": true,
+          "rolling_interval": 2.0,
+          "description": "Orbit inside yellow zone for 50s"
+        },
+        {
+          "action": "navigate_to_loot_location",
+          "timeout": 10.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to LOOT location (white dot)"
+        },
+        {
+          "action": "pickup_loot",
+          "max_items": 15,
+          "pickup_delay": 1,
+          "approach_wait": 1.5,
+          "wait_for_green_light": true,
+          "description": "Collect loot with approach wait and wait for manual green light confirmation"
+        }
+      ]
+    },
+    "pink_6": {
+      "name": "Pink Dot #6 (WP #44)",
+      "description": "Sixth encounter banner / sims / orbit / loot",
+      "steps": [
+        {
+          "action": "stop",
+          "duration": 2.5,
+          "description": "Halt character movement"
+        },
+        {
+          "action": "navigate_to_sim_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to SIM location (cyan dot)"
+        },
+        {
+          "action": "detect_and_click_sims",
+          "priority": [
+            "sim1",
+            "sim3",
+            "sim2"
+          ],
+          "click_y_offset": 35,
+          "click_x_offset": 0,
+          "approach_wait": 2.0,
+          "description": "Attempt to detect and select sim banners"
+        },
+        {
+          "action": "navigate_to_pink_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk back to encounter banner (pink dot)"
+        },
+        {
+          "action": "click_encounter_banner",
+          "approach_wait": 2.0,
+          "reclick": false,
+          "search_attempts": 5,
+          "description": "Click encounter banner to start encounter"
+        },
+        {
+          "action": "click_mouse",
+          "button": "right",
+          "clicks": 1,
+          "delay": 0.15,
+          "description": "Single right-click skill"
+        },
+        {
+          "action": "hold_mouse",
+          "button": "middle",
+          "duration": 3.5,
+          "description": "Hold middle mouse button for 4.0 seconds"
+        },
+        {
+          "action": "orbit_yellow_zone",
+          "duration": 50.0,
+          "right_click_interval": 0.75,
+          "rolling_enabled": true,
+          "rolling_interval": 2.0,
+          "description": "Orbit inside yellow zone for 50s"
+        },
+        {
+          "action": "navigate_to_loot_location",
+          "timeout": 10.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to LOOT location (white dot)"
+        },
+        {
+          "action": "pickup_loot",
+          "max_items": 15,
+          "pickup_delay": 1,
+          "approach_wait": 1.5,
+          "wait_for_green_light": true,
+          "description": "Collect loot with approach wait and wait for manual green light confirmation"
+        }
+      ]
+    },
+    "pink_7": {
+      "name": "Pink Dot #7 (Top-Left Room)",
+      "description": "Seventh encounter banner / sims / loot",
+      "steps": [
+        {
+          "action": "stop",
+          "duration": 2.5,
+          "description": "Halt character movement"
+        },
+        {
+          "action": "navigate_to_sim_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to SIM location (cyan dot)"
+        },
+        {
+          "action": "detect_and_click_sims",
+          "priority": [
+            "sim1",
+            "sim3",
+            "sim2"
+          ],
+          "click_y_offset": 35,
+          "click_x_offset": 0,
+          "approach_wait": 2.0,
+          "description": "Attempt to detect and select sim banners"
+        },
+        {
+          "action": "navigate_to_pink_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk back to encounter banner (pink dot)"
+        },
+        {
+          "action": "click_encounter_banner",
+          "approach_wait": 2.0,
+          "reclick": false,
+          "search_attempts": 5,
+          "description": "Click encounter banner to start encounter"
+        },
+        {
+          "action": "click_mouse",
+          "button": "right",
+          "clicks": 1,
+          "delay": 0.15,
+          "description": "Single right-click skill"
+        },
+        {
+          "action": "hold_mouse",
+          "button": "middle",
+          "duration": 3.5,
+          "description": "Hold middle mouse button for 4.0 seconds"
+        },
+        {
+          "action": "navigate_to_loot_location",
+          "timeout": 10.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk to LOOT location (white dot)"
+        },
+        {
+          "action": "pickup_loot",
+          "max_items": 15,
+          "pickup_delay": 1,
           "approach_wait": 1.5,
           "wait_for_green_light": true,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
@@ -256,14 +551,26 @@
         {
           "action": "hold_mouse",
           "button": "middle",
-          "duration": 3.0
+          "duration": 3.5
         },
         {
           "action": "orbit_yellow_zone",
           "duration": 50.0,
           "right_click_interval": 0.75,
-          "rolling_enabled": false,
-          "rolling_interval": 5.0
+          "rolling_enabled": true,
+          "rolling_interval": 2.0
+        },
+        {
+          "action": "navigate_to_loot_location",
+          "timeout": 10.0,
+          "arrival_threshold": 15.0
+        },
+        {
+          "action": "pickup_loot",
+          "max_items": 15,
+          "pickup_delay": 1,
+          "approach_wait": 1.5,
+          "wait_for_green_light": true
         }
       ]
     }

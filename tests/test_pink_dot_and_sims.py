@@ -486,6 +486,9 @@ def test_anti_stuck_active_during_green_path_and_orbit():
     mock_movement_path.get_current_target.return_value = wp1
 
     navigator = RouteNavigator(movement_path=mock_movement_path)
+    navigator.start_at_pink_dot = 0
+    mock_movement_path.current_idx = 1
+    mock_movement_path.get_current_target.return_value = wp1
     navigator.is_active = True
     navigator.is_interacting = False
     navigator.latest_pos = (100.0, 100.0)
@@ -790,6 +793,7 @@ def test_visualizer_pink_dot_button_and_p_key():
 
     viz = PlayerTrackerVisualizer(movement_path=mp)
     viz.navigator.movement_path = mp
+    viz.navigator.start_at_pink_dot = 0
 
     # Render dashboard
     dummy_crop = np.zeros((200, 200, 3), dtype=np.uint8)

@@ -98,10 +98,9 @@ def test_stuck_recovery_and_skip():
         {"index": 2, "name": "Open Hall", "x": 200.0, "y": 100.0},
         {"index": 3, "name": "Finish", "x": 250.0, "y": 100.0},
     ]
-    path_mgr.current_idx = 1
-    path_mgr.is_loaded = True
-
     navigator = RouteNavigator(movement_path=path_mgr)
+    navigator.start_at_pink_dot = 0
+    path_mgr.current_idx = 1
     navigator.is_active = True
     navigator.last_known_pos = (110.0, 100.0)
     navigator.latest_pos = (145.0, 100.0)
@@ -148,10 +147,11 @@ def test_f4_pause_and_resume_preserves_position():
         {"index": 1, "name": "Midpoint", "x": 50.0, "y": 10.0},
         {"index": 2, "name": "Finish", "x": 100.0, "y": 10.0},
     ]
-    path_mgr.current_idx = 1
     path_mgr.is_loaded = True
 
     navigator = RouteNavigator(movement_path=path_mgr)
+    navigator.start_at_pink_dot = 0
+    path_mgr.current_idx = 1
     navigator.is_active = True
     navigator.held_keys = {"d"}
 

@@ -381,9 +381,6 @@ class RouteNavigator:
         last_progress_time = time.time() + 4.0
         last_right_click = time.time()
 
-        prev_interacting = self.is_interacting
-        self.is_interacting = False
-
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
         self.move_mouse_inside_game()
         if rolling_enabled:
@@ -533,10 +530,111 @@ class RouteNavigator:
             self.is_orbiting = False
             self.current_orbit_zone = None
             self.orbit_perimeter_pts = []
-            self.is_interacting = prev_interacting
 
         _log(f"    [ACTION] Finished orbiting yellow shape ({zone_id}) ({duration:.1f}s elapsed)!")
         return True
+
+    def _walk_to_coordinate(
+        self,
+        target_pos: Tuple[float, float],
+        label: str = "NAV",
+        timeout: float = 8.0,
+        arrival_threshold: float = 25.0,
+    ) -> bool:
+        """
+        Walks the character to a target coordinate using WASD movement.
+        Returns True if reached within arrival_threshold, False if timed out or stopped.
+        """
+        if target_pos is None:
+            return True
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+        self.move_mouse_inside_game()
+        _log(f"    [{label}] Walking to ({target_pos[0]:.1f}, {target_pos[1]:.1f}) (timeout={timeout:.1f}s, thresh={arrival_threshold:.1f}px)...")
+        start_time = time.time()
+        last_progress_pos = None
+        last_progress_time = start_time
+        stuck_counter = 0
+
+        prev_interacting = self.is_interacting
+        self.is_interacting = True
+
+        try:
+            while (time.time() - start_time) < timeout:
+                if stop_handler.is_stopped() or not self.is_active:
+                    return False
+
+                current_pos = self.latest_pos
+                if current_pos is None:
+                    if self.last_known_pos is not None and (time.time() - self.last_known_time) < 2.0:
+                        current_pos = self.last_known_pos
+                    else:
+                        time.sleep(0.05)
+                        continue
+
+                dist = math.hypot(target_pos[0] - current_pos[0], target_pos[1] - current_pos[1])
+                if dist <= arrival_threshold:
+                    _log(f"    [{label}] Arrived at ({current_pos[0]:.1f}, {current_pos[1]:.1f}) (dist={dist:.1f}px <= {arrival_threshold:.1f}px)")
+                    self.status_message = f"[{label}] Arrived ({dist:.0f}px)"
+                    return True
+
+                rem = max(0.0, timeout - (time.time() - start_time))
+                now = time.time()
+
+                # Anti-stuck check during coordinate walk
+                if last_progress_pos is not None:
+                    dist_moved = math.hypot(current_pos[0] - last_progress_pos[0], current_pos[1] - last_progress_pos[1])
+                    if dist_moved < 4.0:
+                        stuck_counter += 1
+                        if stuck_counter > 15:
+                            _log(f"    [{label}] Stuck detected ({stuck_counter} steps with <4px move). Releasing keys.")
+                            self.release_all_keys()
+                            time.sleep(0.1)
+                            stuck_counter = 0
+                    else:
+                        stuck_counter = 0
+                        last_progress_pos = current_pos
+                        last_progress_time = now
+                else:
+                    last_progress_pos = current_pos
+                    last_progress_time = now
+
+                needed_keys = self.compute_wasd_keys(current_pos, target_pos)
+                if not needed_keys:
+                    time.sleep(0.04)
+                    continue
+
+                self.last_held_keys = list(needed_keys)
+                self.held_keys = set(needed_keys)
+                key_str = "+".join(k.upper() for k in sorted(needed_keys))
+                self.status_message = f"[{label}] Walking [{key_str}] (dist={dist:.0f}px, {rem:.1f}s)"
+
+                self.is_simulating_key = True
+                try:
+                    if pydirectinput:
+                        for k in needed_keys:
+                            try:
+                                pydirectinput.keyDown(k)
+                            except Exception:
+                                pass
+                        time.sleep(self.step_duration)
+                        for k in needed_keys:
+                            try:
+                                pydirectinput.keyUp(k)
+                            except Exception:
+                                pass
+                    else:
+                        time.sleep(self.step_duration)
+                finally:
+                    self.is_simulating_key = False
+                    self.held_keys.clear()
+
+                time.sleep(0.02)
+
+            _log(f"    [{label}] Walk window finished ({timeout:.1f}s elapsed). Continuing routine...")
+            return True
+        finally:
+            self.release_all_keys()
+            self.is_interacting = prev_interacting
 
     def _execute_zone_routine(
         self,
@@ -551,9 +649,20 @@ class RouteNavigator:
         routine_name = routine.get("name", zone_label)
         _log(f"\n[ROUTINE] >>> Starting custom routine '{routine_name}' ({len(steps)} steps) for {zone_label}...")
         self.status_message = f"[{zone_label}] Executing Routine..."
+        pink_origin = None
+        if target and isinstance(target, dict):
+            if target.get("pink_pos"):
+                pink_origin = tuple(target["pink_pos"])
+            elif "x" in target and "y" in target and target.get("action") == "pink_encounter":
+                pink_origin = (float(target["x"]), float(target["y"]))
+
+        if pink_origin is None and self.latest_pos is not None:
+            pink_origin = (float(self.latest_pos[0]), float(self.latest_pos[1]))
+
         context: Dict[str, Any] = {
             "target": target,
             "zone": zone,
+            "pink_origin": pink_origin,
             "sims_clicked": False,
             "banner_clicked": False,
         }
@@ -651,20 +760,64 @@ class RouteNavigator:
                 time.sleep(delay)
             return True
 
+        elif action == "navigate_to_sim_location":
+            target = context.get("target") or {}
+            sim_pos = None
+            if "target_x" in step and "target_y" in step:
+                sim_pos = (float(step["target_x"]), float(step["target_y"]))
+            elif isinstance(target, dict) and target.get("sim_pos"):
+                sim_pos = tuple(target["sim_pos"])
+            elif isinstance(context.get("zone"), dict) and context["zone"].get("sim_pos"):
+                sim_pos = tuple(context["zone"]["sim_pos"])
+
+            if sim_pos is None:
+                _log(f"    [NAV→SIM] No SIM location (cyan dot) configured for {zone_label}. Skipping walk.")
+                return True
+
+            timeout = float(step.get("timeout", 8.0))
+            thresh = float(step.get("arrival_threshold", self.arrival_threshold))
+            return self._walk_to_coordinate(sim_pos, label="NAV→SIM", timeout=timeout, arrival_threshold=thresh)
+
         elif action == "detect_and_click_sims":
             priority = step.get("priority", ["sim1", "sim3", "sim2"])
             y_offset = int(step.get("click_y_offset", self.sim_click_y_offset_px))
             x_offset = int(step.get("click_x_offset", self.sim_click_x_offset_px))
             app_wait = float(step.get("approach_wait", self.sim_approach_wait_seconds))
+            settle_wait = float(step.get("settle_wait", 0.5))
+            attempts = int(step.get("search_attempts", 4))
+            threshold = float(step["confidence"]) if "confidence" in step else (float(step["threshold"]) if "threshold" in step else None)
             clicked = self._detect_and_click_sims(
                 prefix=f"[{zone_label}]",
                 sim_order=priority,
                 y_offset_px=y_offset,
                 x_offset_px=x_offset,
                 approach_wait=app_wait,
+                settle_wait=settle_wait,
+                search_attempts=attempts,
+                threshold=threshold,
             )
             context["sims_clicked"] = len(clicked) > 0
             return True
+
+        elif action == "navigate_to_pink_location":
+            target = context.get("target") or {}
+            pink_pos = None
+            if "target_x" in step and "target_y" in step:
+                pink_pos = (float(step["target_x"]), float(step["target_y"]))
+            elif isinstance(target, dict) and target.get("pink_pos"):
+                pink_pos = tuple(target["pink_pos"])
+            elif context.get("pink_origin"):
+                pink_pos = tuple(context["pink_origin"])
+            elif isinstance(target, dict) and "x" in target and "y" in target:
+                pink_pos = (float(target["x"]), float(target["y"]))
+
+            if pink_pos is None:
+                _log(f"    [NAV→BANNER] No Pink encounter location configured for {zone_label}. Skipping walk.")
+                return True
+
+            timeout = float(step.get("timeout", 8.0))
+            thresh = float(step.get("arrival_threshold", self.arrival_threshold))
+            return self._walk_to_coordinate(pink_pos, label="NAV→BANNER", timeout=timeout, arrival_threshold=thresh)
 
         elif action == "click_encounter_banner":
             if not getattr(self, "click_banner_enabled", True):
@@ -742,6 +895,9 @@ class RouteNavigator:
             if best_zone is not None:
                 context["orbited"] = True
                 self._routine_did_orbit = True
+                z_id = best_zone.get("id")
+                if z_id:
+                    self.interacted_zones.add(z_id)
                 return self._run_orbit_loop(
                     duration=orbit_duration,
                     best_zone=best_zone,
@@ -753,6 +909,26 @@ class RouteNavigator:
             else:
                 _log(f"    [WARNING] No yellow orbit zone found for {zone_label}. Skipping orbit.")
                 return True
+
+        elif action == "navigate_to_loot_location":
+            target = context.get("target") or {}
+            zone = context.get("zone") or {}
+            loot_pos = None
+
+            if "target_x" in step and "target_y" in step:
+                loot_pos = (float(step["target_x"]), float(step["target_y"]))
+            elif isinstance(target, dict) and target.get("loot_pos"):
+                loot_pos = tuple(target["loot_pos"])
+            elif isinstance(zone, dict) and zone.get("loot_pos"):
+                loot_pos = tuple(zone["loot_pos"])
+
+            if loot_pos is None:
+                _log(f"    [NAV→LOOT] No LOOT location (white dot) configured for {zone_label}. Skipping walk.")
+                return True
+
+            timeout = float(step.get("timeout", 10.0))
+            thresh = float(step.get("arrival_threshold", self.arrival_threshold))
+            return self._walk_to_coordinate(loot_pos, label="NAV→LOOT", timeout=timeout, arrival_threshold=thresh)
 
         elif action == "pickup_loot":
             max_pickups = int(step.get("max_items", self.max_loot_pickups))
@@ -1272,7 +1448,7 @@ class RouteNavigator:
 
         return None
 
-    def locate_sim_template(self, sim_key: str) -> Optional[Tuple[int, int]]:
+    def locate_sim_template(self, sim_key: str, threshold: Optional[float] = None) -> Optional[Tuple[int, int]]:
         """
         Locates a sim selection template (sim1, sim2, sim3) on screen using multi-scale template matching.
         Returns desktop absolute coordinates (X, Y) of the match center, or None if not found.
@@ -1284,6 +1460,10 @@ class RouteNavigator:
 
         if tmpl is None:
             return None
+
+        eff_threshold = threshold if threshold is not None else self.sim_match_threshold
+        self._last_sim_best_conf = 0.0
+        self._last_sim_best_scale = 1.0
 
         capt = self._get_capturer()
         try:
@@ -1318,7 +1498,7 @@ class RouteNavigator:
             best_val = float(max_val)
             best_loc = max_loc
 
-        if best_val < self.sim_match_threshold:
+        if best_val < eff_threshold:
             for scale in [0.70, 0.80, 0.90, 1.10, 1.20, 1.30]:
                 sc_w = int(tw * scale)
                 sc_h = int(th * scale)
@@ -1332,7 +1512,10 @@ class RouteNavigator:
                     best_loc = max_loc
                     best_scale = scale
 
-        if best_val >= self.sim_match_threshold and best_loc is not None:
+        self._last_sim_best_conf = best_val
+        self._last_sim_best_scale = best_scale
+
+        if best_val >= eff_threshold and best_loc is not None:
             cx = int(best_loc[0] + (tw * best_scale) / 2)
             cy = int(best_loc[1] + (th * best_scale) / 2)
             desktop_x = mon_left + cx
@@ -1349,6 +1532,9 @@ class RouteNavigator:
         y_offset_px: Optional[int] = None,
         x_offset_px: Optional[int] = None,
         approach_wait: Optional[float] = None,
+        settle_wait: float = 0.0,
+        search_attempts: int = 1,
+        threshold: Optional[float] = None,
     ) -> List[str]:
         """
         Detects and selects Sims according to priority:
@@ -1360,6 +1546,9 @@ class RouteNavigator:
         eff_y_offset = y_offset_px if y_offset_px is not None else self.sim_click_y_offset_px
         eff_x_offset = x_offset_px if x_offset_px is not None else self.sim_click_x_offset_px
         eff_app_wait = approach_wait if approach_wait is not None else self.sim_approach_wait_seconds
+
+        if settle_wait > 0:
+            time.sleep(settle_wait)
 
         def _click_sim_at(sim_key: str, sim_label: str, detected_pos: Tuple[int, int]) -> Tuple[int, int]:
             target_x = detected_pos[0] + eff_x_offset
@@ -1378,7 +1567,7 @@ class RouteNavigator:
             if eff_app_wait > 0:
                 self._wait_for_approach(eff_app_wait, reason=f"{prefix} {sim_label}")
                 if not stop_handler.is_stopped() and self.is_active and self.reclick_after_approach:
-                    in_range_pos = self.locate_sim_template(sim_key)
+                    in_range_pos = self.locate_sim_template(sim_key) if threshold is None else self.locate_sim_template(sim_key, threshold)
                     if in_range_pos is not None:
                         rx, ry = self.move_mouse_inside_game(
                             in_range_pos[0] + eff_x_offset,
@@ -1399,7 +1588,18 @@ class RouteNavigator:
                     return sims_clicked
                 sim_label = f"Sim {sim_key.replace('sim', '')}"
                 self.status_message = f"{prefix} Checking for {sim_label}..."
-                sim_pos = self.locate_sim_template(sim_key)
+                sim_pos = None
+                best_conf = 0.0
+                for attempt in range(1, max(1, search_attempts) + 1):
+                    if stop_handler.is_stopped() or not self.is_active:
+                        return sims_clicked
+                    sim_pos = self.locate_sim_template(sim_key) if threshold is None else self.locate_sim_template(sim_key, threshold)
+                    best_conf = max(best_conf, getattr(self, "_last_sim_best_conf", 0.0))
+                    if sim_pos is not None:
+                        break
+                    if attempt < search_attempts:
+                        time.sleep(0.20)
+
                 if sim_pos is not None:
                     _click_sim_at(sim_key, sim_label, sim_pos)
                     w_start = time.time()
@@ -1407,6 +1607,11 @@ class RouteNavigator:
                         if stop_handler.is_stopped() or not self.is_active:
                             return sims_clicked
                         time.sleep(0.05)
+                else:
+                    eff_thresh = threshold if threshold is not None else self.sim_match_threshold
+                    _log(f"  [SIM] {sim_label} not detected (best conf={best_conf:.2f}, threshold={eff_thresh:.2f})")
+            if not sims_clicked:
+                _log(f"  {prefix} No sim banners detected. Proceeding with routine...")
             return sims_clicked
 
         self.status_message = f"{prefix} Checking for Sim 1..."
@@ -1587,6 +1792,10 @@ class RouteNavigator:
         Stops when no more loot is detected or max_pickups reached.
         Returns total number of loots clicked.
         """
+        if getattr(self, "_is_collecting_loot", False):
+            _log("  [LOOT] Concurrency guard: Loot collection already active. Skipping duplicate call.")
+            return 0
+        self._is_collecting_loot = True
         prior_interacting = self.is_interacting
         self.is_interacting = True
         self.stuck_counter = 0
@@ -1630,6 +1839,7 @@ class RouteNavigator:
             self.status_message = f"Loot Check Complete ({picked_count} picked). Resuming route..."
             return picked_count
         finally:
+            self._is_collecting_loot = False
             self.is_interacting = prior_interacting
             now = time.time()
             self.last_progress_pos = self.latest_pos
@@ -2625,6 +2835,7 @@ class RouteNavigator:
                         target = self.movement_path.get_current_target()
                         dist = self.movement_path.distance_to_target(current_pos) if current_pos and target else 0.0
                     return self.get_telemetry(target, dist, list(self.held_keys), tracking_lost=(current_pos is None))
+
                 if self.orbit_constant_right_click_enabled:
                     if (now - self.last_orbit_right_click) >= self.orbit_right_click_interval_seconds:
                         self.last_orbit_right_click = now

@@ -372,4 +372,175 @@ def test_run_orbit_loop_unsets_is_interacting_during_orbit():
     assert nav.is_orbiting is False
 
 
+def test_navigate_to_sim_location_executes_walk():
+    """Verifies that navigate_to_sim_location delegates to _walk_to_coordinate with target's sim_pos."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._walk_to_coordinate = MagicMock(return_value=True)
+
+    step = {"action": "navigate_to_sim_location", "timeout": 6.0}
+    context = {"target": {"x": 100.0, "y": 100.0, "sim_pos": [115.0, 110.0]}}
+
+    success = nav._execute_zone_routine_step(step, context, zone_label="TEST_ZONE")
+    assert success is True
+    nav._walk_to_coordinate.assert_called_once_with((115.0, 110.0), label="NAV→SIM", timeout=6.0, arrival_threshold=nav.arrival_threshold)
+
+
+def test_navigate_to_sim_location_skipped_when_no_sim_pos():
+    """Verifies that navigate_to_sim_location returns True gracefully if sim_pos is not available."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._walk_to_coordinate = MagicMock(return_value=True)
+
+    step = {"action": "navigate_to_sim_location"}
+    context = {"target": {"x": 100.0, "y": 100.0, "sim_pos": None}}
+
+    success = nav._execute_zone_routine_step(step, context, zone_label="TEST_ZONE")
+    assert success is True
+    nav._walk_to_coordinate.assert_not_called()
+
+
+def test_navigate_to_pink_location_executes_walk():
+    """Verifies that navigate_to_pink_location delegates to _walk_to_coordinate with target's pink_pos."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._walk_to_coordinate = MagicMock(return_value=True)
+
+    step = {"action": "navigate_to_pink_location", "timeout": 7.0}
+    context = {"target": {"x": 100.0, "y": 100.0, "pink_pos": [98.0, 102.0]}}
+
+    success = nav._execute_zone_routine_step(step, context, zone_label="TEST_ZONE")
+    assert success is True
+    nav._walk_to_coordinate.assert_called_once_with((98.0, 102.0), label="NAV→BANNER", timeout=7.0, arrival_threshold=nav.arrival_threshold)
+
+
+def test_navigate_to_loot_location_executes_walk():
+    """Verifies that navigate_to_loot_location delegates to _walk_to_coordinate with target's loot_pos."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._walk_to_coordinate = MagicMock(return_value=True)
+
+    step = {"action": "navigate_to_loot_location", "timeout": 9.0}
+    context = {"target": {"x": 100.0, "y": 100.0, "loot_pos": [130.0, 90.0]}}
+
+    success = nav._execute_zone_routine_step(step, context, zone_label="TEST_ZONE")
+    assert success is True
+    nav._walk_to_coordinate.assert_called_once_with((130.0, 90.0), label="NAV→LOOT", timeout=9.0, arrival_threshold=nav.arrival_threshold)
+
+
+def test_navigate_to_loot_location_skipped_when_no_loot_pos():
+    """Verifies that navigate_to_loot_location returns True gracefully if loot_pos is not available."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._walk_to_coordinate = MagicMock(return_value=True)
+
+    step = {"action": "navigate_to_loot_location"}
+    context = {"target": {"x": 100.0, "y": 100.0}}
+
+    success = nav._execute_zone_routine_step(step, context, zone_label="TEST_ZONE")
+    assert success is True
+    nav._walk_to_coordinate.assert_not_called()
+
+
+def test_walk_to_coordinate_movement_loop():
+    """Verifies that _walk_to_coordinate moves toward target until arrival threshold."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.step_duration = 0.01
+
+    # Start character at (100.0, 100.0), target at (150.0, 100.0)
+    # Character advances closer on each step
+    positions = [(100.0, 100.0), (120.0, 100.0), (145.0, 100.0)]
+    pos_idx = 0
+
+    def mock_pos_getter():
+        nonlocal pos_idx
+        p = positions[min(pos_idx, len(positions) - 1)]
+        pos_idx += 1
+        return p
+
+    orig_prop = getattr(type(nav), "latest_pos", None)
+    type(nav).latest_pos = property(lambda self: mock_pos_getter())
+
+    try:
+        nav.compute_wasd_keys = MagicMock(return_value=["d"])
+        reached = nav._walk_to_coordinate((150.0, 100.0), label="TEST_WALK", timeout=5.0, arrival_threshold=10.0)
+        assert reached is True
+        assert nav.held_keys == set()  # Keys released after walk
+    finally:
+        del type(nav).latest_pos
+        if orig_prop is not None:
+            type(nav).latest_pos = orig_prop
+
+
+def test_detect_sims_with_retries_and_diagnostics():
+    """Verifies that _detect_and_click_sims retries up to search_attempts and succeeds on later attempt."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.sim_approach_wait_seconds = 0.0
+
+    call_count = 0
+
+    def mock_locate(key, threshold=None):
+        nonlocal call_count
+        call_count += 1
+        # Succeed on 3rd attempt for sim1
+        if key == "sim1" and call_count >= 3:
+            return (400, 300)
+        return None
+
+    nav.locate_sim_template = MagicMock(side_effect=mock_locate)
+    nav.move_mouse_inside_game = MagicMock(return_value=(400, 300))
+
+    with patch("src.route_navigator.pydirectinput.click"), \
+         patch("src.route_navigator.pydirectinput.mouseUp"), \
+         patch("time.sleep", return_value=None):
+        clicked = nav._detect_and_click_sims(
+            sim_order=["sim1"],
+            search_attempts=4,
+            settle_wait=0.01,
+        )
+
+    assert clicked == ["sim1"]
+    assert call_count == 3
+
+
+def test_collect_loot_concurrency_guard():
+    """Verifies that collect_loot does not run concurrently if already active."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav._is_collecting_loot = True  # Simulate active loot collection
+
+    with patch.object(nav, "locate_loot") as mock_locate:
+        count = nav.collect_loot()
+
+    assert count == 0
+    mock_locate.assert_not_called()
+
+
+def test_update_orbit_does_not_trigger_loot_when_worker_thread_alive():
+    """Verifies that update() does not trigger collect_loot() or advance waypoints when worker thread is alive."""
+    mock_path = MagicMock()
+    mock_path.is_configured = True
+    mock_path.current_idx = 5
+    mock_path.get_current_target.return_value = {"x": 100, "y": 100, "name": "WP 5"}
+    mock_path.distance_to_target.return_value = 10.0
+
+    nav = RouteNavigator(movement_path=mock_path)
+    nav.is_active = True
+    nav.is_interacting = True  # Routine actively executing
+    nav.is_orbiting = True
+    nav.orbit_start_time = time.time() - 60.0  # Expired
+    nav.orbit_duration = 50.0
+
+    # Simulate alive background worker thread
+    mock_thread = MagicMock()
+    mock_thread.is_alive.return_value = True
+    nav._worker_thread = mock_thread
+
+    with patch.object(nav, "collect_loot") as mock_loot:
+        telemetry = nav.update(current_pos=(100.0, 100.0))
+
+    mock_loot.assert_not_called()
+    mock_path.advance.assert_not_called()
+    assert telemetry is not None
+
+
+
+
 

@@ -36,7 +36,7 @@ def test_zone_routines_file_loads_on_init():
     hold_p4 = next(s["duration"] for s in pink4_steps if s["action"] == "hold_mouse")
 
     assert hold_p1 == 4.0
-    assert hold_p2 == 5.5
+    assert hold_p2 == 4 or hold_p2 == 4.0
     assert hold_p3 == 4.0
     assert hold_p4 == 5.0
 
@@ -205,3 +205,30 @@ def test_reload_route_reloads_zone_routines(tmp_path):
     nav.reload_route()
     assert nav.zone_routines["pink_zones"]["pink_1"]["name"] == "Reloaded Pink 1"
     assert nav.zone_routines["pink_zones"]["pink_1"]["steps"][0]["duration"] == 12.5
+
+
+def test_pickup_loot_executes_approach_wait():
+    """Verifies that pickup_loot passes approach_wait to collect_loot and executes _wait_for_approach."""
+    mp = MovementPath()
+    nav = RouteNavigator(movement_path=mp)
+    nav.is_active = True
+
+    # Return 1 loot item then None
+    loot_positions = [(300, 200), None]
+    nav.locate_loot = MagicMock(side_effect=lambda: loot_positions.pop(0) if loot_positions else None)
+    nav.move_mouse_inside_game = MagicMock(return_value=(300, 200))
+    nav._wait_for_approach = MagicMock()
+
+    step = {
+        "action": "pickup_loot",
+        "max_items": 5,
+        "pickup_delay": 0.05,
+        "approach_wait": 2.2,
+        "wait_for_green_light": False,
+    }
+    context = {}
+
+    success = nav._execute_zone_routine_step(step, context, zone_label="TEST")
+    assert success is True
+    nav._wait_for_approach.assert_called_once_with(2.2, reason="LOOT #1")
+

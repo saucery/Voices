@@ -139,6 +139,7 @@ class RouteNavigator:
         self.loot1_template_file: str = "ui/loot1.png"
         self.loot_match_threshold: float = 0.50
         self.loot_pickup_wait_seconds: float = 0.4
+        self.loot_approach_wait_seconds: float = 1.5
         self.max_loot_pickups: int = 15
         self.wait_for_loot_confirmation: bool = True
         self.waiting_for_green_light: bool = False
@@ -176,6 +177,7 @@ class RouteNavigator:
                 self.loot1_template_file = ap_cfg.get("loot1_template_file", self.loot1_template_file)
                 self.loot_match_threshold = float(ap_cfg.get("loot_match_threshold", self.loot_match_threshold))
                 self.loot_pickup_wait_seconds = float(ap_cfg.get("loot_pickup_wait_seconds", self.loot_pickup_wait_seconds))
+                self.loot_approach_wait_seconds = float(ap_cfg.get("loot_approach_wait_seconds", self.loot_approach_wait_seconds))
                 self.max_loot_pickups = int(ap_cfg.get("max_loot_pickups", self.max_loot_pickups))
                 self.wait_for_loot_confirmation = bool(ap_cfg.get("wait_for_loot_confirmation", self.wait_for_loot_confirmation))
                 self.zone_routines_file = ap_cfg.get("zone_routines_file", self.zone_routines_file)
@@ -542,10 +544,11 @@ class RouteNavigator:
             max_pickups = int(step.get("max_items", self.max_loot_pickups))
             wait_for_green = bool(step.get("wait_for_green_light", self.wait_for_loot_confirmation))
             pickup_delay = float(step.get("pickup_delay", self.loot_pickup_wait_seconds))
+            app_wait = float(step.get("approach_wait", getattr(self, "loot_approach_wait_seconds", 1.5)))
             prev_delay = self.loot_pickup_wait_seconds
             self.loot_pickup_wait_seconds = pickup_delay
             try:
-                self.collect_loot(max_pickups=max_pickups)
+                self.collect_loot(max_pickups=max_pickups, approach_wait=app_wait)
             finally:
                 self.loot_pickup_wait_seconds = prev_delay
 
@@ -1352,7 +1355,7 @@ class RouteNavigator:
 
         return None
 
-    def collect_loot(self, max_pickups: Optional[int] = None) -> int:
+    def collect_loot(self, max_pickups: Optional[int] = None, approach_wait: Optional[float] = None) -> int:
         """
         Scans screen for loot labels matching ui/loot1.png.
         Clicks left mouse button on each detected loot item and scans again.
@@ -1392,6 +1395,10 @@ class RouteNavigator:
                     pydirectinput.click()
                     time.sleep(0.08)
                     pydirectinput.mouseUp(button="left")
+
+                eff_app_wait = approach_wait if approach_wait is not None else self.loot_approach_wait_seconds
+                if eff_app_wait > 0:
+                    self._wait_for_approach(eff_app_wait, reason=f"LOOT #{picked_count}")
 
                 time.sleep(self.loot_pickup_wait_seconds)
 

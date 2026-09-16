@@ -43,6 +43,7 @@
     "loot1_template_file": "ui/loot1.png",
     "loot_match_threshold": 0.5,
     "loot_pickup_wait_seconds": 0.4,
+    "loot_approach_wait_seconds": 1.5,
     "max_loot_pickups": 15,
     "wait_for_loot_confirmation": true,
     "start_at_pink_dot": 0,

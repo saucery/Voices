@@ -48,8 +48,9 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 0.4,
+          "approach_wait": 1.5,
           "wait_for_green_light": true,
-          "description": "Collect loot and wait for manual green light confirmation"
+          "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
       ]
     },
@@ -87,7 +88,7 @@
         {
           "action": "hold_mouse",
           "button": "middle",
-          "duration": 5.5,
+          "duration": 4,
           "description": "Hold middle mouse button for 5.5 seconds"
         },
         {
@@ -100,8 +101,9 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 0.4,
+          "approach_wait": 1.5,
           "wait_for_green_light": true,
-          "description": "Collect loot and wait for manual green light confirmation"
+          "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
       ]
     },
@@ -152,8 +154,9 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 0.4,
+          "approach_wait": 1.5,
           "wait_for_green_light": true,
-          "description": "Collect loot and wait for manual green light confirmation"
+          "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
       ]
     },
@@ -204,8 +207,9 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 0.4,
+          "approach_wait": 1.5,
           "wait_for_green_light": true,
-          "description": "Collect loot and wait for manual green light confirmation"
+          "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
       ]
     }

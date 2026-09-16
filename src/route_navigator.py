@@ -379,6 +379,9 @@ class RouteNavigator:
         last_progress_time = time.time() + 4.0
         last_right_click = time.time()
 
+        prev_interacting = self.is_interacting
+        self.is_interacting = False
+
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
         self.move_mouse_inside_game()
         _log(f"    [ACTION] Starting orbit inside yellow shape ({zone_id}) for {duration:.1f}s...")
@@ -415,8 +418,13 @@ class RouteNavigator:
 
                 current_pos = self.latest_pos
                 if current_pos is None:
-                    time.sleep(0.04)
-                    continue
+                    # If tracking dropped momentarily during combat, keep heading towards target with last known pos
+                    if self.last_known_pos is not None and (now - self.last_known_time) < 2.0:
+                        current_pos = self.last_known_pos
+                    else:
+                        self.status_message = f"[{zone_label}] Orbiting - Tracking Lost ({rem:.1f}s left)"
+                        time.sleep(0.04)
+                        continue
 
                 # Orbiting around perimeter of yellow shape
                 if self.orbit_perimeter_pts:
@@ -432,8 +440,13 @@ class RouteNavigator:
                     zc = best_zone.get("center", current_pos)
                     target_pos = (zc[0], zc[1])
 
-                # Stuck check
-                if now < orbit_grace_until:
+                # Stuck check: only count as physical stuck if position tracking was actively updating
+                tracking_fresh = (now - self.last_known_time) < 1.2
+                if not tracking_fresh:
+                    # Tracking lost or stale - don't treat visual tracking loss as physical collision
+                    stuck_counter = 0
+                    last_progress_time = now
+                elif now < orbit_grace_until:
                     stuck_counter = 0
                     last_progress_pos = current_pos
                     last_progress_time = now
@@ -493,6 +506,7 @@ class RouteNavigator:
             self.is_orbiting = False
             self.current_orbit_zone = None
             self.orbit_perimeter_pts = []
+            self.is_interacting = prev_interacting
 
         _log(f"    [ACTION] Finished orbiting yellow shape ({zone_id}) ({duration:.1f}s elapsed)!")
         return True
@@ -557,6 +571,9 @@ class RouteNavigator:
 
         elif action == "hold_mouse":
             button = str(step.get("button", "middle")).lower().strip()
+            if button == "middle" and not getattr(self, "middle_click_hold_enabled", True):
+                _log(f"    [CONFIG] Middle click hold disabled (middle_click_hold_enabled=false). Skipping...")
+                return True
             duration = float(step.get("duration", self.middle_click_hold_seconds))
             window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
             self.move_mouse_inside_game()
@@ -586,6 +603,9 @@ class RouteNavigator:
 
         elif action == "click_mouse":
             button = str(step.get("button", "right")).lower().strip()
+            if button == "right" and not getattr(self, "right_click_after_banner_enabled", True):
+                _log(f"    [CONFIG] Right click after banner disabled (right_click_after_banner_enabled=false). Skipping...")
+                return True
             clicks = int(step.get("clicks", 1))
             delay = float(step.get("delay", 0.15))
             window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
@@ -620,6 +640,10 @@ class RouteNavigator:
             return True
 
         elif action == "click_encounter_banner":
+            if not getattr(self, "click_banner_enabled", True):
+                _log(f"    [CONFIG] Banner clicking disabled (click_banner_enabled=false). Skipping...")
+                return True
+
             if step.get("only_if_no_sims", False) and context.get("sims_clicked", False):
                 _log(f"    [STEP] Sims were already selected and only_if_no_sims is set. Skipping banner click.")
                 return True
@@ -2483,6 +2507,10 @@ class RouteNavigator:
         :return: Navigation telemetry dictionary.
         """
         self.latest_pos = current_pos
+        now = time.time()
+        if current_pos is not None:
+            self.last_known_pos = current_pos
+            self.last_known_time = now
 
         # Safety: F1 emergency stop takes immediate priority
         if stop_handler.is_stopped():
@@ -2550,6 +2578,22 @@ class RouteNavigator:
                 target_pos = (target["x"], target["y"])
                 dist = math.hypot(target_pos[0] - current_pos[0], target_pos[1] - current_pos[1])
             else:
+                # If background worker thread is driving the orbit, update() only reports telemetry without simulating keys
+                if self._worker_thread and self._worker_thread.is_alive() and threading.current_thread() != self._worker_thread:
+                    if self.orbit_perimeter_pts:
+                        opt = self.orbit_perimeter_pts[self.orbit_point_idx % len(self.orbit_perimeter_pts)]
+                        dist = math.hypot(opt[0] - current_pos[0], opt[1] - current_pos[1]) if current_pos else 0.0
+                        target = {
+                            "index": self.movement_path.current_idx,
+                            "name": f"Yellow Orbit ({rem:.1f}s left)",
+                            "x": opt[0],
+                            "y": opt[1],
+                            "action": "orbit",
+                        }
+                    else:
+                        target = self.movement_path.get_current_target()
+                        dist = self.movement_path.distance_to_target(current_pos) if current_pos and target else 0.0
+                    return self.get_telemetry(target, dist, list(self.held_keys), tracking_lost=(current_pos is None))
                 if self.orbit_constant_right_click_enabled:
                     if (now - self.last_orbit_right_click) >= self.orbit_right_click_interval_seconds:
                         self.last_orbit_right_click = now
@@ -2641,6 +2685,11 @@ class RouteNavigator:
                 elif target.get("action") == "pink_encounter":
                     wp_idx = target.get("index", 0)
                     if wp_idx not in self.interacted_pink_dots:
+                        if self._worker_thread and self._worker_thread.is_alive() and threading.current_thread() != self._worker_thread:
+                            # Let background worker thread handle the blocking pink encounter routine
+                            target = self.movement_path.get_current_target()
+                            dist = self.movement_path.distance_to_target(current_pos) if current_pos and target else 0.0
+                            return self.get_telemetry(target, dist, list(self.held_keys))
                         self.interacted_pink_dots.add(wp_idx)
                         self.execute_pink_dot_interaction(target)
                         if stop_handler.is_stopped() or not self.is_active:

@@ -153,7 +153,7 @@
         {
           "action": "hold_mouse",
           "button": "middle",
-          "duration": 4.0,
+          "duration": 3.0,
           "description": "Hold middle mouse button for 4.0 seconds"
         },
         {

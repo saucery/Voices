@@ -130,6 +130,7 @@ def test_orbit_execution_and_timeout(synthetic_route_with_yellow_shape, tmp_path
     nav = RouteNavigator(movement_path=path_mgr)
     nav.wait_for_loot_confirmation = False
     monkeypatch.setattr(nav, "execute_yellow_zone_interaction", lambda *a, **kw: True)
+    monkeypatch.setattr(nav, "collect_loot", lambda *a, **kw: 0)
     nav.start()
     assert nav.is_active is True
     assert nav.is_orbiting is False

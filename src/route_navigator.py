@@ -620,8 +620,8 @@ class RouteNavigator:
             return True
 
         elif action == "click_encounter_banner":
-            if step.get("only_if_no_sims", True) and context.get("sims_clicked", False):
-                _log(f"    [STEP] Sims were already selected. Skipping banner click.")
+            if step.get("only_if_no_sims", False) and context.get("sims_clicked", False):
+                _log(f"    [STEP] Sims were already selected and only_if_no_sims is set. Skipping banner click.")
                 return True
 
             app_wait = float(step.get("approach_wait", self.banner_approach_wait_seconds))
@@ -1908,7 +1908,7 @@ class RouteNavigator:
             if stop_handler.is_stopped() or not self.is_active:
                 return False
 
-            # Press and hold middle button of mouse for 4 seconds
+            # Press and hold middle button of mouse for configured seconds
             self.move_mouse_inside_game()
             hold_sec = self.middle_click_hold_seconds
             _log(f"  [ACTION 3/3] Pressing and holding middle mouse button for {hold_sec:.1f}s inside game...")
@@ -1936,53 +1936,53 @@ class RouteNavigator:
             if stop_handler.is_stopped() or not self.is_active:
                 return False
 
-            # 4. Start orbiting inside yellow marker for defined duration (e.g. 50s)
-            orbit_zones = self.movement_path.get_orbit_zones()
-            c_pos = self.latest_pos or ((target["x"], target["y"]) if target else (0.0, 0.0))
-            best_zone = None
-            best_d = float("inf")
-            for z in orbit_zones:
-                zc = z.get("center", [0, 0])
-                d = math.hypot(zc[0] - c_pos[0], zc[1] - c_pos[1])
-                if d < best_d:
-                    best_d = d
-                    best_zone = z
+        # 4. Start orbiting inside yellow marker for defined duration (e.g. 50s)
+        orbit_zones = self.movement_path.get_orbit_zones()
+        c_pos = self.latest_pos or ((target["x"], target["y"]) if target else (0.0, 0.0))
+        best_zone = None
+        best_d = float("inf")
+        for z in orbit_zones:
+            zc = z.get("center", [0, 0])
+            d = math.hypot(zc[0] - c_pos[0], zc[1] - c_pos[1])
+            if d < best_d:
+                best_d = d
+                best_zone = z
 
-            if best_zone is not None:
-                zone_id = best_zone.get("id")
-                if zone_id:
-                    self.interacted_zones.add(zone_id)
-                self.is_orbiting = True
-                self.orbit_start_time = time.time()
-                self.last_orbit_right_click = time.time()
-                self.orbit_duration = float(best_zone.get("duration", getattr(self.movement_path, "orbit_duration_seconds", 50.0)))
-                self.current_orbit_zone = best_zone
-                self.orbit_perimeter_pts = best_zone.get("perimeter_points", [])
-                if self.orbit_perimeter_pts:
-                    best_p_idx = 0
-                    best_p_dist = float("inf")
-                    for p_i, p_pt in enumerate(self.orbit_perimeter_pts):
-                        d = math.hypot(p_pt[0] - c_pos[0], p_pt[1] - c_pos[1])
-                        if d < best_p_dist:
-                            best_p_dist = d
-                            best_p_idx = p_i
-                    self.orbit_point_idx = best_p_idx
-                self.orbit_grace_until = time.time() + 4.0
-                self.stuck_counter = 0
-                self.last_progress_pos = self.latest_pos or c_pos
-                self.last_progress_time = time.time() + 4.0
-                window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
-                self.move_mouse_inside_game()
-                _log(f"  [AUTOPILOT] Pink dot encounter complete -> Starting orbit inside yellow shape ({best_zone.get('id', 'zone')}) for {self.orbit_duration:.1f}s...")
-                self.status_message = f"Orbiting Yellow Zone ({self.orbit_duration:.1f}s left)"
-            else:
-                _log("  [PINK DOT] No yellow orbit shape found on route. Scanning for loot...")
-                self.collect_loot()
-                if self.wait_for_loot_confirmation:
-                    self.release_all_keys()
-                    self.waiting_for_green_light = True
-                    self.status_message = "WAITING FOR GREEN LIGHT (Verify Loot Pickup - Press 'G' to Resume)"
-                    _log("\n[AUTOPILOT] >>> LOOT PICKUP FINISHED! Waiting for GREEN LIGHT to continue...")
+        if best_zone is not None:
+            zone_id = best_zone.get("id")
+            if zone_id:
+                self.interacted_zones.add(zone_id)
+            self.is_orbiting = True
+            self.orbit_start_time = time.time()
+            self.last_orbit_right_click = time.time()
+            self.orbit_duration = float(best_zone.get("duration", getattr(self.movement_path, "orbit_duration_seconds", 50.0)))
+            self.current_orbit_zone = best_zone
+            self.orbit_perimeter_pts = best_zone.get("perimeter_points", [])
+            if self.orbit_perimeter_pts:
+                best_p_idx = 0
+                best_p_dist = float("inf")
+                for p_i, p_pt in enumerate(self.orbit_perimeter_pts):
+                    d = math.hypot(p_pt[0] - c_pos[0], p_pt[1] - c_pos[1])
+                    if d < best_p_dist:
+                        best_p_dist = d
+                        best_p_idx = p_i
+                self.orbit_point_idx = best_p_idx
+            self.orbit_grace_until = time.time() + 4.0
+            self.stuck_counter = 0
+            self.last_progress_pos = self.latest_pos or c_pos
+            self.last_progress_time = time.time() + 4.0
+            window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+            self.move_mouse_inside_game()
+            _log(f"  [AUTOPILOT] Pink dot encounter complete -> Starting orbit inside yellow shape ({best_zone.get('id', 'zone')}) for {self.orbit_duration:.1f}s...")
+            self.status_message = f"Orbiting Yellow Zone ({self.orbit_duration:.1f}s left)"
+        else:
+            _log("  [PINK DOT] No yellow orbit shape found on route. Scanning for loot...")
+            self.collect_loot()
+            if self.wait_for_loot_confirmation:
+                self.release_all_keys()
+                self.waiting_for_green_light = True
+                self.status_message = "WAITING FOR GREEN LIGHT (Verify Loot Pickup - Press 'G' to Resume)"
+                _log("\n[AUTOPILOT] >>> LOOT PICKUP FINISHED! Waiting for GREEN LIGHT to continue...")
 
         if not self.is_orbiting:
             self.status_message = "[PINK DOT] Sequence completed. Resuming route..."

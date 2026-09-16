@@ -27,7 +27,7 @@
           "approach_wait": 2.0,
           "reclick": false,
           "search_attempts": 5,
-          "description": "Fallback banner click if no sims detected"
+          "description": "Click encounter banner to start encounter"
         },
         {
           "action": "click_mouse",
@@ -84,7 +84,7 @@
           "approach_wait": 2.0,
           "reclick": false,
           "search_attempts": 5,
-          "description": "Fallback banner click if no sims detected"
+          "description": "Click encounter banner to start encounter"
         },
         {
           "action": "click_mouse",
@@ -141,7 +141,7 @@
           "approach_wait": 2.0,
           "reclick": false,
           "search_attempts": 5,
-          "description": "Fallback banner click if no sims detected"
+          "description": "Click encounter banner to start encounter"
         },
         {
           "action": "click_mouse",
@@ -198,7 +198,7 @@
           "approach_wait": 2.0,
           "reclick": false,
           "search_attempts": 5,
-          "description": "Fallback banner click if no sims detected"
+          "description": "Click encounter banner to start encounter"
         },
         {
           "action": "click_mouse",

@@ -168,6 +168,39 @@ def test_zone_routine_step_execution_detect_sims_and_banner_skip():
     nav.locate_encounter_banner.assert_not_called()
 
 
+def test_banner_always_clicked_even_if_sims_clicked():
+    """
+    Verifies that by default, clicking the encounter banner is ALWAYS performed
+    even after sims are successfully detected and clicked.
+    """
+    mp = MovementPath()
+    nav = RouteNavigator(movement_path=mp)
+    nav.is_active = True
+
+    nav.locate_sim_template = MagicMock(side_effect=lambda key: (500, 300) if key == "sim1" else None)
+    nav.locate_encounter_banner = MagicMock(return_value=(600, 400))
+    nav.move_mouse_inside_game = MagicMock(return_value=(600, 400))
+
+    sim_step = {
+        "action": "detect_and_click_sims",
+        "priority": ["sim1"],
+        "approach_wait": 0.01,
+    }
+    banner_step = {
+        "action": "click_encounter_banner",
+        "approach_wait": 0.01,
+    }
+
+    context = {}
+    nav._execute_zone_routine_step(sim_step, context, zone_label="TEST")
+    assert context["sims_clicked"] is True
+
+    # Now execute banner step -> must NOT skip, must click encounter banner
+    nav._execute_zone_routine_step(banner_step, context, zone_label="TEST")
+    assert context.get("banner_clicked") is True
+    nav.locate_encounter_banner.assert_called()
+
+
 def test_reload_route_reloads_zone_routines(tmp_path):
     """Verifies that calling reload_route reloads zone_routines.json on the fly."""
     mp = MovementPath()

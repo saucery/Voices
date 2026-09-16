@@ -144,6 +144,10 @@ class RouteNavigator:
         self.waiting_for_green_light: bool = False
         self.loot1_img: Optional[np.ndarray] = None
 
+        # Zone Routines (Per-zone step sequences and timings)
+        self.zone_routines_file: str = "routines/zone_routines.json"
+        self.zone_routines: Dict[str, Any] = {}
+
         if os.path.exists(config_path):
             try:
                 with open(config_path, "r", encoding="utf-8") as f:
@@ -174,6 +178,7 @@ class RouteNavigator:
                 self.loot_pickup_wait_seconds = float(ap_cfg.get("loot_pickup_wait_seconds", self.loot_pickup_wait_seconds))
                 self.max_loot_pickups = int(ap_cfg.get("max_loot_pickups", self.max_loot_pickups))
                 self.wait_for_loot_confirmation = bool(ap_cfg.get("wait_for_loot_confirmation", self.wait_for_loot_confirmation))
+                self.zone_routines_file = ap_cfg.get("zone_routines_file", self.zone_routines_file)
             except Exception:
                 pass
 
@@ -187,6 +192,7 @@ class RouteNavigator:
         self.sim_templates: Dict[str, Optional[np.ndarray]] = {"sim1": None, "sim2": None, "sim3": None}
         self._load_sim_templates()
         self._load_loot_template()
+        self.load_zone_routines()
 
         if self.start_at_pink_dot > 0 and self.movement_path.is_configured:
             self.set_start_pink_dot(self.start_at_pink_dot)
@@ -222,6 +228,366 @@ class RouteNavigator:
                 self.loot1_img = cv2.imread(candidate)
                 if self.loot1_img is not None:
                     break
+
+    def load_zone_routines(self, filepath: Optional[str] = None) -> bool:
+        """Loads per-zone encounter and combat routine configuration."""
+        target_path = filepath or self.zone_routines_file
+        candidates = [target_path, "routines/zone_routines.json"]
+        if self.config_path:
+            cfg_dir = os.path.dirname(self.config_path)
+            if cfg_dir:
+                candidates.append(os.path.join(cfg_dir, "routines/zone_routines.json"))
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                try:
+                    with open(candidate, "r", encoding="utf-8") as f:
+                        self.zone_routines = json.load(f)
+                    p_count = len(self.zone_routines.get("pink_zones", {}))
+                    y_count = len(self.zone_routines.get("yellow_zones", {}))
+                    print(f"[ROUTINES] Loaded custom zone routines from '{candidate}': {p_count} pink zone(s), {y_count} yellow zone(s)")
+                    return True
+                except Exception as e:
+                    print(f"[ROUTINES] Warning: Error parsing '{candidate}': {e}")
+        return False
+
+    def _get_pink_zone_routine(self, target: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """Resolves custom routine for the target pink encounter if configured."""
+        if not self.zone_routines or "pink_zones" not in self.zone_routines:
+            return None
+        pink_dict = self.zone_routines["pink_zones"]
+        if not isinstance(pink_dict, dict):
+            return None
+
+        pink_num: Optional[int] = None
+        pink_wps = []
+        if hasattr(self.movement_path, "get_pink_waypoints") and callable(self.movement_path.get_pink_waypoints):
+            try:
+                pink_wps = self.movement_path.get_pink_waypoints()
+            except Exception:
+                pass
+
+        if target and isinstance(target, dict):
+            t_idx = target.get("index")
+            for p_i, item in enumerate(pink_wps):
+                w_idx = item[0] if isinstance(item, (list, tuple)) else getattr(item, "index", None)
+                w_data = item[1] if isinstance(item, (list, tuple)) else item
+                if t_idx == w_idx or (isinstance(w_data, dict) and w_data.get("index") == t_idx):
+                    pink_num = p_i + 1
+                    break
+
+        if pink_num is None and getattr(self, "start_at_pink_dot", 0) > 0:
+            pink_num = self.start_at_pink_dot
+
+        candidate_keys = []
+        if pink_num is not None:
+            candidate_keys.extend([f"pink_{pink_num}", str(pink_num), f"pink{pink_num}"])
+        if target and isinstance(target, dict):
+            if "index" in target:
+                candidate_keys.extend([f"wp_{target['index']}", str(target['index'])])
+            if "name" in target:
+                candidate_keys.append(str(target["name"]).lower())
+
+        for k in candidate_keys:
+            if k in pink_dict:
+                return pink_dict[k]
+            for pk, pv in pink_dict.items():
+                if pk.lower() == k.lower():
+                    return pv
+
+        return None
+
+    def _get_yellow_zone_routine(self, zone: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """Resolves custom routine for the active yellow zone if configured."""
+        if not self.zone_routines or "yellow_zones" not in self.zone_routines:
+            return None
+        yellow_dict = self.zone_routines["yellow_zones"]
+        if not isinstance(yellow_dict, dict):
+            return None
+
+        candidate_keys = []
+        if zone and isinstance(zone, dict):
+            if "id" in zone:
+                candidate_keys.append(str(zone["id"]))
+            if "index" in zone:
+                candidate_keys.extend([f"zone_{zone['index']}", str(zone['index'])])
+            if "name" in zone:
+                candidate_keys.append(str(zone["name"]).lower())
+
+        for k in candidate_keys:
+            if k in yellow_dict:
+                return yellow_dict[k]
+            for yk, yv in yellow_dict.items():
+                if yk.lower() == k.lower():
+                    return yv
+
+        return None
+
+    def _execute_zone_routine(
+        self,
+        routine: Dict[str, Any],
+        zone_label: str,
+        target: Optional[Dict[str, Any]] = None,
+        zone: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Executes a list of configured steps for a specific pink or yellow zone."""
+        steps = routine.get("steps", [])
+        routine_name = routine.get("name", zone_label)
+        print(f"\n[ROUTINE] >>> Starting custom routine '{routine_name}' ({len(steps)} steps) for {zone_label}...")
+        self.status_message = f"[{zone_label}] Executing Routine..."
+        context: Dict[str, Any] = {
+            "target": target,
+            "zone": zone,
+            "sims_clicked": False,
+            "banner_clicked": False,
+        }
+
+        for idx, step in enumerate(steps, 1):
+            if stop_handler.is_stopped() or not self.is_active:
+                print(f"  [ROUTINE] Stopped during step {idx}/{len(steps)}.")
+                return False
+
+            action = step.get("action", "").lower().strip()
+            desc = step.get("description", action)
+            print(f"  [ROUTINE STEP {idx}/{len(steps)}] {desc} (action={action})")
+
+            success = self._execute_zone_routine_step(step, context, zone_label=zone_label)
+            if not success and (stop_handler.is_stopped() or not self.is_active):
+                return False
+
+        print(f"[ROUTINE] <<< Finished custom routine '{routine_name}' for {zone_label}!\n")
+        return True
+
+    def _execute_zone_routine_step(
+        self,
+        step: Dict[str, Any],
+        context: Dict[str, Any],
+        zone_label: str = "ZONE",
+    ) -> bool:
+        """Dispatches and executes an individual routine step."""
+        action = step.get("action", "").lower().strip()
+
+        if action == "stop":
+            duration = float(step.get("duration", self.pink_dot_stop_seconds))
+            self.release_all_keys()
+            self.move_mouse_inside_game()
+            stop_start = time.time()
+            while (time.time() - stop_start) < duration:
+                if stop_handler.is_stopped() or not self.is_active:
+                    return False
+                rem = max(0.0, duration - (time.time() - stop_start))
+                self.status_message = f"[{zone_label}] Stopped ({rem:.1f}s)..."
+                time.sleep(0.05)
+            return True
+
+        elif action == "hold_mouse":
+            button = str(step.get("button", "middle")).lower().strip()
+            duration = float(step.get("duration", self.middle_click_hold_seconds))
+            window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+            self.move_mouse_inside_game()
+            print(f"    [ACTION] Holding mouse '{button}' button for {duration:.1f}s inside game...")
+            try:
+                if pydirectinput:
+                    pydirectinput.mouseDown(button=button)
+                h_start = time.time()
+                while (time.time() - h_start) < duration:
+                    if stop_handler.is_stopped() or not self.is_active:
+                        break
+                    rem_h = max(0.0, duration - (time.time() - h_start))
+                    self.status_message = f"[{zone_label}] Holding {button.title()} ({rem_h:.1f}s)..."
+                    time.sleep(0.05)
+            finally:
+                if pydirectinput:
+                    pydirectinput.mouseUp(button=button)
+                try:
+                    import ctypes
+                    flag = 0x0040 if button == "middle" else (0x0010 if button == "right" else 0x0004)
+                    ctypes.windll.user32.mouse_event(flag, 0, 0, 0, 0)
+                except Exception:
+                    pass
+                print(f"    [ACTION] Mouse '{button}' button released.")
+            time.sleep(0.1)
+            return True
+
+        elif action == "click_mouse":
+            button = str(step.get("button", "right")).lower().strip()
+            clicks = int(step.get("clicks", 1))
+            delay = float(step.get("delay", 0.15))
+            window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+            self.move_mouse_inside_game()
+            self.status_message = f"[{zone_label}] Clicking {button.title()}..."
+            for _ in range(clicks):
+                if stop_handler.is_stopped() or not self.is_active:
+                    return False
+                if pydirectinput:
+                    if button == "right":
+                        pydirectinput.rightClick()
+                    elif button == "middle":
+                        pydirectinput.middleClick()
+                    else:
+                        pydirectinput.click()
+                time.sleep(delay)
+            return True
+
+        elif action == "detect_and_click_sims":
+            priority = step.get("priority", ["sim1", "sim3", "sim2"])
+            y_offset = int(step.get("click_y_offset", self.sim_click_y_offset_px))
+            x_offset = int(step.get("click_x_offset", self.sim_click_x_offset_px))
+            app_wait = float(step.get("approach_wait", self.sim_approach_wait_seconds))
+            clicked = self._detect_and_click_sims(
+                prefix=f"[{zone_label}]",
+                sim_order=priority,
+                y_offset_px=y_offset,
+                x_offset_px=x_offset,
+                approach_wait=app_wait,
+            )
+            context["sims_clicked"] = len(clicked) > 0
+            return True
+
+        elif action == "click_encounter_banner":
+            if step.get("only_if_no_sims", True) and context.get("sims_clicked", False):
+                print(f"    [STEP] Sims were already selected. Skipping banner click.")
+                return True
+
+            app_wait = float(step.get("approach_wait", self.banner_approach_wait_seconds))
+            reclick = bool(step.get("reclick", self.reclick_after_approach))
+            search_attempts = int(step.get("search_attempts", self.banner_search_attempts))
+
+            self.status_message = f"[{zone_label}] Finding Encounter Banner..."
+            banner_pos = None
+            for attempt in range(1, search_attempts + 1):
+                if stop_handler.is_stopped() or not self.is_active:
+                    return False
+                banner_pos = self.locate_encounter_banner()
+                if banner_pos is not None:
+                    break
+                time.sleep(0.25)
+
+            if banner_pos is not None:
+                bx, by = self.move_mouse_inside_game(banner_pos[0], banner_pos[1])
+                print(f"    [ACTION] Clicking encounter banner at ({bx}, {by})...")
+                self.status_message = f"[{zone_label}] Clicking Banner ({bx}, {by})"
+                if pydirectinput:
+                    pydirectinput.click()
+                    time.sleep(0.08)
+                    pydirectinput.mouseUp(button="left")
+                time.sleep(0.15)
+
+                if app_wait > 0:
+                    self._wait_for_approach(app_wait, reason=f"{zone_label} BANNER")
+                    if stop_handler.is_stopped() or not self.is_active:
+                        return False
+                    if reclick:
+                        in_range_pos = self.locate_encounter_banner()
+                        if in_range_pos is not None:
+                            rx, ry = self.move_mouse_inside_game(in_range_pos[0], in_range_pos[1])
+                            print(f"    [ACTION] Re-clicking encounter banner in-range at ({rx}, {ry})...")
+                            if pydirectinput:
+                                pydirectinput.click()
+                                time.sleep(0.08)
+                                pydirectinput.mouseUp(button="left")
+                            time.sleep(0.15)
+                context["banner_clicked"] = True
+            else:
+                print(f"    [WARNING] Encounter banner not detected on screen.")
+                self.move_mouse_inside_game()
+            return True
+
+        elif action == "orbit_yellow_zone":
+            orbit_duration = float(step.get("duration", self.orbit_duration))
+            orbit_zones = self.movement_path.get_orbit_zones() if hasattr(self.movement_path, "get_orbit_zones") else []
+            target = context.get("target")
+            zone = context.get("zone")
+            c_pos = self.latest_pos or ((target["x"], target["y"]) if isinstance(target, dict) and "x" in target else (0.0, 0.0))
+            best_zone = zone
+            if best_zone is None and orbit_zones:
+                best_d = float("inf")
+                for z in orbit_zones:
+                    if isinstance(z, dict):
+                        zc = z.get("center", [0, 0])
+                        d = math.hypot(zc[0] - c_pos[0], zc[1] - c_pos[1])
+                        if d < best_d:
+                            best_d = d
+                            best_zone = z
+
+            if best_zone is not None:
+                zone_id = best_zone.get("id")
+                if zone_id:
+                    self.interacted_zones.add(zone_id)
+                self.is_orbiting = True
+                self.orbit_start_time = time.time()
+                self.last_orbit_right_click = time.time()
+                self.orbit_duration = orbit_duration
+                self.current_orbit_zone = best_zone
+                self.orbit_perimeter_pts = best_zone.get("perimeter_points", [])
+                if self.orbit_perimeter_pts:
+                    best_p_idx = 0
+                    best_p_dist = float("inf")
+                    for p_i, p_pt in enumerate(self.orbit_perimeter_pts):
+                        d = math.hypot(p_pt[0] - c_pos[0], p_pt[1] - c_pos[1])
+                        if d < best_p_dist:
+                            best_p_dist = d
+                            best_p_idx = p_i
+                    self.orbit_point_idx = best_p_idx
+                self.orbit_grace_until = time.time() + 4.0
+                self.stuck_counter = 0
+                self.last_progress_pos = self.latest_pos or c_pos
+                self.last_progress_time = time.time() + 4.0
+                window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+                self.move_mouse_inside_game()
+                print(f"    [ACTION] Starting orbit inside yellow shape ({best_zone.get('id', 'zone')}) for {self.orbit_duration:.1f}s...")
+                self.status_message = f"Orbiting Yellow Zone ({self.orbit_duration:.1f}s left)"
+            return True
+
+        elif action == "pickup_loot":
+            max_pickups = int(step.get("max_items", self.max_loot_pickups))
+            wait_for_green = bool(step.get("wait_for_green_light", self.wait_for_loot_confirmation))
+            pickup_delay = float(step.get("pickup_delay", self.loot_pickup_wait_seconds))
+            prev_delay = self.loot_pickup_wait_seconds
+            self.loot_pickup_wait_seconds = pickup_delay
+            try:
+                self.collect_loot(max_pickups=max_pickups)
+            finally:
+                self.loot_pickup_wait_seconds = prev_delay
+
+            if wait_for_green:
+                self.release_all_keys()
+                self.waiting_for_green_light = True
+                self.status_message = "WAITING FOR GREEN LIGHT (Verify Loot Pickup - Press 'G' to Resume)"
+                print("\n[AUTOPILOT] >>> LOOT PICKUP FINISHED! Waiting for GREEN LIGHT to continue...")
+            return True
+
+        elif action == "press_key":
+            key = str(step.get("key", "q")).lower().strip()
+            duration = float(step.get("duration", 0.1))
+            window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+            self.move_mouse_inside_game()
+            print(f"    [ACTION] Pressing key '{key}' for {duration:.2f}s...")
+            self.status_message = f"[{zone_label}] Key '{key.upper()}' ({duration:.1f}s)..."
+            if pydirectinput:
+                pydirectinput.keyDown(key)
+            k_start = time.time()
+            while (time.time() - k_start) < duration:
+                if stop_handler.is_stopped() or not self.is_active:
+                    break
+                time.sleep(0.02)
+            if pydirectinput:
+                pydirectinput.keyUp(key)
+            time.sleep(0.05)
+            return True
+
+        elif action == "wait":
+            duration = float(step.get("duration", 1.0))
+            self.status_message = f"[{zone_label}] Waiting ({duration:.1f}s)..."
+            w_start = time.time()
+            while (time.time() - w_start) < duration:
+                if stop_handler.is_stopped() or not self.is_active:
+                    return False
+                time.sleep(0.05)
+            return True
+
+        else:
+            print(f"    [WARNING] Unknown routine action '{action}'. Skipping...")
+            return True
 
     @staticmethod
     def compute_wasd_keys(current_pos: Tuple[float, float], target_pos: Tuple[float, float]) -> List[str]:
@@ -412,6 +778,7 @@ class RouteNavigator:
                 self.movement_path.update_to_nearest(self.latest_pos)
             else:
                 self.movement_path.current_idx = 0
+            self.load_zone_routines()
             self.status_message = f"Route Reloaded ({len(self.movement_path.waypoints)} waypoints)"
             print(f"[NAVIGATOR] Route reloaded. Total waypoints: {len(self.movement_path.waypoints)}")
         return success
@@ -747,22 +1114,30 @@ class RouteNavigator:
 
         return None
 
-    def _detect_and_click_sims(self, prefix: str = "[SIM]") -> List[str]:
+    def _detect_and_click_sims(
+        self,
+        prefix: str = "[SIM]",
+        sim_order: Optional[List[str]] = None,
+        y_offset_px: Optional[int] = None,
+        x_offset_px: Optional[int] = None,
+        approach_wait: Optional[float] = None,
+    ) -> List[str]:
         """
         Detects and selects Sims according to priority:
-        1. Check Sim 1. If present: click Sim 1 -> wait 2.0s -> check Sim 3 -> if present click Sim 3 -> wait 2.0s -> check Sim 2 -> if present click Sim 2.
-        2. If Sim 1 is not present: check Sim 3 -> if present click Sim 3 -> wait 2.0s -> check Sim 2 -> if present click Sim 2.
-        3. If neither Sim 1 nor Sim 3 is present: check Sim 2 -> if present click Sim 2.
+        Default priority: sim1 -> wait 2.0s -> sim3 -> wait 2.0s -> sim2.
         Returns list of sim names that were clicked (e.g. ['sim1', 'sim3']).
         Clicks are offset by sim_click_y_offset_px (e.g. +35px) below the detected template center.
         """
         sims_clicked: List[str] = []
+        eff_y_offset = y_offset_px if y_offset_px is not None else self.sim_click_y_offset_px
+        eff_x_offset = x_offset_px if x_offset_px is not None else self.sim_click_x_offset_px
+        eff_app_wait = approach_wait if approach_wait is not None else self.sim_approach_wait_seconds
 
         def _click_sim_at(sim_key: str, sim_label: str, detected_pos: Tuple[int, int]) -> Tuple[int, int]:
-            target_x = detected_pos[0] + self.sim_click_x_offset_px
-            target_y = detected_pos[1] + self.sim_click_y_offset_px
+            target_x = detected_pos[0] + eff_x_offset
+            target_y = detected_pos[1] + eff_y_offset
             cx, cy = self.move_mouse_inside_game(target_x, target_y)
-            offset_info = f" [offset: +{self.sim_click_y_offset_px}px Y]" if self.sim_click_y_offset_px != 0 else ""
+            offset_info = f" [offset: +{eff_y_offset}px Y]" if eff_y_offset != 0 else ""
             print(f"  [SIM DETECTED] Clicking {sim_label} at ({cx}, {cy}){offset_info} (detected at ({detected_pos[0]}, {detected_pos[1]}))...")
             self.status_message = f"{prefix} Clicked {sim_label} ({cx}, {cy})"
             if pydirectinput:
@@ -772,14 +1147,14 @@ class RouteNavigator:
             sims_clicked.append(sim_key)
 
             # Approach wait: allow character to move closer to the sim object before proceeding
-            if self.sim_approach_wait_seconds > 0:
-                self._wait_for_approach(self.sim_approach_wait_seconds, reason=f"{prefix} {sim_label}")
+            if eff_app_wait > 0:
+                self._wait_for_approach(eff_app_wait, reason=f"{prefix} {sim_label}")
                 if not stop_handler.is_stopped() and self.is_active and self.reclick_after_approach:
                     in_range_pos = self.locate_sim_template(sim_key)
                     if in_range_pos is not None:
                         rx, ry = self.move_mouse_inside_game(
-                            in_range_pos[0] + self.sim_click_x_offset_px,
-                            in_range_pos[1] + self.sim_click_y_offset_px
+                            in_range_pos[0] + eff_x_offset,
+                            in_range_pos[1] + eff_y_offset
                         )
                         print(f"  [SIM IN-RANGE] Re-clicking {sim_label} in-range at ({rx}, {ry})...")
                         if pydirectinput:
@@ -789,6 +1164,22 @@ class RouteNavigator:
                         time.sleep(0.15)
 
             return cx, cy
+
+        if sim_order is not None and len(sim_order) > 0:
+            for sim_key in sim_order:
+                if stop_handler.is_stopped() or not self.is_active:
+                    return sims_clicked
+                sim_label = f"Sim {sim_key.replace('sim', '')}"
+                self.status_message = f"{prefix} Checking for {sim_label}..."
+                sim_pos = self.locate_sim_template(sim_key)
+                if sim_pos is not None:
+                    _click_sim_at(sim_key, sim_label, sim_pos)
+                    w_start = time.time()
+                    while (time.time() - w_start) < 1.5:
+                        if stop_handler.is_stopped() or not self.is_active:
+                            return sims_clicked
+                        time.sleep(0.05)
+            return sims_clicked
 
         self.status_message = f"{prefix} Checking for Sim 1..."
         sim1_pos = self.locate_sim_template("sim1")
@@ -1102,6 +1493,12 @@ class RouteNavigator:
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
 
         try:
+            # Check for custom zone routine first
+            custom_routine = self._get_yellow_zone_routine(orbit_zone)
+            if custom_routine and custom_routine.get("steps"):
+                z_id = orbit_zone.get("id", "zone") if isinstance(orbit_zone, dict) else "zone"
+                return self._execute_zone_routine(custom_routine, zone_label=f"YELLOW ZONE ({z_id})", zone=orbit_zone)
+
             # Ensure cursor starts inside the game window
             self.move_mouse_inside_game()
 
@@ -1244,6 +1641,11 @@ class RouteNavigator:
             self.stuck_counter = 0
 
     def _do_execute_pink_dot_interaction(self, target: Optional[Dict[str, Any]] = None) -> bool:
+        # Check for custom zone routine first
+        custom_routine = self._get_pink_zone_routine(target)
+        if custom_routine and custom_routine.get("steps"):
+            return self._execute_zone_routine(custom_routine, zone_label="PINK DOT", target=target)
+
         self.release_all_keys()
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
         self.move_mouse_inside_game()

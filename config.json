@@ -45,7 +45,8 @@
     "loot_pickup_wait_seconds": 0.4,
     "max_loot_pickups": 15,
     "wait_for_loot_confirmation": true,
-    "start_at_pink_dot": 0
+    "start_at_pink_dot": 0,
+    "zone_routines_file": "routines/zone_routines.json"
   },
   "rooms": [
     {

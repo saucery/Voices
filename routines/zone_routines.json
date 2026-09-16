@@ -1,0 +1,241 @@
+{
+  "description": "Per-zone encounter and combat routine configuration for Pink Dots and Yellow Orbit Zones. Edit steps and timings individually per zone.",
+  "pink_zones": {
+    "pink_1": {
+      "name": "Pink Dot #1 (WP #8)",
+      "description": "First encounter banner / sims",
+      "steps": [
+        {
+          "action": "stop",
+          "duration": 2.5,
+          "description": "Halt character movement"
+        },
+        {
+          "action": "detect_and_click_sims",
+          "priority": ["sim1", "sim3", "sim2"],
+          "click_y_offset": 35,
+          "click_x_offset": 0,
+          "approach_wait": 2.0,
+          "description": "Attempt to detect and select sim banners with approach wait"
+        },
+        {
+          "action": "click_encounter_banner",
+          "approach_wait": 2.0,
+          "reclick": false,
+          "search_attempts": 5,
+          "description": "Fallback banner click if no sims detected"
+        },
+        {
+          "action": "click_mouse",
+          "button": "right",
+          "clicks": 1,
+          "delay": 0.15,
+          "description": "Single right-click skill"
+        },
+        {
+          "action": "hold_mouse",
+          "button": "middle",
+          "duration": 4.0,
+          "description": "Hold middle mouse button for 4.0 seconds"
+        },
+        {
+          "action": "orbit_yellow_zone",
+          "duration": 50.0,
+          "right_click_interval": 0.75,
+          "description": "Orbit inside yellow zone for 50s"
+        },
+        {
+          "action": "pickup_loot",
+          "max_items": 15,
+          "pickup_delay": 0.4,
+          "wait_for_green_light": true,
+          "description": "Collect loot and wait for manual green light confirmation"
+        }
+      ]
+    },
+    "pink_2": {
+      "name": "Pink Dot #2 (WP #18)",
+      "description": "Second encounter banner / sims",
+      "steps": [
+        {
+          "action": "stop",
+          "duration": 2.5,
+          "description": "Halt character movement"
+        },
+        {
+          "action": "detect_and_click_sims",
+          "priority": ["sim1", "sim3", "sim2"],
+          "click_y_offset": 35,
+          "click_x_offset": 0,
+          "approach_wait": 2.0,
+          "description": "Attempt to detect and select sim banners"
+        },
+        {
+          "action": "click_encounter_banner",
+          "approach_wait": 2.0,
+          "reclick": false,
+          "search_attempts": 5,
+          "description": "Fallback banner click if no sims detected"
+        },
+        {
+          "action": "click_mouse",
+          "button": "right",
+          "clicks": 1,
+          "delay": 0.15,
+          "description": "Single right-click skill"
+        },
+        {
+          "action": "hold_mouse",
+          "button": "middle",
+          "duration": 5.5,
+          "description": "Hold middle mouse button for 5.5 seconds"
+        },
+        {
+          "action": "orbit_yellow_zone",
+          "duration": 50.0,
+          "right_click_interval": 0.75,
+          "description": "Orbit inside yellow zone for 50s"
+        },
+        {
+          "action": "pickup_loot",
+          "max_items": 15,
+          "pickup_delay": 0.4,
+          "wait_for_green_light": true,
+          "description": "Collect loot and wait for manual green light confirmation"
+        }
+      ]
+    },
+    "pink_3": {
+      "name": "Pink Dot #3 (WP #26)",
+      "description": "Third encounter banner / sims",
+      "steps": [
+        {
+          "action": "stop",
+          "duration": 2.5,
+          "description": "Halt character movement"
+        },
+        {
+          "action": "detect_and_click_sims",
+          "priority": ["sim1", "sim3", "sim2"],
+          "click_y_offset": 35,
+          "click_x_offset": 0,
+          "approach_wait": 2.0,
+          "description": "Attempt to detect and select sim banners"
+        },
+        {
+          "action": "click_encounter_banner",
+          "approach_wait": 2.0,
+          "reclick": false,
+          "search_attempts": 5,
+          "description": "Fallback banner click if no sims detected"
+        },
+        {
+          "action": "click_mouse",
+          "button": "right",
+          "clicks": 1,
+          "delay": 0.15,
+          "description": "Single right-click skill"
+        },
+        {
+          "action": "hold_mouse",
+          "button": "middle",
+          "duration": 4.0,
+          "description": "Hold middle mouse button for 4.0 seconds"
+        },
+        {
+          "action": "orbit_yellow_zone",
+          "duration": 45.0,
+          "right_click_interval": 0.75,
+          "description": "Orbit inside yellow zone for 45s"
+        },
+        {
+          "action": "pickup_loot",
+          "max_items": 15,
+          "pickup_delay": 0.4,
+          "wait_for_green_light": true,
+          "description": "Collect loot and wait for manual green light confirmation"
+        }
+      ]
+    },
+    "pink_4": {
+      "name": "Pink Dot #4 (WP #36)",
+      "description": "Fourth encounter banner / sims",
+      "steps": [
+        {
+          "action": "stop",
+          "duration": 2.5,
+          "description": "Halt character movement"
+        },
+        {
+          "action": "detect_and_click_sims",
+          "priority": ["sim1", "sim3", "sim2"],
+          "click_y_offset": 35,
+          "click_x_offset": 0,
+          "approach_wait": 2.0,
+          "description": "Attempt to detect and select sim banners"
+        },
+        {
+          "action": "click_encounter_banner",
+          "approach_wait": 2.0,
+          "reclick": false,
+          "search_attempts": 5,
+          "description": "Fallback banner click if no sims detected"
+        },
+        {
+          "action": "click_mouse",
+          "button": "right",
+          "clicks": 1,
+          "delay": 0.15,
+          "description": "Single right-click skill"
+        },
+        {
+          "action": "hold_mouse",
+          "button": "middle",
+          "duration": 5.0,
+          "description": "Hold middle mouse button for 5.0 seconds"
+        },
+        {
+          "action": "orbit_yellow_zone",
+          "duration": 50.0,
+          "right_click_interval": 0.75,
+          "description": "Orbit inside yellow zone for 50s"
+        },
+        {
+          "action": "pickup_loot",
+          "max_items": 15,
+          "pickup_delay": 0.4,
+          "wait_for_green_light": true,
+          "description": "Collect loot and wait for manual green light confirmation"
+        }
+      ]
+    }
+  },
+  "yellow_zones": {
+    "zone_1": {
+      "name": "Yellow Zone #1",
+      "steps": [
+        {
+          "action": "click_encounter_banner",
+          "approach_wait": 2.0,
+          "reclick": false,
+          "search_attempts": 5
+        },
+        {
+          "action": "click_mouse",
+          "button": "right",
+          "clicks": 1
+        },
+        {
+          "action": "hold_mouse",
+          "button": "middle",
+          "duration": 3.0
+        },
+        {
+          "action": "orbit_yellow_zone",
+          "duration": 50.0,
+          "right_click_interval": 0.75
+        }
+      ]
+    }
+  }
+}

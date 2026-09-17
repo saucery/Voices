@@ -243,6 +243,7 @@ def test_execute_yellow_zone_interaction_sequence(tmp_path, monkeypatch):
 
     # Fast hold for unit test
     nav = RouteNavigator()
+    nav.zone_routines = None
     nav.middle_click_hold_seconds = 0.1
     nav.banner_search_attempts = 1
     nav.is_active = True
@@ -364,6 +365,7 @@ def test_config_toggles_disable_banner_or_middle_click(monkeypatch):
     monkeypatch.setattr(rn.window_focuser, "get_game_window_bounds", lambda: (0, 0, 1920, 1080))
 
     nav = RouteNavigator()
+    nav.zone_routines = None
     nav.is_active = True
     nav.click_banner_enabled = False       # Banner disabled
     nav.right_click_after_banner_enabled = True

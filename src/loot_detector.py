@@ -64,6 +64,8 @@ class LootDetector:
         self.max_pickups: int = 20
         self.pickup_delay_seconds: float = 0.35
         self.approach_wait_seconds: float = 1.5
+        self.save_debug_screenshots: bool = True
+        self.debug_dir: str = "loot_debug"
         self.rules: List[Dict[str, Any]] = []
         self._template_cache: Dict[str, Optional[np.ndarray]] = {}
         self.load_config(self.config_file)
@@ -81,6 +83,8 @@ class LootDetector:
                     self.max_pickups = int(data.get("max_pickups", 20))
                     self.pickup_delay_seconds = float(data.get("pickup_delay_seconds", 0.35))
                     self.approach_wait_seconds = float(data.get("approach_wait_seconds", 1.5))
+                    self.save_debug_screenshots = bool(data.get("save_debug_screenshots", self.save_debug_screenshots))
+                    self.debug_dir = str(data.get("debug_dir", self.debug_dir))
                     self.rules = data.get("rules", [])
                     # Sort rules by priority ascending (1 highest)
                     self.rules.sort(key=lambda r: int(r.get("priority", 99)))
@@ -493,6 +497,53 @@ class LootDetector:
             cv2.putText(vis, label, (x + 3, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1, cv2.LINE_AA)
 
         return vis
+
+    def save_debug_screenshot(
+        self,
+        screen: np.ndarray,
+        target_item: LootItem,
+        all_items: Optional[List[LootItem]] = None,
+        output_dir: Optional[str] = None,
+    ) -> Tuple[str, str]:
+        """
+        Saves an annotated full screenshot and a zoomed item crop to the debug folder.
+        Returns tuple of file paths: (full_screenshot_path, crop_path).
+        """
+        out_dir = output_dir or self.debug_dir
+        os.makedirs(out_dir, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        millis = int((time.time() % 1.0) * 1000)
+        safe_rule = str(target_item.rule_id).replace(" ", "_").replace("/", "_")
+        prefix = f"loot_{timestamp}_{millis:03d}_P{target_item.priority}_{safe_rule}"
+
+        # 1. Annotated full screen
+        items_to_draw = all_items or [target_item]
+        annotated_screen = self.draw_overlay(screen, items_to_draw)
+        full_path = os.path.join(out_dir, f"{prefix}_full.png")
+        cv2.imwrite(full_path, annotated_screen)
+
+        # 2. Zoomed crop around target item with margin
+        margin = 35
+        sh, sw = screen.shape[:2]
+        cx1 = max(0, target_item.x - margin)
+        cy1 = max(0, target_item.y - margin)
+        cx2 = min(sw, target_item.x + target_item.w + margin)
+        cy2 = min(sh, target_item.y + target_item.h + margin)
+
+        crop_img = screen[cy1:cy2, cx1:cx2].copy()
+        rel_x = target_item.x - cx1
+        rel_y = target_item.y - cy1
+        cv2.rectangle(crop_img, (rel_x, rel_y), (rel_x + target_item.w, rel_y + target_item.h), (0, 255, 0), 2)
+        cv2.drawMarker(crop_img, (target_item.center_x - cx1, target_item.center_y - cy1), (0, 0, 255), cv2.MARKER_CROSS, 8, 1)
+
+        # Add small badge on crop
+        badge_txt = f"[P{target_item.priority}] {target_item.rule_name}"
+        cv2.putText(crop_img, badge_txt, (4, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (0, 255, 255), 1, cv2.LINE_AA)
+
+        crop_path = os.path.join(out_dir, f"{prefix}_crop.png")
+        cv2.imwrite(crop_path, crop_img)
+
+        return full_path, crop_path
 
 
 if __name__ == "__main__":

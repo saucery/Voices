@@ -171,6 +171,8 @@ class RouteNavigator:
         self.max_loot_pickups: int = 15
         self.wait_for_loot_confirmation: bool = True
         self.waiting_for_green_light: bool = False
+        self.save_loot_debug_screenshots: bool = True
+        self.loot_debug_dir: str = "loot_debug"
         self.zone_routines_file: str = "routines/zone_routines.json"
         self.zone_routines: Optional[Dict[str, Any]] = None
 
@@ -210,6 +212,8 @@ class RouteNavigator:
                 self.loot_approach_wait_seconds = float(ap_cfg.get("loot_approach_wait_seconds", self.loot_approach_wait_seconds))
                 self.max_loot_pickups = int(ap_cfg.get("max_loot_pickups", self.max_loot_pickups))
                 self.wait_for_loot_confirmation = bool(ap_cfg.get("wait_for_loot_confirmation", self.wait_for_loot_confirmation))
+                self.save_loot_debug_screenshots = bool(ap_cfg.get("save_loot_debug_screenshots", self.save_loot_debug_screenshots))
+                self.loot_debug_dir = str(ap_cfg.get("loot_debug_dir", self.loot_debug_dir))
                 self.zone_routines_file = ap_cfg.get("zone_routines_file", self.zone_routines_file)
                 self.loot_filter_file = ap_cfg.get("loot_filter_file", "routines/loot_filter.json")
             except Exception:
@@ -1976,6 +1980,18 @@ class RouteNavigator:
                     if too_close:
                         continue
 
+                # Save debug screenshot and zoomed crop if enabled
+                if self.save_loot_debug_screenshots or getattr(self.loot_detector, "save_debug_screenshots", False):
+                    try:
+                        self.loot_detector.save_debug_screenshot(
+                            screen,
+                            item,
+                            all_items=detected_items,
+                            output_dir=self.loot_debug_dir or getattr(self.loot_detector, "debug_dir", "loot_debug"),
+                        )
+                    except Exception as e:
+                        _log(f"  [LOOT DEBUG] Failed to save loot debug screenshot: {e}")
+
                 _log(f"  [LOOT MATCH] Found [P{item.priority}] {item.rule_name} (conf={item.confidence:.2f}, {item.w}x{item.h}) at screen ({desktop_x}, {desktop_y})")
                 return desktop_x, desktop_y
 
@@ -2022,6 +2038,28 @@ class RouteNavigator:
                     for ex_x, ex_y in exclude_positions:
                         if math.hypot(desktop_x - ex_x, desktop_y - ex_y) < 28.0:
                             return None
+
+                # Save debug screenshot for fallback template loot if enabled
+                if (self.save_loot_debug_screenshots or getattr(self.loot_detector, "save_debug_screenshots", False)) and hasattr(self, "loot_detector") and self.loot_detector:
+                    try:
+                        tmpl_item = LootItem(
+                            rule_id="custom_template_loot1",
+                            rule_name="Template Matcher (ui/loot1.png)",
+                            priority=99,
+                            confidence=best_val,
+                            rect=(int(best_loc[0]), int(best_loc[1]), int(tw * best_scale), int(th * best_scale)),
+                            center_x=cx,
+                            center_y=cy,
+                            item_text="Template Loot",
+                        )
+                        self.loot_detector.save_debug_screenshot(
+                            screen,
+                            tmpl_item,
+                            output_dir=self.loot_debug_dir or getattr(self.loot_detector, "debug_dir", "loot_debug"),
+                        )
+                    except Exception as e:
+                        _log(f"  [LOOT DEBUG] Failed to save fallback template debug screenshot: {e}")
+
                 _log(f"  [LOOT MATCH] Found fallback template loot1 (conf={best_val:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
                 return desktop_x, desktop_y
 

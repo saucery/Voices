@@ -116,3 +116,60 @@ def test_route_navigator_collect_loot_integration():
         assert picked == 1
         assert mock_pdi.click.call_count == 1
     nav.stop()
+
+
+def test_loot_detector_save_debug_screenshot(tmp_path):
+    """Verifies that LootDetector.save_debug_screenshot creates full and crop image files in target dir."""
+    detector = LootDetector()
+    canvas = np.zeros((400, 600, 3), dtype=np.uint8)
+    # Draw white box with red text
+    canvas[100:130, 150:300] = (240, 240, 240)
+    cv2.putText(canvas, "DIVINE ORB", (160, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 230), 2)
+
+    detected = detector.detect_loot(canvas)
+    assert len(detected) >= 1
+    item = detected[0]
+
+    out_dir = str(tmp_path / "test_loot_debug")
+    full_path, crop_path = detector.save_debug_screenshot(canvas, item, all_items=detected, output_dir=out_dir)
+
+    assert os.path.exists(full_path)
+    assert os.path.exists(crop_path)
+    assert full_path.endswith("_full.png")
+    assert crop_path.endswith("_crop.png")
+
+    full_img = cv2.imread(full_path)
+    crop_img = cv2.imread(crop_path)
+    assert full_img is not None
+    assert full_img.shape == canvas.shape
+    assert crop_img is not None
+    assert crop_img.shape[0] > 0 and crop_img.shape[1] > 0
+
+
+def test_route_navigator_saves_loot_debug_screenshot(tmp_path):
+    """Verifies that RouteNavigator.locate_loot triggers save_debug_screenshot into configured debug dir."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.save_loot_debug_screenshots = True
+    out_dir = str(tmp_path / "nav_loot_debug")
+    nav.loot_debug_dir = out_dir
+
+    canvas = np.zeros((400, 600, 3), dtype=np.uint8)
+    canvas[100:130, 150:300] = (240, 240, 240)
+    cv2.putText(canvas, "DIVINE ORB", (160, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 230), 2)
+
+    with patch.object(nav, "_get_capturer") as mock_get_cap:
+        mock_cap = MagicMock()
+        mock_cap.capture.return_value = canvas
+        mock_get_cap.return_value = mock_cap
+
+        pos = nav.locate_loot()
+        assert pos is not None
+
+        # Verify debug files created in out_dir
+        files = os.listdir(out_dir)
+        assert len(files) == 2  # 1 full, 1 crop
+        assert any(f.endswith("_full.png") for f in files)
+        assert any(f.endswith("_crop.png") for f in files)
+    nav.stop()
+

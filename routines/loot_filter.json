@@ -3,6 +3,8 @@
   "max_pickups": 20,
   "pickup_delay_seconds": 0.35,
   "approach_wait_seconds": 1.5,
+  "save_debug_screenshots": true,
+  "debug_dir": "loot_debug",
   "rules": [
     {
       "id": "tier1_white_box_red_text",

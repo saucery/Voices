@@ -195,33 +195,36 @@ class LootDetector:
         r: np.ndarray,
         rule: Dict[str, Any],
     ) -> List[LootItem]:
-        """Detects white background loot boxes with red text/borders."""
+        """
+        Detects white background loot boxes with red text/borders.
+        Uses dual-pass detection (horizontal white box contour segmentation +
+        red text cluster projection) to handle tightly stacked loot boxes and vertical light beams.
+        """
         min_w = int(rule.get("min_width", 25))
-        max_w = int(rule.get("max_width", 450))
+        max_w = int(rule.get("max_width", 500))
         min_h = int(rule.get("min_height", 10))
-        max_h = int(rule.get("max_height", 55))
-        min_ar = float(rule.get("min_aspect_ratio", 1.5))
-        min_bg_frac = float(rule.get("min_bg_fraction", 0.30))
-        min_text_px = int(rule.get("min_text_pixels", 12))
+        max_h = int(rule.get("max_height", 65))
+        min_ar = float(rule.get("min_aspect_ratio", 1.3))
+        min_bg_frac = float(rule.get("min_bg_fraction", 0.25))
+        min_text_px = int(rule.get("min_text_pixels", 14))
 
         # White background mask: high brightness, low saturation
-        # BGR: all > 185, S < 55, V > 180
         white_mask = (
-            (r > 185) & (g > 180) & (b > 180) &
-            (hsv[:, :, 1] < 55) & (hsv[:, :, 2] > 180)
+            (r > 175) & (g > 170) & (b > 170) &
+            (hsv[:, :, 1] < 65) & (hsv[:, :, 2] > 170)
         ).astype(np.uint8) * 255
 
-        # Red text mask: high R, low G, low B
-        red_text_mask = ((r > 155) & (g < 85) & (b < 85)).astype(np.uint8) * 255
+        # Red text / border mask: high R, low G, low B
+        red_text_mask = ((r > 150) & (g < 95) & (b < 95)).astype(np.uint8) * 255
 
-        # Dilate slightly horizontally to bridge small letter gaps inside the white box
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        white_closed = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
-
-        contours, _ = cv2.findContours(white_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         items: List[LootItem] = []
 
-        for cnt in contours:
+        # Pass 1: Horizontal White Box Contours (strictly 1D horizontal closing)
+        kernel_horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
+        white_closed = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel_horiz)
+        w_contours, _ = cv2.findContours(white_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for cnt in w_contours:
             x, y, w, h = cv2.boundingRect(cnt)
             if w < min_w or w > max_w or h < min_h or h > max_h:
                 continue
@@ -230,7 +233,6 @@ class LootDetector:
             if aspect_ratio < min_ar:
                 continue
 
-            # Sub-region inspection
             box_white = white_mask[y:y+h, x:x+w]
             box_red = red_text_mask[y:y+h, x:x+w]
 
@@ -238,7 +240,7 @@ class LootDetector:
             red_pixels = int(np.count_nonzero(box_red > 0))
 
             if bg_frac >= min_bg_frac and red_pixels >= min_text_px:
-                confidence = min(1.0, 0.5 + (red_pixels / 100.0) + (bg_frac * 0.3))
+                confidence = min(1.0, 0.5 + (red_pixels / 80.0) + (bg_frac * 0.3))
                 items.append(
                     LootItem(
                         x=x,
@@ -248,7 +250,49 @@ class LootDetector:
                         center_x=x + w // 2,
                         center_y=y + h // 2,
                         rule_id=rule.get("id", "tier1_white_box_red_text"),
-                        rule_name=rule.get("name", "White Box / Red Text"),
+                        rule_name=rule.get("name", "Tier 1 High Value (White Box / Red Text)"),
+                        priority=int(rule.get("priority", 1)),
+                        confidence=confidence,
+                    )
+                )
+
+        # Pass 2: Red Text Cluster Analysis (unbreakable for vertically stacked loot / beam collisions)
+        kernel_red = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3))
+        red_dilated = cv2.dilate(red_text_mask, kernel_red)
+        r_contours, _ = cv2.findContours(red_dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for cnt in r_contours:
+            rx, ry, rw, rh = cv2.boundingRect(cnt)
+            if rw < 20 or rh < 6:
+                continue
+
+            raw_red_pixels = int(np.count_nonzero(red_text_mask[ry:ry+rh, rx:rx+rw] > 0))
+            if raw_red_pixels < min_text_px:
+                continue
+
+            # Expand to cover the surrounding white background rectangle
+            pad_x = 8
+            pad_y = 6
+            bx = max(0, rx - pad_x)
+            by = max(0, ry - pad_y)
+            bw = min(screen.shape[1] - bx, rw + 2 * pad_x)
+            bh = min(screen.shape[0] - by, rh + 2 * pad_y)
+
+            box_white = white_mask[by:by+bh, bx:bx+bw]
+            bg_frac = np.mean(box_white > 0)
+
+            if bg_frac >= min_bg_frac:
+                confidence = min(1.0, 0.5 + (raw_red_pixels / 80.0) + (bg_frac * 0.3))
+                items.append(
+                    LootItem(
+                        x=bx,
+                        y=by,
+                        w=bw,
+                        h=bh,
+                        center_x=bx + bw // 2,
+                        center_y=by + bh // 2,
+                        rule_id=rule.get("id", "tier1_white_box_red_text"),
+                        rule_name=rule.get("name", "Tier 1 High Value (White Box / Red Text)"),
                         priority=int(rule.get("priority", 1)),
                         confidence=confidence,
                     )
@@ -266,25 +310,24 @@ class LootDetector:
         rule: Dict[str, Any],
     ) -> List[LootItem]:
         """Detects purple/magenta background loot boxes (e.g., Raven's Reflection)."""
-        min_w = int(rule.get("min_width", 30))
-        max_w = int(rule.get("max_width", 400))
+        min_w = int(rule.get("min_width", 25))
+        max_w = int(rule.get("max_width", 450))
         min_h = int(rule.get("min_height", 10))
-        max_h = int(rule.get("max_height", 55))
-        min_ar = float(rule.get("min_aspect_ratio", 1.5))
-        min_bg_frac = float(rule.get("min_bg_fraction", 0.35))
+        max_h = int(rule.get("max_height", 65))
+        min_ar = float(rule.get("min_aspect_ratio", 1.3))
+        min_bg_frac = float(rule.get("min_bg_fraction", 0.30))
 
         # Purple / Magenta Hue in OpenCV HSV is ~ 135 to 172
-        # Also BGR signature: R > 115, B > 125, G < 95
         purple_mask = (
             (
                 (hsv[:, :, 0] >= 135) & (hsv[:, :, 0] <= 172) &
-                (hsv[:, :, 1] > 75) & (hsv[:, :, 2] > 75)
+                (hsv[:, :, 1] > 70) & (hsv[:, :, 2] > 70)
             ) | (
                 (r > 115) & (b > 125) & (g < 95)
             )
         ).astype(np.uint8) * 255
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
         purple_closed = cv2.morphologyEx(purple_mask, cv2.MORPH_CLOSE, kernel)
 
         contours, _ = cv2.findContours(purple_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -393,7 +436,7 @@ class LootDetector:
                 union_area = (cw1 * ch1) + (ew1 * eh1) - inter_area
                 iou = inter_area / max(1.0, float(union_area))
 
-                if iou >= iou_threshold or (inter_area / max(1.0, min(cw1 * ch1, ew1 * eh1))) > 0.70:
+                if iou >= 0.20 or (inter_area / max(1.0, min(cw1 * ch1, ew1 * eh1))) > 0.50:
                     overlap = True
                     break
 

@@ -479,8 +479,8 @@ def test_detect_sims_with_retries_and_diagnostics():
     def mock_locate(key, threshold=None):
         nonlocal call_count
         call_count += 1
-        # Succeed on 3rd attempt for sim1
-        if key == "sim1" and call_count >= 3:
+        # Succeed on 3rd attempt for sim1, then disappear on verification
+        if key == "sim1" and call_count == 3:
             return (400, 300)
         return None
 
@@ -497,7 +497,63 @@ def test_detect_sims_with_retries_and_diagnostics():
         )
 
     assert clicked == ["sim1"]
-    assert call_count == 3
+    # 3 search attempts (found on 3rd) + 1 verification check (None -> confirmed) = 4 calls
+    assert call_count == 4
+
+
+def test_detect_sims_double_check_and_reclick_when_still_present():
+    """
+    Verifies that if a sim remains detected on screen after the initial click,
+    the double-check logic automatically re-clicks the sim in-range.
+    """
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.sim_approach_wait_seconds = 0.0
+
+    call_count = 0
+    click_count = 0
+
+    def mock_locate(key, threshold=None):
+        nonlocal call_count
+        call_count += 1
+        # 1st call: initial search -> found at (400, 300)
+        # 2nd call: double check after 1s -> STILL found at (410, 310) (missed initial click!)
+        # 3rd call: double check after re-click -> None (confirmed clicked/gone!)
+        if key == "sim1":
+            if call_count == 1:
+                return (400, 300)
+            elif call_count == 2:
+                return (410, 310)
+        return None
+
+    def mock_click():
+        nonlocal click_count
+        click_count += 1
+
+    nav.locate_sim_template = MagicMock(side_effect=mock_locate)
+    moves = []
+    nav.move_mouse_inside_game = MagicMock(side_effect=lambda x, y: moves.append((x, y)) or (x, y))
+
+    with patch("src.route_navigator.pydirectinput.click", side_effect=mock_click), \
+         patch("src.route_navigator.pydirectinput.mouseUp"), \
+         patch("time.sleep", return_value=None):
+        clicked = nav._detect_and_click_sims(
+            sim_order=["sim1"],
+            y_offset_px=35,
+            x_offset_px=0,
+            search_attempts=1,
+            verify_click=True,
+            verify_delay=0.1,
+            max_click_attempts=2,
+        )
+
+    assert clicked == ["sim1"]
+    # 2 clicks executed: 1 initial click + 1 double-check re-click!
+    assert click_count == 2
+    # First click at (400, 335), second click at (410, 345)
+    assert (400, 335) in moves
+    assert (410, 345) in moves
+    assert call_count == 2
 
 
 def test_collect_loot_concurrency_guard():

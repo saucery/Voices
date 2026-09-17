@@ -108,9 +108,14 @@ def test_pink_dot_sim_priority_clicks(tmp_path):
     navigator.is_active = True
 
     click_log = []
+    seen = set()
 
     def mock_locate_sim(sim_key):
-        return (300, 400)  # Always found
+        # Found on initial query for each sim, then disappears on verification
+        if sim_key not in seen:
+            seen.add(sim_key)
+            return (300, 400)
+        return None
 
     def mock_click():
         click_log.append("left_click")
@@ -129,16 +134,71 @@ def test_pink_dot_sim_priority_clicks(tmp_path):
 
     assert result is True
     # Verify sim query sequence: sim1 -> sim3 -> sim2
-    sim_calls = [c[0][0] for c in navigator.locate_sim_template.call_args_list]
-    assert sim_calls == ["sim1", "sim3", "sim2"]
+    sim_calls = [c[0][0] for c in navigator.locate_sim_template.call_args_list if c[0][0] in ["sim1", "sim3", "sim2"]]
+    assert sim_calls == ["sim1", "sim1", "sim3", "sim3", "sim2", "sim2"]
 
-    # 3 clicks performed (one for each sim)
+    # 3 clicks performed (one for each sim, verified confirmed)
     assert len(click_log) == 3
 
     # Fallback should NOT be triggered
     navigator.locate_encounter_banner.assert_not_called()
     mock_rclick.assert_not_called()
     mock_mdown.assert_not_called()
+
+
+def test_pink_dot_sim_double_check_when_still_visible(tmp_path):
+    """
+    Verifies that during pink dot encounter, if a sim is still visible after clicking,
+    the double-check logic re-clicks it.
+    """
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps({
+        "autopilot": {
+            "pink_dot_stop_seconds": 0.01,
+            "sim_approach_wait_seconds": 0.0,
+            "sim_verify_delay_seconds": 0.01,
+            "sim_max_click_attempts": 2,
+        }
+    }))
+
+    mock_movement_path = MagicMock()
+    mock_movement_path.is_configured = True
+    mock_movement_path.waypoints = [{"index": 0, "name": "Pink", "x": 150, "y": 100, "action": "pink_encounter"}]
+
+    navigator = RouteNavigator(
+        movement_path=mock_movement_path,
+        config_path=str(cfg_file),
+    )
+    navigator.is_active = True
+
+    click_count = 0
+    def mock_click():
+        nonlocal click_count
+        click_count += 1
+
+    sim1_calls = 0
+    def mock_locate(key, threshold=None):
+        nonlocal sim1_calls
+        if key == "sim1":
+            sim1_calls += 1
+            if sim1_calls <= 2:
+                return (350, 250)  # Found on 1st search AND 2nd verification check (still visible!)
+            return None  # Gone on 3rd check
+        return None
+
+    navigator.locate_sim_template = MagicMock(side_effect=mock_locate)
+    navigator.collect_loot = MagicMock(return_value=0)
+    navigator.move_mouse_inside_game = MagicMock(side_effect=lambda x=None, y=None: (x or 100, y or 100))
+
+    with patch("src.route_navigator.pydirectinput.click", side_effect=mock_click), \
+         patch("src.route_navigator.pydirectinput.mouseUp"), \
+         patch("time.sleep", return_value=None):
+
+        result = navigator.execute_pink_dot_interaction(target=mock_movement_path.waypoints[0])
+
+    assert result is True
+    # Initial click + double-check re-click = 2 clicks
+    assert click_count == 2
 
 
 def test_pink_dot_no_sims_fallback_to_banner_and_middle_click(tmp_path):

@@ -134,6 +134,9 @@ class RouteNavigator:
         self.banner_search_attempts: int = 5
         self.banner_approach_wait_seconds: float = 2.0
         self.sim_approach_wait_seconds: float = 2.0
+        self.sim_verify_delay_seconds: float = 1.0
+        self.sim_max_click_attempts: int = 2
+        self.sim_verify_click_enabled: bool = True
         self.reclick_after_approach: bool = False
         self.interacted_zones: Set[str] = set()
         self.last_orbit_right_click: float = 0.0
@@ -192,6 +195,9 @@ class RouteNavigator:
                 self.encounter_match_threshold = float(ap_cfg.get("encounter_match_threshold", self.encounter_match_threshold))
                 self.banner_approach_wait_seconds = float(ap_cfg.get("banner_approach_wait_seconds", self.banner_approach_wait_seconds))
                 self.sim_approach_wait_seconds = float(ap_cfg.get("sim_approach_wait_seconds", self.sim_approach_wait_seconds))
+                self.sim_verify_delay_seconds = float(ap_cfg.get("sim_verify_delay_seconds", self.sim_verify_delay_seconds))
+                self.sim_max_click_attempts = int(ap_cfg.get("sim_max_click_attempts", self.sim_max_click_attempts))
+                self.sim_verify_click_enabled = bool(ap_cfg.get("sim_verify_click_enabled", self.sim_verify_click_enabled))
                 self.reclick_after_approach = bool(ap_cfg.get("reclick_after_approach", self.reclick_after_approach))
                 self.pink_dot_stop_seconds = float(ap_cfg.get("pink_dot_stop_seconds", self.pink_dot_stop_seconds))
                 self.sim1_template_file = ap_cfg.get("sim1_template_file", self.sim1_template_file)
@@ -991,6 +997,9 @@ class RouteNavigator:
             settle_wait = float(step.get("settle_wait", 0.5))
             attempts = int(step.get("search_attempts", 4))
             threshold = float(step["confidence"]) if "confidence" in step else (float(step["threshold"]) if "threshold" in step else None)
+            verify_delay = float(step.get("verify_delay", self.sim_verify_delay_seconds))
+            max_attempts = int(step.get("max_click_attempts", step.get("max_attempts", self.sim_max_click_attempts)))
+            verify_enabled = bool(step.get("verify_click", step.get("verify", self.sim_verify_click_enabled)))
             clicked = self._detect_and_click_sims(
                 prefix=f"[{zone_label}]",
                 sim_order=priority,
@@ -1000,6 +1009,9 @@ class RouteNavigator:
                 settle_wait=settle_wait,
                 search_attempts=attempts,
                 threshold=threshold,
+                verify_click=verify_enabled,
+                verify_delay=verify_delay,
+                max_click_attempts=max_attempts,
             )
             context["sims_clicked"] = len(clicked) > 0
             return True
@@ -1747,17 +1759,24 @@ class RouteNavigator:
         settle_wait: float = 0.0,
         search_attempts: int = 1,
         threshold: Optional[float] = None,
+        verify_click: Optional[bool] = None,
+        verify_delay: Optional[float] = None,
+        max_click_attempts: Optional[int] = None,
     ) -> List[str]:
         """
         Detects and selects Sims according to priority:
         Default priority: sim1 -> wait 2.0s -> sim3 -> wait 2.0s -> sim2.
         Returns list of sim names that were clicked (e.g. ['sim1', 'sim3']).
         Clicks are offset by sim_click_y_offset_px (e.g. +35px) below the detected template center.
+        Includes double-check verification after approach/wait to ensure the SIM was registered.
         """
         sims_clicked: List[str] = []
         eff_y_offset = y_offset_px if y_offset_px is not None else self.sim_click_y_offset_px
         eff_x_offset = x_offset_px if x_offset_px is not None else self.sim_click_x_offset_px
         eff_app_wait = approach_wait if approach_wait is not None else self.sim_approach_wait_seconds
+        eff_verify = verify_click if verify_click is not None else getattr(self, "sim_verify_click_enabled", True)
+        eff_verify_delay = verify_delay if verify_delay is not None else getattr(self, "sim_verify_delay_seconds", 1.0)
+        eff_max_attempts = max_click_attempts if max_click_attempts is not None else getattr(self, "sim_max_click_attempts", 2)
 
         if settle_wait > 0:
             time.sleep(settle_wait)
@@ -1778,19 +1797,44 @@ class RouteNavigator:
             # Approach wait: allow character to move closer to the sim object before proceeding
             if eff_app_wait > 0:
                 self._wait_for_approach(eff_app_wait, reason=f"{prefix} {sim_label}")
-                if not stop_handler.is_stopped() and self.is_active and self.reclick_after_approach:
-                    in_range_pos = self.locate_sim_template(sim_key) if threshold is None else self.locate_sim_template(sim_key, threshold)
-                    if in_range_pos is not None:
+
+            # Double-check / Verification: Check after approach/wait if SIM is still visible on screen
+            if eff_verify and not stop_handler.is_stopped() and self.is_active:
+                if eff_app_wait <= 0 and eff_verify_delay > 0:
+                    time.sleep(eff_verify_delay)
+
+                for attempt_num in range(1, max(1, eff_max_attempts)):
+                    if stop_handler.is_stopped() or not self.is_active:
+                        break
+                    recheck_pos = self.locate_sim_template(sim_key) if threshold is None else self.locate_sim_template(sim_key, threshold)
+                    if recheck_pos is not None:
                         rx, ry = self.move_mouse_inside_game(
-                            in_range_pos[0] + eff_x_offset,
-                            in_range_pos[1] + eff_y_offset
+                            recheck_pos[0] + eff_x_offset,
+                            recheck_pos[1] + eff_y_offset
                         )
-                        _log(f"  [SIM IN-RANGE] Re-clicking {sim_label} in-range at ({rx}, {ry})...")
+                        _log(f"  [SIM DOUBLE-CHECK] {sim_label} is STILL visible on screen after approach. Re-clicking in-range at ({rx}, {ry}) (attempt {attempt_num + 1}/{eff_max_attempts})...")
+                        self.status_message = f"{prefix} Re-clicking {sim_label} ({rx}, {ry})"
                         if pydirectinput:
                             pydirectinput.click()
                             time.sleep(0.08)
                             pydirectinput.mouseUp(button="left")
-                        time.sleep(0.15)
+                        time.sleep(max(0.4, eff_verify_delay))
+                    else:
+                        _log(f"  [SIM VERIFIED] {sim_label} click confirmed (no longer visible on screen).")
+                        break
+            elif not stop_handler.is_stopped() and self.is_active and self.reclick_after_approach:
+                in_range_pos = self.locate_sim_template(sim_key) if threshold is None else self.locate_sim_template(sim_key, threshold)
+                if in_range_pos is not None:
+                    rx, ry = self.move_mouse_inside_game(
+                        in_range_pos[0] + eff_x_offset,
+                        in_range_pos[1] + eff_y_offset
+                    )
+                    _log(f"  [SIM IN-RANGE] Re-clicking {sim_label} in-range at ({rx}, {ry})...")
+                    if pydirectinput:
+                        pydirectinput.click()
+                        time.sleep(0.08)
+                        pydirectinput.mouseUp(button="left")
+                    time.sleep(0.15)
 
             return cx, cy
 

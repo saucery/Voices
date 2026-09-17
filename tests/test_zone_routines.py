@@ -560,37 +560,83 @@ def test_persistent_right_click_activation_and_reset():
     assert nav.persistent_right_click_active is False
 
 
-def test_persistent_right_click_during_all_events():
-    """Verifies that right-clicking continues during waiting_for_green_light, stop, and update ticks."""
+def test_persistent_combat_during_all_events_key_mode():
+    """Verifies that pressing letter 't' continues during waiting_for_green_light, stop, and update ticks."""
     nav = RouteNavigator(movement_path=MovementPath())
     nav.is_active = True
-    nav.enable_persistent_right_click(interval=0.05)
-    assert nav.persistent_right_click_active is True
+    nav.persistent_combat_action = "key"
+    nav.persistent_combat_key = "t"
+    nav.enable_persistent_combat(interval=0.05)
+    assert nav.persistent_combat_active is True
 
     with patch("src.route_navigator.pydirectinput") as mock_pdi:
-        # 1. Test update() tick triggers right click
+        # 1. Test update() tick triggers key 't'
+        nav.last_orbit_right_click = time.time() - 1.0
+        nav.update((100, 100))
+        mock_pdi.keyDown.assert_any_call("t")
+        mock_pdi.keyUp.assert_any_call("t")
+
+        # 2. Test during stop step
+        mock_pdi.keyDown.reset_mock()
+        mock_pdi.keyUp.reset_mock()
+        nav.last_orbit_right_click = time.time() - 1.0
+        stop_step = {"action": "stop", "duration": 0.1}
+        nav._execute_zone_routine_step(stop_step, {}, zone_label="Test")
+        mock_pdi.keyDown.assert_any_call("t")
+        mock_pdi.keyUp.assert_any_call("t")
+
+        # 3. Test during waiting_for_green_light
+        mock_pdi.keyDown.reset_mock()
+        mock_pdi.keyUp.reset_mock()
+        nav.last_orbit_right_click = time.time() - 1.0
+        nav.waiting_for_green_light = True
+        triggered = nav._trigger_persistent_combat_if_due()
+        assert triggered is True
+        mock_pdi.keyDown.assert_any_call("t")
+        mock_pdi.keyUp.assert_any_call("t")
+
+    nav.stop()
+    assert nav.persistent_combat_active is False
+
+
+def test_persistent_combat_during_all_events_right_click_mode():
+    """Verifies that right-clicking continues when persistent_combat_action is 'right_click'."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.persistent_combat_action = "right_click"
+    nav.enable_persistent_combat(interval=0.05)
+    assert nav.persistent_combat_active is True
+
+    with patch("src.route_navigator.pydirectinput") as mock_pdi:
         nav.last_orbit_right_click = time.time() - 1.0
         nav.update((100, 100))
         assert mock_pdi.rightClick.call_count >= 1
 
-        # 2. Test during stop step
-        mock_pdi.rightClick.reset_mock()
-        nav.last_orbit_right_click = time.time() - 1.0
-        stop_step = {"action": "stop", "duration": 0.1}
-        nav._execute_zone_routine_step(stop_step, {}, zone_label="Test")
-        assert mock_pdi.rightClick.call_count >= 1
+    nav.stop()
+    assert nav.persistent_combat_active is False
 
-        # 3. Test during waiting_for_green_light
-        mock_pdi.rightClick.reset_mock()
+
+def test_suppress_combat_during_approach():
+    """Verifies that combat attacks are suppressed when approaching interactables if suppress_combat_during_approach is True."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.suppress_combat_during_approach = True
+    nav.is_approaching_interactable = True
+    nav.enable_persistent_combat(interval=0.05)
+
+    with patch("src.route_navigator.pydirectinput") as mock_pdi:
         nav.last_orbit_right_click = time.time() - 1.0
-        nav.waiting_for_green_light = True
-        # trigger check
-        triggered = nav._trigger_persistent_right_click_if_due()
+        triggered = nav._trigger_persistent_combat_if_due()
+        assert triggered is False
+        mock_pdi.keyDown.assert_not_called()
+        mock_pdi.rightClick.assert_not_called()
+
+        # When not approaching, combat fires normally
+        nav.is_approaching_interactable = False
+        triggered = nav._trigger_persistent_combat_if_due()
         assert triggered is True
-        assert mock_pdi.rightClick.call_count >= 1
 
     nav.stop()
-    assert nav.persistent_right_click_active is False
 
 
 def test_hold_mouse_and_click_mouse_only_once_on_first_pink_dot():
@@ -599,7 +645,7 @@ def test_hold_mouse_and_click_mouse_only_once_on_first_pink_dot():
     nav.is_active = True
     assert nav.has_executed_initial_hold is False
 
-    step_hold = {"action": "hold_mouse", "button": "middle", "duration": 0.05, "right_click_interval": 0.65}
+    step_hold = {"action": "hold_mouse", "button": "middle", "duration": 0.05, "combat_interval": 0.65, "combat_action": "key", "combat_key": "t"}
     step_click = {"action": "click_mouse", "button": "right", "clicks": 1}
 
     with patch("src.route_navigator.pydirectinput") as mock_pdi:
@@ -610,7 +656,9 @@ def test_hold_mouse_and_click_mouse_only_once_on_first_pink_dot():
         nav._execute_zone_routine_step(step_hold, {}, zone_label="Pink 1")
         assert mock_pdi.mouseDown.call_count == 1
         assert nav.has_executed_initial_hold is True
-        assert nav.persistent_right_click_active is True
+        assert nav.persistent_combat_active is True
+        assert nav.persistent_combat_action == "key"
+        assert nav.persistent_combat_key == "t"
 
         # Second pink encounter: skips click and hold
         mock_pdi.reset_mock()
@@ -623,19 +671,19 @@ def test_hold_mouse_and_click_mouse_only_once_on_first_pink_dot():
     nav.stop()
 
 
-def test_toggle_persistent_right_click_hotkey():
-    """Verifies that F3 / toggle_persistent_right_click turns combat attacking on/off."""
+def test_toggle_persistent_combat_hotkey():
+    """Verifies that F3 / toggle_persistent_combat turns combat attacking on/off."""
     nav = RouteNavigator(movement_path=MovementPath())
     nav.is_active = True
-    assert nav.persistent_right_click_active is False
+    assert nav.persistent_combat_active is False
 
     # Toggle ON
-    active = nav.toggle_persistent_right_click()
+    active = nav.toggle_persistent_combat()
     assert active is True
-    assert nav.persistent_right_click_active is True
+    assert nav.persistent_combat_active is True
 
     # Toggle OFF
-    active = nav.toggle_persistent_right_click()
+    active = nav.toggle_persistent_combat()
     assert active is False
-    assert nav.persistent_right_click_active is False
+    assert nav.persistent_combat_active is False
     nav.stop()

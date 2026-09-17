@@ -46,7 +46,11 @@
     "loot_approach_wait_seconds": 1.5,
     "max_loot_pickups": 15,
     "wait_for_loot_confirmation": true,
-    "start_at_pink_dot": 3,
+    "start_at_pink_dot": 0,
+    "persistent_combat_action": "key",
+    "persistent_combat_key": "t",
+    "persistent_combat_interval_seconds": 0.65,
+    "suppress_combat_during_approach": true,
     "zone_routines_file": "routines/zone_routines.json",
     "loot_filter_file": "routines/loot_filter.json"
   },

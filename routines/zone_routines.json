@@ -52,8 +52,11 @@
           "action": "hold_mouse",
           "button": "middle",
           "duration": 4.0,
+          "combat_interval": 0.65,
+          "combat_action": "key",
+          "combat_key": "t",
           "right_click_interval": 0.65,
-          "description": "Hold middle mouse button for 4.0s and activate persistent right-click attack"
+          "description": "Hold middle mouse button for 4.0s and activate persistent 'T' key combat attack"
         },
         {
           "action": "orbit_yellow_zone",

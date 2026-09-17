@@ -882,7 +882,10 @@ class PlayerTrackerVisualizer:
         perf_x = left_x + 800
         cv2.putText(dashboard, "SYSTEM & COMBAT HUD", (perf_x, telemetry_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
         combat_on = nav_res.get("persistent_combat", False)
-        combat_txt = "[F3] Attack: ON" if combat_on else "[F3] Attack: OFF"
+        c_action = nav_res.get("persistent_combat_action", "key")
+        c_key = nav_res.get("persistent_combat_key", "t").upper()
+        mode_label = f"Key '{c_key}'" if c_action == "key" else "R-Click"
+        combat_txt = f"[F3] Attack ({mode_label}): ON" if combat_on else f"[F3] Attack ({mode_label}): OFF"
         combat_col = (0, 255, 120) if combat_on else (130, 140, 160)
         perf_txt = f"Mon: {self.monitor_idx} | {self.fps:.1f} FPS | "
         cv2.putText(dashboard, perf_txt, (perf_x, telemetry_y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 210, 240), 1, cv2.LINE_AA)

@@ -137,8 +137,14 @@ class RouteNavigator:
         self.reclick_after_approach: bool = False
         self.interacted_zones: Set[str] = set()
         self.last_orbit_right_click: float = 0.0
+        self.persistent_combat_active: bool = False
+        self.persistent_combat_action: str = "key"
+        self.persistent_combat_key: str = "t"
+        self.persistent_combat_interval: float = 0.65
         self.persistent_right_click_active: bool = False
         self.persistent_right_click_interval: float = 0.65
+        self.suppress_combat_during_approach: bool = True
+        self.is_approaching_interactable: bool = False
         self._combat_thread: Optional[threading.Thread] = None
         self.is_holding_mouse: bool = False
         self.has_executed_initial_hold: bool = False
@@ -193,6 +199,11 @@ class RouteNavigator:
                 self.sim_click_y_offset_px = int(ap_cfg.get("sim_click_y_offset_px", self.sim_click_y_offset_px))
                 self.sim_click_x_offset_px = int(ap_cfg.get("sim_click_x_offset_px", self.sim_click_x_offset_px))
                 self.start_at_pink_dot = int(ap_cfg.get("start_at_pink_dot", self.start_at_pink_dot))
+                self.persistent_combat_action = str(ap_cfg.get("persistent_combat_action", self.persistent_combat_action)).lower().strip()
+                self.persistent_combat_key = str(ap_cfg.get("persistent_combat_key", self.persistent_combat_key)).lower().strip()
+                self.persistent_combat_interval = float(ap_cfg.get("persistent_combat_interval_seconds", ap_cfg.get("persistent_right_click_interval", self.persistent_combat_interval)))
+                self.persistent_right_click_interval = self.persistent_combat_interval
+                self.suppress_combat_during_approach = bool(ap_cfg.get("suppress_combat_during_approach", self.suppress_combat_during_approach))
                 self.loot1_template_file = ap_cfg.get("loot1_template_file", self.loot1_template_file)
                 self.loot_match_threshold = float(ap_cfg.get("loot_match_threshold", self.loot_match_threshold))
                 self.loot_pickup_wait_seconds = float(ap_cfg.get("loot_pickup_wait_seconds", self.loot_pickup_wait_seconds))
@@ -278,80 +289,150 @@ class RouteNavigator:
                     _log(f"[ROUTINES] Warning: Error parsing '{candidate}': {e}")
         return False
 
-    def enable_persistent_right_click(self, interval: Optional[float] = None):
-        """Enables persistent combat right-clicking and launches the dedicated background combat engine."""
+    def stop(self):
+        """Stops route navigation and deactivates persistent combat attacking."""
+        self.is_active = False
+        self.release_all_keys()
+        self.disable_persistent_combat()
+
+    def enable_persistent_combat(
+        self,
+        interval: Optional[float] = None,
+        action: Optional[str] = None,
+        key: Optional[str] = None,
+    ):
+        """Enables persistent combat attacking and launches the dedicated background combat engine."""
+        self.persistent_combat_active = True
         self.persistent_right_click_active = True
         if interval is not None:
+            self.persistent_combat_interval = float(interval)
             self.persistent_right_click_interval = float(interval)
+        if action is not None:
+            self.persistent_combat_action = str(action).lower().strip()
+        if key is not None:
+            self.persistent_combat_key = str(key).lower().strip()
         self._start_persistent_combat_thread()
 
-    def disable_persistent_right_click(self):
-        """Disables persistent combat right-clicking."""
+    def enable_persistent_right_click(self, interval: Optional[float] = None):
+        """Enables persistent combat attacking (backward-compatible method name)."""
+        self.enable_persistent_combat(interval=interval)
+
+    def disable_persistent_combat(self):
+        """Disables persistent combat attacking."""
+        self.persistent_combat_active = False
         self.persistent_right_click_active = False
         if self._combat_thread is not None and self._combat_thread.is_alive() and threading.current_thread() != self._combat_thread:
             self._combat_thread.join(timeout=0.5)
             self._combat_thread = None
 
-    def toggle_persistent_right_click(self) -> bool:
-        """Toggles persistent combat right-clicking ON and OFF."""
-        if self.persistent_right_click_active:
-            self.disable_persistent_right_click()
-            self.latest_recovery_event = "Right-Click Combat PAUSED [F3]"
-            _log("\n[COMBAT] >>> Persistent right-click attack PAUSED by hotkey [F3].")
+    def disable_persistent_right_click(self):
+        """Disables persistent combat right-clicking (backward-compatible method name)."""
+        self.disable_persistent_combat()
+
+    def toggle_persistent_combat(self) -> bool:
+        """Toggles persistent combat attacking ON and OFF."""
+        if self.persistent_combat_active or self.persistent_right_click_active:
+            self.disable_persistent_combat()
+            desc = f"Key '{self.persistent_combat_key.upper()}'" if self.persistent_combat_action == "key" else "Mouse Click"
+            self.latest_recovery_event = f"Combat Attack PAUSED [F3] ({desc})"
+            _log(f"\n[COMBAT] >>> Persistent combat attack ({desc}) PAUSED by hotkey [F3].")
             return False
         else:
-            self.enable_persistent_right_click()
-            self.latest_recovery_event = f"Right-Click Combat RESUMED [F3] ({self.persistent_right_click_interval:.2f}s)"
-            _log(f"\n[COMBAT] >>> Persistent right-click attack RESUMED by hotkey [F3] ({self.persistent_right_click_interval:.2f}s).")
+            self.enable_persistent_combat()
+            desc = f"Key '{self.persistent_combat_key.upper()}'" if self.persistent_combat_action == "key" else "Mouse Click"
+            self.latest_recovery_event = f"Combat Attack RESUMED [F3] ({desc} @ {self.persistent_combat_interval:.2f}s)"
+            _log(f"\n[COMBAT] >>> Persistent combat attack ({desc}) RESUMED by hotkey [F3] ({self.persistent_combat_interval:.2f}s).")
             return True
 
+    def toggle_persistent_right_click(self) -> bool:
+        """Toggles persistent combat right-clicking (backward-compatible method name)."""
+        return self.toggle_persistent_combat()
+
     def _start_persistent_combat_thread(self):
-        """Spawns background combat thread to continuously pulse right click every interval."""
+        """Spawns background combat thread to continuously pulse combat attack every interval."""
         if self._combat_thread is not None and self._combat_thread.is_alive():
             return
         self._combat_thread = threading.Thread(target=self._run_persistent_combat_loop, daemon=True)
         self._combat_thread.start()
 
-    def _trigger_persistent_right_click_if_due(self, now: Optional[float] = None) -> bool:
+    def _trigger_persistent_combat_if_due(self, now: Optional[float] = None) -> bool:
         """
-        Executes a periodic right-click attack inside the game if persistent combat mode is active.
-        Guarantees that right-clicking continues during ALL events (waiting for green light, stop,
-        approach waits, loot collection, transit, orbit, etc.) until the final destination is reached.
+        Executes a periodic combat attack (key press 't', right-click, etc.) inside the game if persistent combat mode is active.
+        Guarantees that attack execution continues during ALL events until the final destination is reached.
+        If suppress_combat_during_approach is active and character is walking up to an interactable, pulses are suppressed.
         """
-        if not self.persistent_right_click_active or stop_handler.is_stopped():
+        if (not self.persistent_combat_active and not self.persistent_right_click_active) or stop_handler.is_stopped():
             return False
 
         if getattr(self, "is_holding_mouse", False):
             return False
 
+        if getattr(self, "is_approaching_interactable", False) and getattr(self, "suppress_combat_during_approach", False):
+            return False
+
         if now is None:
             now = time.time()
 
-        rc_int = getattr(self, "persistent_right_click_interval", 0.65)
-        if (now - self.last_orbit_right_click) >= rc_int:
+        combat_int = getattr(self, "persistent_combat_interval", getattr(self, "persistent_right_click_interval", 0.65))
+        if (now - self.last_orbit_right_click) >= combat_int:
             self.last_orbit_right_click = now
-            self.move_mouse_inside_game()
-            if pydirectinput:
-                try:
-                    pydirectinput.rightClick()
-                    time.sleep(0.02)
-                    pydirectinput.mouseUp(button="right")
-                except Exception:
-                    pass
+            action_type = getattr(self, "persistent_combat_action", "key")
+
+            if action_type == "key":
+                attack_key = getattr(self, "persistent_combat_key", "t")
+                if pydirectinput and attack_key:
+                    try:
+                        pydirectinput.keyDown(attack_key)
+                        time.sleep(0.02)
+                        pydirectinput.keyUp(attack_key)
+                    except Exception:
+                        pass
+            elif action_type == "right_click":
+                self.move_mouse_inside_game()
+                if pydirectinput:
+                    try:
+                        pydirectinput.rightClick()
+                        time.sleep(0.02)
+                        pydirectinput.mouseUp(button="right")
+                    except Exception:
+                        pass
+            elif action_type == "middle_click":
+                self.move_mouse_inside_game()
+                if pydirectinput:
+                    try:
+                        pydirectinput.middleClick()
+                        time.sleep(0.02)
+                        pydirectinput.mouseUp(button="middle")
+                    except Exception:
+                        pass
+            else:
+                self.move_mouse_inside_game()
+                if pydirectinput:
+                    try:
+                        pydirectinput.click()
+                        time.sleep(0.02)
+                        pydirectinput.mouseUp(button="left")
+                    except Exception:
+                        pass
             return True
         return False
 
+    def _trigger_persistent_right_click_if_due(self, now: Optional[float] = None) -> bool:
+        """Backward-compatible alias for _trigger_persistent_combat_if_due."""
+        return self._trigger_persistent_combat_if_due(now)
+
     def _run_persistent_combat_loop(self):
         """
-        Dedicated background thread guaranteeing that right-clicking NEVER stops during ANY event
+        Dedicated background thread guaranteeing that combat attacking NEVER stops during ANY event
         (e.g., waiting for green light, loot approach/pickup, stop, wait, transit, orbit, etc.)
         until the destination Red Dot is reached or navigation is halted.
         """
-        _log(f"[COMBAT THREAD] Persistent right-click combat engine started (interval={self.persistent_right_click_interval:.2f}s).")
-        while not stop_handler.is_stopped() and self.persistent_right_click_active:
-            self._trigger_persistent_right_click_if_due()
+        combat_desc = f"Key '{self.persistent_combat_key.upper()}'" if self.persistent_combat_action == "key" else "Mouse Click"
+        _log(f"[COMBAT THREAD] Persistent combat engine started ({combat_desc} @ interval={self.persistent_combat_interval:.2f}s).")
+        while not stop_handler.is_stopped() and (self.persistent_combat_active or self.persistent_right_click_active):
+            self._trigger_persistent_combat_if_due()
             time.sleep(0.04)
-        _log("[COMBAT THREAD] Persistent right-click combat engine stopped.")
+        _log("[COMBAT THREAD] Persistent combat engine stopped.")
 
     def _get_pink_zone_routine(self, target: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """Resolves custom routine for the target pink encounter if configured."""
@@ -814,7 +895,7 @@ class RouteNavigator:
             if button == "middle" and not getattr(self, "middle_click_hold_enabled", True):
                 _log(f"    [CONFIG] Middle click hold disabled (middle_click_hold_enabled=false). Skipping...")
                 self.has_executed_initial_hold = True
-                self.enable_persistent_right_click()
+                self.enable_persistent_combat()
                 return True
             duration = float(step.get("duration", self.middle_click_hold_seconds))
             window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
@@ -844,9 +925,12 @@ class RouteNavigator:
                 _log(f"    [ACTION] Mouse '{button}' button released.")
             # Mark initial hold as completed so subsequent pink dots never hold again in this run
             self.has_executed_initial_hold = True
-            rc_int = step.get("right_click_interval") or step.get("persistent_right_click_interval")
-            self.enable_persistent_right_click(interval=rc_int)
-            _log(f"    [COMBAT] Persistent right-click attack ACTIVATED (interval={self.persistent_right_click_interval:.2f}s) until destination reached.")
+            c_int = step.get("combat_interval") or step.get("right_click_interval") or step.get("persistent_right_click_interval")
+            c_act = step.get("combat_action")
+            c_key = step.get("combat_key")
+            self.enable_persistent_combat(interval=c_int, action=c_act, key=c_key)
+            combat_desc = f"Key '{self.persistent_combat_key.upper()}'" if self.persistent_combat_action == "key" else "Mouse Click"
+            _log(f"    [COMBAT] Persistent combat attack ACTIVATED ({combat_desc} @ interval={self.persistent_combat_interval:.2f}s) until destination reached.")
             time.sleep(0.1)
             return True
 
@@ -1805,42 +1889,46 @@ class RouteNavigator:
         if max_wait_seconds <= 0:
             return
 
-        start_time = time.time()
-        start_pos = self.latest_pos
-        has_moved = False
-        last_move_time = start_time
-        last_check_pos = start_pos
+        self.is_approaching_interactable = True
+        try:
+            start_time = time.time()
+            start_pos = self.latest_pos
+            has_moved = False
+            last_move_time = start_time
+            last_check_pos = start_pos
 
-        _log(f"  [{reason}] Character approaching target (allowing up to {max_wait_seconds:.1f}s)...")
+            _log(f"  [{reason}] Character approaching target (allowing up to {max_wait_seconds:.1f}s)...")
 
-        max_ticks = max(10, int(max_wait_seconds / 0.05) + 5)
-        tick = 0
+            max_ticks = max(10, int(max_wait_seconds / 0.05) + 5)
+            tick = 0
 
-        while (time.time() - start_time) < max_wait_seconds and tick < max_ticks:
-            tick += 1
-            if stop_handler.is_stopped() or not self.is_active:
-                return
+            while (time.time() - start_time) < max_wait_seconds and tick < max_ticks:
+                tick += 1
+                if stop_handler.is_stopped() or not self.is_active:
+                    return
 
-            self._trigger_persistent_right_click_if_due()
-            curr_pos = self.latest_pos
-            now = time.time()
+                self._trigger_persistent_combat_if_due()
+                curr_pos = self.latest_pos
+                now = time.time()
 
-            if curr_pos is not None and last_check_pos is not None:
-                dist_from_last = math.hypot(curr_pos[0] - last_check_pos[0], curr_pos[1] - last_check_pos[1])
-                if dist_from_last > 1.5:
-                    has_moved = True
-                    last_move_time = now
-                    last_check_pos = curr_pos
-                elif has_moved and (now - last_move_time) >= 0.4:
-                    _log(f"  [{reason}] Character reached target and settled ({now - start_time:.2f}s).")
-                    break
+                if curr_pos is not None and last_check_pos is not None:
+                    dist_from_last = math.hypot(curr_pos[0] - last_check_pos[0], curr_pos[1] - last_check_pos[1])
+                    if dist_from_last > 1.5:
+                        has_moved = True
+                        last_move_time = now
+                        last_check_pos = curr_pos
+                    elif has_moved and (now - last_move_time) >= 0.4:
+                        _log(f"  [{reason}] Character reached target and settled ({now - start_time:.2f}s).")
+                        break
 
-            rem = max(0.0, max_wait_seconds - (now - start_time))
-            self.status_message = f"[{reason}] Approaching ({rem:.1f}s)..."
-            time.sleep(0.05)
+                rem = max(0.0, max_wait_seconds - (now - start_time))
+                self.status_message = f"[{reason}] Approaching ({rem:.1f}s)..."
+                time.sleep(0.05)
 
-        elapsed = time.time() - start_time
-        _log(f"  [{reason}] Approach window finished ({elapsed:.2f}s).")
+            elapsed = time.time() - start_time
+            _log(f"  [{reason}] Approach window finished ({elapsed:.2f}s).")
+        finally:
+            self.is_approaching_interactable = False
 
     def locate_loot(
         self,
@@ -3182,8 +3270,10 @@ class RouteNavigator:
             "target_pink_name": getattr(self, "target_pink_name", None),
             "target_pink_pos": getattr(self, "target_pink_pos", None),
             "interacted_pink_dots": list(self.interacted_pink_dots),
-            "persistent_combat": self.persistent_right_click_active,
-            "persistent_combat_interval": self.persistent_right_click_interval,
+            "persistent_combat": self.persistent_combat_active or self.persistent_right_click_active,
+            "persistent_combat_action": self.persistent_combat_action,
+            "persistent_combat_key": self.persistent_combat_key,
+            "persistent_combat_interval": self.persistent_combat_interval,
             "has_executed_initial_hold": self.has_executed_initial_hold,
         }
 

@@ -561,9 +561,29 @@ class MovementPath:
             for i, pt in enumerate(sampled)
         ]
 
-        # Pre-link ALL detected pink dots to their nearest Cyan SIM, White Loot, and Yellow Orbit zone
-        for p_i, pz in enumerate(self.pink_zones, start=1):
+        # Associate detected pink encounter dots with closest sampled waypoint along route
+        matched_pinks = []
+        for pz in self.pink_zones:
+            px_c, py_c = pz["x"], pz["y"]
+            best_idx = None
+            best_d = float("inf")
+            for idx, wp in enumerate(self.waypoints):
+                if 0 < idx < len(self.waypoints) - 1:
+                    d = math.hypot(wp["x"] - px_c, wp["y"] - py_c)
+                    if d < best_d:
+                        best_d = d
+                        best_idx = idx
+
+            if best_idx is not None and best_d <= 75.0:
+                matched_pinks.append((best_idx, pz))
+
+        # Sort strictly by sequential route progression
+        matched_pinks.sort(key=lambda item: item[0])
+
+        # Pre-link and assign sequential IDs in exact route progression order (pink_1 -> pink_7)
+        for p_i, (best_idx, pz) in enumerate(matched_pinks, start=1):
             pz["id"] = f"pink_{p_i}"
+            pz["route_order"] = p_i
             px_c, py_c = pz["x"], pz["y"]
 
             # Associate nearest cyan dot (SIM location) within 150px
@@ -600,32 +620,15 @@ class MovementPath:
                     best_y_dist = d
                     best_y = yz
             if best_y is not None and best_y_dist <= 80.0:
-                pz["orbit_zone"] = best_y
+                best_y["id"] = f"zone_{p_i}"
                 best_y["associated_pink"] = pz["id"]
-                if pz.get("loot_pos") and not best_y.get("loot_pos"):
+                best_y["entry_waypoint_index"] = best_idx
+                pz["orbit_zone"] = best_y
+                if pz.get("loot_pos"):
                     best_y["loot_pos"] = pz["loot_pos"]
 
-        # Associate detected pink encounter dots with closest sampled waypoint along route
-        matched_pinks = []
-        for pz in self.pink_zones:
-            px_c, py_c = pz["x"], pz["y"]
-            best_idx = None
-            best_d = float("inf")
-            for idx, wp in enumerate(self.waypoints):
-                if 0 < idx < len(self.waypoints) - 1:
-                    d = math.hypot(wp["x"] - px_c, wp["y"] - py_c)
-                    if d < best_d:
-                        best_d = d
-                        best_idx = idx
-
-            if best_idx is not None and best_d <= 75.0:
-                matched_pinks.append((best_idx, pz))
-
-        matched_pinks.sort(key=lambda item: item[0])
-        for p_i, (best_idx, pz) in enumerate(matched_pinks, start=1):
-            pz["route_order"] = p_i
             self.waypoints[best_idx]["action"] = "pink_encounter"
-            self.waypoints[best_idx]["name"] = f"Pink Marker ({pz['id']})"
+            self.waypoints[best_idx]["name"] = f"Pink Marker (pink_{p_i})"
             self.waypoints[best_idx]["pink_pos"] = [pz["x"], pz["y"]]
             if pz.get("sim_pos"):
                 self.waypoints[best_idx]["sim_pos"] = pz["sim_pos"]
@@ -633,14 +636,18 @@ class MovementPath:
                 self.waypoints[best_idx]["loot_pos"] = pz["loot_pos"]
             if pz.get("orbit_zone"):
                 self.waypoints[best_idx]["orbit_zone"] = pz["orbit_zone"]
-                pz["orbit_zone"]["entry_waypoint_index"] = best_idx
+
+        self.pink_zones = [pz for _, pz in matched_pinks]
 
         # Associate standalone yellow orbit zones (not part of a pink encounter)
-        for z_i, zone in enumerate(self.orbit_zones, start=1):
-            zone["id"] = f"zone_{z_i}"
-            zc = zone["center"]
+        standalone_idx = len(matched_pinks) + 1
+        for zone in self.orbit_zones:
             if zone.get("associated_pink"):
                 continue  # Managed directly through pink encounter routine
+
+            zone["id"] = f"zone_{standalone_idx}"
+            standalone_idx += 1
+            zc = zone["center"]
 
             best_idx = None
             best_d = float("inf")

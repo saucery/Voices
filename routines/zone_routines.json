@@ -2,7 +2,7 @@
   "description": "Per-zone encounter and combat routine configuration for Pink Dots and Yellow Orbit Zones. Edit steps and timings individually per zone.",
   "pink_zones": {
     "pink_1": {
-      "name": "Pink Dot #1 (WP #6)",
+      "name": "Pink Dot #1 (WP #18 - Room 1)",
       "description": "First encounter banner / sims / orbit / loot",
       "steps": [
         {
@@ -83,7 +83,7 @@
       ]
     },
     "pink_2": {
-      "name": "Pink Dot #2 (WP #17)",
+      "name": "Pink Dot #2 (WP #38 - Room 2)",
       "description": "Second encounter banner / sims / orbit / loot",
       "steps": [
         {
@@ -160,7 +160,7 @@
       ]
     },
     "pink_3": {
-      "name": "Pink Dot #3 (WP #25)",
+      "name": "Pink Dot #3 (WP #44 - Room 3)",
       "description": "Third encounter banner / sims / orbit / loot",
       "steps": [
         {
@@ -237,7 +237,7 @@
       ]
     },
     "pink_4": {
-      "name": "Pink Dot #4 (WP #33)",
+      "name": "Pink Dot #4 (WP #51 - Room 4)",
       "description": "Fourth encounter banner / sims / orbit / loot",
       "steps": [
         {
@@ -314,7 +314,7 @@
       ]
     },
     "pink_5": {
-      "name": "Pink Dot #5 (WP #39)",
+      "name": "Pink Dot #5 (WP #60 - Room 5)",
       "description": "Fifth encounter banner / sims / orbit / loot",
       "steps": [
         {
@@ -391,7 +391,7 @@
       ]
     },
     "pink_6": {
-      "name": "Pink Dot #6 (WP #44)",
+      "name": "Pink Dot #6 (WP #81 - Room 6)",
       "description": "Sixth encounter banner / sims / orbit / loot",
       "steps": [
         {
@@ -468,7 +468,7 @@
       ]
     },
     "pink_7": {
-      "name": "Pink Dot #7 (Top-Left Room)",
+      "name": "Pink Dot #7 (WP #89 - Room 7)",
       "description": "Seventh encounter banner / sims / loot",
       "steps": [
         {

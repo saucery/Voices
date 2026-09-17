@@ -51,7 +51,7 @@
         {
           "action": "hold_mouse",
           "button": "middle",
-          "duration": 4.0,
+          "duration": 4.5,
           "combat_interval": 0.65,
           "combat_action": "key",
           "combat_key": "t",

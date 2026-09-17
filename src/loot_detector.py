@@ -117,10 +117,26 @@ class LootDetector:
                 "min_text_pixels": 16,
             },
             {
+                "id": "gems_uncut_cut_olive",
+                "name": "Gems (Ruby / Sapphire / Diamond / Emerald / Topaz)",
+                "enabled": True,
+                "priority": 2,
+                "type": "color_box",
+                "bg_color": "olive",
+                "text_color": "yellow",
+                "min_width": 40,
+                "max_width": 240,
+                "min_height": 16,
+                "max_height": 55,
+                "min_aspect_ratio": 1.3,
+                "min_bg_fraction": 0.35,
+                "min_text_pixels": 15,
+            },
+            {
                 "id": "ravens_reflection_purple",
                 "name": "Raven's Reflection / T1 Purple Uniques",
                 "enabled": True,
-                "priority": 2,
+                "priority": 3,
                 "type": "color_box",
                 "bg_color": "purple",
                 "text_color": "white",
@@ -135,7 +151,7 @@ class LootDetector:
                 "id": "custom_template_loot1",
                 "name": "Template Matcher (ui/loot1.png)",
                 "enabled": True,
-                "priority": 3,
+                "priority": 4,
                 "type": "template",
                 "template_file": "ui/loot1.png",
                 "threshold": 0.50,
@@ -179,6 +195,9 @@ class LootDetector:
                 elif bg in ("purple", "magenta"):
                     items = self._detect_purple_box(screen, hsv, b, g, r, rule)
                     all_detected.extend(items)
+                elif bg in ("olive", "green_dark", "gem"):
+                    items = self._detect_gem_box(screen, hsv, b, g, r, rule)
+                    all_detected.extend(items)
             elif r_type == "template":
                 items = self._detect_template(screen, rule)
                 all_detected.extend(items)
@@ -196,7 +215,8 @@ class LootDetector:
         Filters out detections falling inside static game UI elements
         (Chat window, Health globe, Mana globe, Skill action bar, Buff bar, Minimap).
         """
-        if screen_w < 600 or screen_h < 400:
+        # Only apply UI zone masking to full-screen/near full-screen captures (e.g. 1080p, 1440p, 4k)
+        if screen_w < 1200 or screen_h < 720:
             return False
 
         cx = x + w // 2
@@ -206,8 +226,8 @@ class LootDetector:
         if y < 45 or cy < 45:
             return True
 
-        # 2. Chat window area (Bottom-Left: x < 28% width and y > 58% height)
-        if cx < int(screen_w * 0.28) and cy > int(screen_h * 0.58):
+        # 2. Chat window area (Bottom-Left: x < 26% width and y > 58% height)
+        if cx < int(screen_w * 0.26) and cy > int(screen_h * 0.58):
             return True
 
         # 3. Life / Flask globe (Bottom-Left: x < 240 and y > height - 240)
@@ -222,12 +242,12 @@ class LootDetector:
         if cy > (screen_h - 110):
             return True
 
-        # 6. Minimap & Quest tracker (Top-Right: x > width - 380 and y < 380)
-        if cx > (screen_w - 380) and cy < 380:
+        # 6. Minimap & Quest tracker (Top-Right: x > width - 360 and y < 360)
+        if cx > (screen_w - 360) and cy < 360:
             return True
 
-        # 7. Top-Left Buff bar (x < 350 and y < 85)
-        if cx < 350 and cy < 85:
+        # 7. Top-Left Buff bar (x < 320 and y < 80)
+        if cx < 320 and cy < 80:
             return True
 
         return False
@@ -442,6 +462,110 @@ class LootDetector:
 
         return items
 
+    def _detect_gem_box(
+        self,
+        screen: np.ndarray,
+        hsv: np.ndarray,
+        b: np.ndarray,
+        g: np.ndarray,
+        r: np.ndarray,
+        rule: Dict[str, Any],
+    ) -> List[LootItem]:
+        """
+        Detects uncut and cut gems (Ruby, Sapphire, Diamond, Emerald, Topaz, etc.)
+        which are styled with dark olive background and yellow/lime text & border.
+        """
+        sw = screen.shape[1]
+        sh = screen.shape[0]
+        min_w = int(rule.get("min_width", 40))
+        max_w = int(rule.get("max_width", 240))
+        min_h = int(rule.get("min_height", 16))
+        max_h = int(rule.get("max_height", 55))
+        min_ar = float(rule.get("min_aspect_ratio", 1.3))
+        min_bg_frac = float(rule.get("min_bg_fraction", 0.35))
+        min_text_px = int(rule.get("min_text_pixels", 15))
+
+        # 1. Dark Olive / Greenish-Brown Background Mask for PoE Gems
+        olive_bg = (
+            (g >= 35) & (g <= 125) &
+            (r >= 40) & (r <= 135) &
+            (b < 55) &
+            (g.astype(np.int16) >= b.astype(np.int16) + 10) &
+            (hsv[:, :, 0] >= 14) & (hsv[:, :, 0] <= 42) &
+            (hsv[:, :, 1] >= 60) &
+            (hsv[:, :, 2] >= 35) & (hsv[:, :, 2] <= 135)
+        ).astype(np.uint8) * 255
+
+        # 2. Gem Text & Border Mask (Yellow / Lime)
+        gem_text = (
+            (r >= 140) & (g >= 125) &
+            (b < 120) &
+            (g.astype(np.int16) >= b.astype(np.int16) + 20) &
+            (hsv[:, :, 0] >= 14) & (hsv[:, :, 0] <= 38) &
+            (hsv[:, :, 1] >= 65) &
+            (hsv[:, :, 2] >= 140)
+        ).astype(np.uint8) * 255
+
+        # Isolate text touching or inside the olive background to prevent merging with adjacent rare items
+        k_dilate = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        olive_dilated = cv2.dilate(olive_bg, k_dilate)
+        gem_text_isolated = cv2.bitwise_and(gem_text, olive_dilated)
+
+        # 1D Horizontal closing of olive background + isolated text
+        combined_gem = cv2.bitwise_or(olive_bg, gem_text_isolated)
+        k_horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
+        gem_closed = cv2.morphologyEx(combined_gem, cv2.MORPH_CLOSE, k_horiz)
+
+        contours, _ = cv2.findContours(gem_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        items: List[LootItem] = []
+
+        for cnt in contours:
+            x, y, w, h = cv2.boundingRect(cnt)
+            if self.is_in_ui_exclusion_zone(x, y, w, h, sw, sh):
+                continue
+
+            if w < min_w or w > max_w or h < min_h or h > max_h:
+                continue
+            if (w / max(1.0, float(h))) < min_ar:
+                continue
+
+            box_olive = olive_bg[y:y+h, x:x+w]
+            box_text = gem_text_isolated[y:y+h, x:x+w]
+            bg_frac = np.mean(box_olive > 0)
+            text_pixels = int(np.count_nonzero(box_text > 0))
+
+            if bg_frac >= min_bg_frac and text_pixels >= min_text_px:
+                # Tighten bounding box around text/border
+                text_pts = cv2.findNonZero(box_text)
+                if text_pts is not None:
+                    tx, ty, tw, th = cv2.boundingRect(text_pts)
+                    pad_x = 8
+                    pad_y = 4
+                    bx = max(x, x + tx - pad_x)
+                    by = max(y, y + ty - pad_y)
+                    bw = min(w - (bx - x), tw + 2 * pad_x)
+                    bh = min(h - (by - y), th + 2 * pad_y)
+                else:
+                    bx, by, bw, bh = x, y, w, h
+
+                conf = min(1.0, 0.65 + (text_pixels / 120.0) + (bg_frac * 0.25))
+                items.append(
+                    LootItem(
+                        x=bx,
+                        y=by,
+                        w=bw,
+                        h=bh,
+                        center_x=bx + bw // 2,
+                        center_y=by + bh // 2,
+                        rule_id=rule.get("id", "gems_uncut_cut_olive"),
+                        rule_name=rule.get("name", "Gems (Ruby / Sapphire / Diamond / Emerald / Topaz)"),
+                        priority=int(rule.get("priority", 2)),
+                        confidence=conf,
+                    )
+                )
+
+        return items
+
     def _detect_template(self, screen: np.ndarray, rule: Dict[str, Any]) -> List[LootItem]:
         """Runs multi-scale template matching for specific items."""
         t_file = rule.get("template_file")
@@ -533,7 +657,11 @@ class LootDetector:
                 box_color = (0, 0, 255)      # Red for Tier 1 White/Red
                 text_color = (255, 255, 255)
                 badge_bg = (0, 0, 200)
-            elif item.priority == 2 or "purple" in item.rule_id:
+            elif "gem" in item.rule_id or "olive" in item.rule_id:
+                box_color = (0, 255, 0)      # Green for Gems (Ruby / Sapphire / Diamond)
+                text_color = (0, 0, 0)
+                badge_bg = (50, 205, 50)     # Lime Green badge
+            elif item.priority == 3 or "purple" in item.rule_id:
                 box_color = (255, 0, 255)    # Magenta for Purple Uniques
                 text_color = (255, 255, 255)
                 badge_bg = (200, 0, 200)

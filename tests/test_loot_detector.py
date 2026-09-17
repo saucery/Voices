@@ -1,8 +1,12 @@
 import os
+import sys
 import cv2
 import numpy as np
 import pytest
 from unittest.mock import patch, MagicMock
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from src.loot_detector import LootDetector, LootItem
 from src.route_navigator import RouteNavigator
 from src.movement_path import MovementPath
@@ -53,7 +57,7 @@ def test_loot_detector_purple_synthetic():
     assert len(detected) >= 1
     purp = [d for d in detected if d.rule_id == "ravens_reflection_purple"]
     assert len(purp) == 1
-    assert purp[0].priority == 2
+    assert purp[0].priority == 3
 
 
 def test_loot_detector_user_uploaded_samples_if_present():
@@ -68,7 +72,7 @@ def test_loot_detector_user_uploaded_samples_if_present():
 
 
 def test_loot_detector_priority_sorting():
-    """Verifies that P1 White+Red items are sorted before P2 Purple items."""
+    """Verifies that P1 White+Red items are sorted before P2 Gems and P3 Purple items."""
     detector = LootDetector()
     canvas = np.zeros((600, 600, 3), dtype=np.uint8)
     
@@ -76,17 +80,23 @@ def test_loot_detector_priority_sorting():
     canvas[100:130, 100:280] = (200, 20, 200)
     cv2.putText(canvas, "RAVEN'S REFLECTION", (105, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
+    # Draw gem item in middle at y=200
+    canvas[200:232, 100:200] = (20, 75, 85)
+    cv2.putText(canvas, "RUBY", (105, 222), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (30, 210, 230), 2)
+
     # Draw white/red item lower on screen at y=300
     canvas[300:330, 100:250] = (240, 240, 240)
     cv2.putText(canvas, "DIVINE ORB", (110, 322), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 230), 2)
 
     detected = detector.detect_loot(canvas)
-    assert len(detected) == 2
-    # Tier 1 (priority 1) should be first despite being lower on screen
+    assert len(detected) == 3
+    # Tier 1 (priority 1) should be first despite being lowest on screen
     assert detected[0].priority == 1
     assert detected[0].rule_id == "tier1_white_box_red_text"
     assert detected[1].priority == 2
-    assert detected[1].rule_id == "ravens_reflection_purple"
+    assert detected[1].rule_id == "gems_uncut_cut_olive"
+    assert detected[2].priority == 3
+    assert detected[2].rule_id == "ravens_reflection_purple"
 
 
 def test_route_navigator_collect_loot_integration():
@@ -213,5 +223,41 @@ def test_loot_detector_ui_exclusion_zones():
     assert len(detected_play) == 1
     assert detected_play[0].x >= 790
     assert detected_play[0].y >= 390
+
+
+def test_loot_detector_gems_synthetic():
+    """Verifies detection of uncut and cut gems with olive background and yellow/lime text & border."""
+    detector = LootDetector(config_file="routines/loot_filter.json")
+    canvas = np.zeros((500, 500, 3), dtype=np.uint8)
+
+    # Draw olive gem box at (150, 150, 90, 32)
+    # BGR for dark olive: (20, 75, 85)
+    canvas[150:182, 150:240] = (20, 75, 85)
+    # Draw yellow/lime text "RUBY" inside
+    cv2.putText(canvas, "RUBY", (160, 172), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (30, 210, 230), 2)
+
+    detected = detector.detect_loot(canvas)
+    assert len(detected) >= 1
+    gem = detected[0]
+    assert gem.rule_id == "gems_uncut_cut_olive"
+    assert gem.priority == 2
+    assert 140 <= gem.x <= 160
+    assert 140 <= gem.y <= 160
+
+
+def test_loot_detector_gems_screenshot_if_present():
+    """Verifies detection of Ruby and Sapphire on the gems sample screenshot if present."""
+    sample_path = r"C:\Users\gregg\.gemini\antigravity-ide\brain\bc444d8e-d778-41d6-a9f9-4d86757c5719\gems_screenshot.png"
+    if os.path.exists(sample_path):
+        img = cv2.imread(sample_path)
+        detector = LootDetector(config_file="routines/loot_filter.json")
+        items = detector.detect_loot(img)
+        gems = [it for it in items if it.rule_id == "gems_uncut_cut_olive"]
+        assert len(gems) >= 2
+        # Check that both Ruby (upper) and Sapphire (lower) were found
+        y_coords = [g.y for g in gems]
+        assert any(y < 200 for y in y_coords)   # Ruby
+        assert any(y > 400 for y in y_coords)   # Sapphire
+
 
 

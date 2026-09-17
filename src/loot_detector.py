@@ -487,31 +487,31 @@ class LootDetector:
         sw = screen.shape[1]
         sh = screen.shape[0]
         min_w = int(rule.get("min_width", 40))
-        max_w = int(rule.get("max_width", 240))
+        max_w = int(rule.get("max_width", 260))
         min_h = int(rule.get("min_height", 16))
         max_h = int(rule.get("max_height", 55))
         min_ar = float(rule.get("min_aspect_ratio", 1.3))
         min_bg_frac = float(rule.get("min_bg_fraction", 0.35))
-        min_text_px = int(rule.get("min_text_pixels", 15))
+        min_text_px = int(rule.get("min_text_pixels", 25))
 
         # 1. Dark Olive / Greenish-Brown Background Mask for PoE Gems
         olive_bg = (
-            (g >= 35) & (g <= 125) &
+            (g >= 40) & (g <= 125) &
             (r >= 40) & (r <= 135) &
-            (b < 55) &
-            (g.astype(np.int16) >= b.astype(np.int16) + 10) &
-            (hsv[:, :, 0] >= 14) & (hsv[:, :, 0] <= 42) &
-            (hsv[:, :, 1] >= 60) &
-            (hsv[:, :, 2] >= 35) & (hsv[:, :, 2] <= 135)
+            (b <= 50) &
+            (g.astype(np.int16) >= b.astype(np.int16) + 12) &
+            (hsv[:, :, 0] >= 16) & (hsv[:, :, 0] <= 40) &
+            (hsv[:, :, 1] >= 65) &
+            (hsv[:, :, 2] >= 40) & (hsv[:, :, 2] <= 135)
         ).astype(np.uint8) * 255
 
         # 2. Gem Text & Border Mask (Yellow / Lime)
         gem_text = (
-            (r >= 140) & (g >= 125) &
-            (b < 120) &
-            (g.astype(np.int16) >= b.astype(np.int16) + 20) &
-            (hsv[:, :, 0] >= 14) & (hsv[:, :, 0] <= 38) &
-            (hsv[:, :, 1] >= 65) &
+            (r >= 140) & (g >= 130) &
+            (b < 110) &
+            (g.astype(np.int16) >= b.astype(np.int16) + 25) &
+            (hsv[:, :, 0] >= 16) & (hsv[:, :, 0] <= 38) &
+            (hsv[:, :, 1] >= 70) &
             (hsv[:, :, 2] >= 140)
         ).astype(np.uint8) * 255
 
@@ -522,7 +522,7 @@ class LootDetector:
 
         # 1D Horizontal closing of olive background + isolated text
         combined_gem = cv2.bitwise_or(olive_bg, gem_text_isolated)
-        k_horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
+        k_horiz = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3))
         gem_closed = cv2.morphologyEx(combined_gem, cv2.MORPH_CLOSE, k_horiz)
 
         contours, _ = cv2.findContours(gem_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -548,12 +548,18 @@ class LootDetector:
                 text_pts = cv2.findNonZero(box_text)
                 if text_pts is not None:
                     tx, ty, tw, th = cv2.boundingRect(text_pts)
+                    if th < 7 or tw < 18:
+                        continue  # Discard thin horizontal line/noise slivers (e.g. 5px high false positives)
+
                     pad_x = 8
                     pad_y = 4
                     bx = max(x, x + tx - pad_x)
                     by = max(y, y + ty - pad_y)
-                    bw = min(w - (bx - x), tw + 2 * pad_x)
-                    bh = min(h - (by - y), th + 2 * pad_y)
+                    bw = min(w - (bx - x), max(tw + 2 * pad_x, 40))
+                    bh = min(h - (by - y), max(th + 2 * pad_y, 16))
+
+                    if bh < min_h or bw < min_w:
+                        continue
                 else:
                     bx, by, bw, bh = x, y, w, h
 

@@ -488,18 +488,38 @@ class MovementPath:
         if len(self.pink_zones) > 1:
             # Multi-encounter / multi-room route: trace milestone chain to prevent short-circuiting on crossing paths
             pink_pts = [(pz["x"], pz["y"]) for pz in self.pink_zones]
-            # Order pink encounter markers along room sequence:
-            # 1. R1 (Room 1 zone above start) -> 2. R6 (Top room) -> 3. R5 (Mid-right) ->
-            # 4. R4 (Far-right) -> 5. R3 (Lower-right) -> 6. R2 (Bottom-middle) -> 7. R7 (Top-left finish)
-            ordered_pinks = sorted(pink_pts, key=lambda p: (
-                0 if (p[0] < 250 and 180 < p[1] <= 250) else   # R1 (Room 1 zone)
-                1 if (p[0] > 300 and p[1] <= 120) else         # R6 (Top room above R1)
-                2 if (450 < p[0] and 180 < p[1] <= 250) else   # R5 (Mid-right room)
-                3 if (p[0] >= 600 and p[1] > 200) else         # R4 (Far-right room)
-                4 if (p[0] >= 500 and p[1] > 300) else         # R3 (Lower-right room)
-                5 if (400 < p[0] < 500 and p[1] > 300) else    # R2 (Bottom-middle room)
-                6                                              # R7 (Top-left room / finish)
-            ))
+            # Robust topological 7-zone traversal sequence:
+            # 1. Zone 1: Room 1 directly above start
+            # 2. Zone 2: Top room (lowest Y)
+            # 3. Zone 3: Mid-right room
+            # 4. Zone 4: Far-right room (highest X)
+            # 5. Zone 5: Lower-right room
+            # 6. Zone 6: Bottom-middle room
+            # 7. Zone 7: Top-left finish room
+            if len(pink_pts) == 7:
+                rem = list(pink_pts)
+                cand1 = [p for p in rem if abs(p[0] - start_pt[0]) < 100 and p[1] < start_pt[1]]
+                z1 = min(cand1, key=lambda p: math.hypot(p[0] - start_pt[0], p[1] - start_pt[1])) if cand1 else min(rem, key=lambda p: math.hypot(p[0] - start_pt[0], p[1] - start_pt[1]))
+                rem.remove(z1)
+
+                cand7 = [p for p in rem if p[0] < z1[0] and p[1] < start_pt[1]]
+                z7 = min(cand7, key=lambda p: p[0] + p[1]) if cand7 else min(rem, key=lambda p: p[0] + p[1])
+                rem.remove(z7)
+
+                z2 = min(rem, key=lambda p: p[1])
+                rem.remove(z2)
+
+                z4 = max(rem, key=lambda p: p[0])
+                rem.remove(z4)
+
+                z3 = min(rem, key=lambda p: p[1])
+                rem.remove(z3)
+
+                p_a, p_b = rem[0], rem[1]
+                z6, z5 = (p_a, p_b) if p_a[0] < p_b[0] else (p_b, p_a)
+                ordered_pinks = [z1, z2, z3, z4, z5, z6, z7]
+            else:
+                ordered_pinks = sorted(pink_pts, key=lambda p: (p[0], p[1]))
 
             milestones = [start_pt] + ordered_pinks
             if finish_pt is not None and finish_pt != ordered_pinks[-1]:
@@ -663,6 +683,9 @@ class MovementPath:
                 self.waypoints[best_idx]["action"] = "orbit"
                 self.waypoints[best_idx]["name"] = f"Orbit Zone ({zone['id']})"
                 self.waypoints[best_idx]["orbit_zone"] = zone
+
+        # Sort orbit zones by waypoint appearance / chronological order
+        self.orbit_zones.sort(key=lambda z: (z.get("entry_waypoint_index") if z.get("entry_waypoint_index") is not None else 999, z.get("id", "")))
 
         # Also associate white dots with yellow orbit zones if any orbit zone does not have loot_pos yet
         for zone in self.orbit_zones:

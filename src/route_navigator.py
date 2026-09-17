@@ -1058,7 +1058,6 @@ class RouteNavigator:
             verify_enabled = bool(step.get("verify_click", step.get("verify", self.banner_verify_click_enabled)))
             reclick = bool(step.get("reclick", self.reclick_after_approach))
 
-            self.status_message = f"[{zone_label}] Finding Encounter Banner..."
             banner_pos = None
             for attempt in range(1, search_attempts + 1):
                 if stop_handler.is_stopped() or not self.is_active:
@@ -1067,6 +1066,34 @@ class RouteNavigator:
                 if banner_pos is not None:
                     break
                 time.sleep(0.25)
+
+            # Retry: If banner not found, walk closer to pink dot again and re-check
+            if banner_pos is None and not stop_handler.is_stopped() and self.is_active:
+                target = context.get("target")
+                pink_pos = None
+                if isinstance(target, dict):
+                    pink_pos = target.get("pink_pos")
+                if not pink_pos and "zone" in context and isinstance(context["zone"], dict):
+                    pink_pos = context["zone"].get("center")
+
+                if pink_pos:
+                    _log(f"    [BANNER RETRY] Banner not detected on screen. Walking closer to pink dot at ({pink_pos[0]:.1f}, {pink_pos[1]:.1f}) and re-searching...")
+                    self.status_message = f"[{zone_label}] Walking to Pink Dot Retry..."
+                    self._navigate_to_local_target(
+                        (float(pink_pos[0]), float(pink_pos[1])),
+                        timeout=5.0,
+                        arrival_threshold=8.0,
+                        step_label="NAV→BANNER-RETRY",
+                    )
+                    time.sleep(0.4)
+                    for retry_attempt in range(1, search_attempts + 1):
+                        if stop_handler.is_stopped() or not self.is_active:
+                            return False
+                        banner_pos = self.locate_encounter_banner()
+                        if banner_pos is not None:
+                            _log(f"    [BANNER RETRY SUCCESS] Encounter banner detected on retry at ({banner_pos[0]}, {banner_pos[1]})!")
+                            break
+                        time.sleep(0.25)
 
             if banner_pos is not None:
                 bx, by = self.move_mouse_inside_game(banner_pos[0], banner_pos[1])
@@ -2114,14 +2141,16 @@ class RouteNavigator:
                 if (self.save_loot_debug_screenshots or getattr(self.loot_detector, "save_debug_screenshots", False)) and hasattr(self, "loot_detector") and self.loot_detector:
                     try:
                         tmpl_item = LootItem(
+                            x=int(best_loc[0]),
+                            y=int(best_loc[1]),
+                            w=int(tw * best_scale),
+                            h=int(th * best_scale),
+                            center_x=cx,
+                            center_y=cy,
                             rule_id="custom_template_loot1",
                             rule_name="Template Matcher (ui/loot1.png)",
                             priority=99,
                             confidence=best_val,
-                            rect=(int(best_loc[0]), int(best_loc[1]), int(tw * best_scale), int(th * best_scale)),
-                            center_x=cx,
-                            center_y=cy,
-                            item_text="Template Loot",
                         )
                         self.loot_detector.save_debug_screenshot(
                             screen,
@@ -2323,6 +2352,28 @@ class RouteNavigator:
                     if banner_pos is not None:
                         break
                     time.sleep(0.35)
+
+                # Retry: If banner not found, walk closer to pink dot again and re-check
+                if banner_pos is None and not stop_handler.is_stopped() and self.is_active:
+                    pink_pos = waypoint.get("pink_pos") or (waypoint.get("x"), waypoint.get("y"))
+                    if pink_pos:
+                        _log(f"  [BANNER RETRY] Banner not detected on screen. Walking closer to pink dot at ({pink_pos[0]:.1f}, {pink_pos[1]:.1f}) and re-searching...")
+                        self.status_message = "[YELLOW ZONE] Walking to Pink Dot Retry..."
+                        self._navigate_to_local_target(
+                            (float(pink_pos[0]), float(pink_pos[1])),
+                            timeout=5.0,
+                            arrival_threshold=8.0,
+                            step_label="NAV→BANNER-RETRY",
+                        )
+                        time.sleep(0.4)
+                        for retry_attempt in range(1, self.banner_search_attempts + 1):
+                            if stop_handler.is_stopped() or not self.is_active:
+                                return False
+                            banner_pos = self.locate_encounter_banner()
+                            if banner_pos is not None:
+                                _log(f"  [BANNER RETRY SUCCESS] Encounter banner detected on retry at ({banner_pos[0]}, {banner_pos[1]})!")
+                                break
+                            time.sleep(0.35)
 
                 if banner_pos is not None:
                     bx, by = self.move_mouse_inside_game(banner_pos[0], banner_pos[1])
@@ -2782,8 +2833,12 @@ class RouteNavigator:
             self.is_simulating_key = False
             self.held_keys.clear()
 
-        # 3. Skip the waypoint where we got stuck / lost
-        if curr_idx < len(self.movement_path.waypoints) - 1:
+        # 3. Skip the waypoint where we got stuck / lost (or trigger encounter if at pink dot)
+        if curr_wp and curr_wp.get("action") == "pink_encounter" and curr_idx not in self.interacted_pink_dots:
+            _log(f"[AUTOPILOT RECOVERY] Character arrived near Pink Encounter (WP #{curr_idx}). Triggering encounter routine instead of skipping.")
+            self.interacted_pink_dots.add(curr_idx)
+            self.execute_pink_dot_interaction(curr_wp)
+        elif curr_idx < len(self.movement_path.waypoints) - 1:
             self.movement_path.current_idx = curr_idx + 1
             next_wp = self.movement_path.get_current_target()
             next_name = next_wp.get("name", f"WP #{self.movement_path.current_idx}") if next_wp else f"WP #{self.movement_path.current_idx}"
@@ -2969,11 +3024,20 @@ class RouteNavigator:
 
                 # 3. Waypoint arrival check
                 is_reached = dist <= self.arrival_threshold
-                if not is_reached and target.get("action") == "pink_encounter" and target.get("pink_pos"):
-                    pink_p = target["pink_pos"]
-                    dist_to_pink = math.hypot(pink_p[0] - current_pos[0], pink_p[1] - current_pos[1])
-                    if dist_to_pink <= max(self.arrival_threshold, 30.0):
-                        is_reached = True
+                if not is_reached and target.get("action") == "pink_encounter":
+                    if target.get("pink_pos"):
+                        pink_p = target["pink_pos"]
+                        dist_to_pink = math.hypot(pink_p[0] - current_pos[0], pink_p[1] - current_pos[1])
+                        if dist_to_pink <= max(self.arrival_threshold, 60.0):
+                            is_reached = True
+                    # Also check if inside yellow orbit zone of this encounter
+                    orbit_z = target.get("orbit_zone")
+                    if not is_reached and orbit_z and orbit_z.get("center"):
+                        zc = orbit_z["center"]
+                        zr = float(orbit_z.get("radius", 45.0))
+                        d_to_orbit = math.hypot(zc[0] - current_pos[0], zc[1] - current_pos[1])
+                        if d_to_orbit <= (zr + 15.0):
+                            is_reached = True
 
                 if is_reached:
                     # Check if this waypoint triggers Yellow Shape Orbit

@@ -77,7 +77,7 @@
           "max_items": 15,
           "pickup_delay": 1,
           "approach_wait": 1.5,
-          "wait_for_green_light": true,
+          "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
       ]
@@ -154,7 +154,7 @@
           "max_items": 15,
           "pickup_delay": 1,
           "approach_wait": 1.5,
-          "wait_for_green_light": true,
+          "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
       ]
@@ -231,7 +231,7 @@
           "max_items": 15,
           "pickup_delay": 1,
           "approach_wait": 1.5,
-          "wait_for_green_light": true,
+          "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
       ]
@@ -308,7 +308,7 @@
           "max_items": 15,
           "pickup_delay": 1,
           "approach_wait": 1.5,
-          "wait_for_green_light": true,
+          "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
       ]
@@ -385,7 +385,7 @@
           "max_items": 15,
           "pickup_delay": 1,
           "approach_wait": 1.5,
-          "wait_for_green_light": true,
+          "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
       ]
@@ -462,7 +462,7 @@
           "max_items": 15,
           "pickup_delay": 1,
           "approach_wait": 1.5,
-          "wait_for_green_light": true,
+          "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
       ]
@@ -531,7 +531,7 @@
           "max_items": 15,
           "pickup_delay": 1,
           "approach_wait": 1.5,
-          "wait_for_green_light": true,
+          "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
       ]
@@ -574,7 +574,7 @@
           "max_items": 15,
           "pickup_delay": 1,
           "approach_wait": 1.5,
-          "wait_for_green_light": true
+          "wait_for_green_light": false
         }
       ]
     }

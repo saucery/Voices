@@ -1180,7 +1180,11 @@ class RouteNavigator:
 
         elif action == "pickup_loot":
             max_pickups = int(step.get("max_items", self.max_loot_pickups))
-            wait_for_green = bool(step.get("wait_for_green_light", self.wait_for_loot_confirmation))
+            # Master toggle in config.json (wait_for_loot_confirmation) disables waiting for green light when False
+            if not self.wait_for_loot_confirmation:
+                wait_for_green = False
+            else:
+                wait_for_green = bool(step.get("wait_for_green_light", True))
             pickup_delay = float(step.get("pickup_delay", self.loot_pickup_wait_seconds))
             app_wait = float(step.get("approach_wait", getattr(self, "loot_approach_wait_seconds", 1.5)))
             prev_delay = self.loot_pickup_wait_seconds

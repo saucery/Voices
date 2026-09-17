@@ -201,6 +201,60 @@ def test_banner_always_clicked_even_if_sims_clicked():
     nav.locate_encounter_banner.assert_called()
 
 
+def test_zone_routine_encounter_banner_double_check_when_still_present():
+    """
+    Verifies that if encounter banner remains detected after clicking in a zone routine step,
+    the double-check verification automatically re-clicks the banner in-range.
+    """
+    mp = MovementPath()
+    nav = RouteNavigator(movement_path=mp)
+    nav.is_active = True
+    nav.banner_approach_wait_seconds = 0.0
+
+    call_count = 0
+    click_count = 0
+
+    def mock_locate_banner():
+        nonlocal call_count
+        call_count += 1
+        # 1st call: initial search -> found at (500, 300)
+        # 2nd call: double-check after 1s -> STILL found at (510, 310) (missed initial click!)
+        # 3rd call: double-check after re-click -> None (confirmed gone)
+        if call_count == 1:
+            return (500, 300)
+        elif call_count == 2:
+            return (510, 310)
+        return None
+
+    def mock_click():
+        nonlocal click_count
+        click_count += 1
+
+    nav.locate_encounter_banner = MagicMock(side_effect=mock_locate_banner)
+    moves = []
+    nav.move_mouse_inside_game = MagicMock(side_effect=lambda x, y: moves.append((x, y)) or (x, y))
+
+    banner_step = {
+        "action": "click_encounter_banner",
+        "approach_wait": 0.0,
+        "verify_click": True,
+        "verify_delay": 0.05,
+        "max_click_attempts": 2,
+    }
+    context = {}
+
+    with patch("src.route_navigator.pydirectinput.click", side_effect=mock_click), \
+         patch("src.route_navigator.pydirectinput.mouseUp"), \
+         patch("time.sleep", return_value=None):
+        nav._execute_zone_routine_step(banner_step, context, zone_label="TEST")
+
+    assert context.get("banner_clicked") is True
+    assert click_count == 2
+    assert (500, 300) in moves
+    assert (510, 310) in moves
+    assert call_count == 2
+
+
 def test_reload_route_reloads_zone_routines(tmp_path):
     """Verifies that calling reload_route reloads zone_routines.json on the fly."""
     mp = MovementPath()

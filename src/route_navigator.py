@@ -133,6 +133,9 @@ class RouteNavigator:
         self.encounter_match_threshold: float = 0.45
         self.banner_search_attempts: int = 5
         self.banner_approach_wait_seconds: float = 2.0
+        self.banner_verify_delay_seconds: float = 1.0
+        self.banner_max_click_attempts: int = 2
+        self.banner_verify_click_enabled: bool = True
         self.sim_approach_wait_seconds: float = 2.0
         self.sim_verify_delay_seconds: float = 1.0
         self.sim_max_click_attempts: int = 2
@@ -194,6 +197,9 @@ class RouteNavigator:
                 self.encounter_banner_file = ap_cfg.get("encounter_banner_file", self.encounter_banner_file)
                 self.encounter_match_threshold = float(ap_cfg.get("encounter_match_threshold", self.encounter_match_threshold))
                 self.banner_approach_wait_seconds = float(ap_cfg.get("banner_approach_wait_seconds", self.banner_approach_wait_seconds))
+                self.banner_verify_delay_seconds = float(ap_cfg.get("banner_verify_delay_seconds", self.banner_verify_delay_seconds))
+                self.banner_max_click_attempts = int(ap_cfg.get("banner_max_click_attempts", self.banner_max_click_attempts))
+                self.banner_verify_click_enabled = bool(ap_cfg.get("banner_verify_click_enabled", self.banner_verify_click_enabled))
                 self.sim_approach_wait_seconds = float(ap_cfg.get("sim_approach_wait_seconds", self.sim_approach_wait_seconds))
                 self.sim_verify_delay_seconds = float(ap_cfg.get("sim_verify_delay_seconds", self.sim_verify_delay_seconds))
                 self.sim_max_click_attempts = int(ap_cfg.get("sim_max_click_attempts", self.sim_max_click_attempts))
@@ -1046,8 +1052,11 @@ class RouteNavigator:
                 return True
 
             app_wait = float(step.get("approach_wait", self.banner_approach_wait_seconds))
-            reclick = bool(step.get("reclick", self.reclick_after_approach))
             search_attempts = int(step.get("search_attempts", self.banner_search_attempts))
+            verify_delay = float(step.get("verify_delay", self.banner_verify_delay_seconds))
+            max_attempts = int(step.get("max_click_attempts", step.get("max_attempts", self.banner_max_click_attempts)))
+            verify_enabled = bool(step.get("verify_click", step.get("verify", self.banner_verify_click_enabled)))
+            reclick = bool(step.get("reclick", self.reclick_after_approach))
 
             self.status_message = f"[{zone_label}] Finding Encounter Banner..."
             banner_pos = None
@@ -1073,16 +1082,38 @@ class RouteNavigator:
                     self._wait_for_approach(app_wait, reason=f"{zone_label} BANNER")
                     if stop_handler.is_stopped() or not self.is_active:
                         return False
-                    if reclick:
-                        in_range_pos = self.locate_encounter_banner()
-                        if in_range_pos is not None:
-                            rx, ry = self.move_mouse_inside_game(in_range_pos[0], in_range_pos[1])
-                            _log(f"    [ACTION] Re-clicking encounter banner in-range at ({rx}, {ry})...")
+
+                # Double-check / Verification: Check after approach/wait if encounter banner is still visible on screen
+                if verify_enabled and not stop_handler.is_stopped() and self.is_active:
+                    if app_wait <= 0 and verify_delay > 0:
+                        time.sleep(verify_delay)
+
+                    for attempt_num in range(1, max(1, max_attempts)):
+                        if stop_handler.is_stopped() or not self.is_active:
+                            break
+                        recheck_pos = self.locate_encounter_banner()
+                        if recheck_pos is not None:
+                            rx, ry = self.move_mouse_inside_game(recheck_pos[0], recheck_pos[1])
+                            _log(f"    [BANNER DOUBLE-CHECK] Encounter banner is STILL visible on screen after approach. Re-clicking in-range at ({rx}, {ry}) (attempt {attempt_num + 1}/{max_attempts})...")
+                            self.status_message = f"[{zone_label}] Re-clicking Banner ({rx}, {ry})"
                             if pydirectinput:
                                 pydirectinput.click()
                                 time.sleep(0.08)
                                 pydirectinput.mouseUp(button="left")
-                            time.sleep(0.15)
+                            time.sleep(max(0.4, verify_delay))
+                        else:
+                            _log(f"    [BANNER VERIFIED] Encounter banner click confirmed (no longer visible on screen).")
+                            break
+                elif reclick:
+                    in_range_pos = self.locate_encounter_banner()
+                    if in_range_pos is not None:
+                        rx, ry = self.move_mouse_inside_game(in_range_pos[0], in_range_pos[1])
+                        _log(f"    [ACTION] Re-clicking encounter banner in-range at ({rx}, {ry})...")
+                        if pydirectinput:
+                            pydirectinput.click()
+                            time.sleep(0.08)
+                            pydirectinput.mouseUp(button="left")
+                        time.sleep(0.15)
                 context["banner_clicked"] = True
             else:
                 _log(f"    [WARNING] Encounter banner not detected on screen.")
@@ -2470,16 +2501,38 @@ class RouteNavigator:
                     self._wait_for_approach(self.banner_approach_wait_seconds, reason="PINK DOT BANNER")
                     if stop_handler.is_stopped() or not self.is_active:
                         return False
-                    if self.reclick_after_approach:
-                        in_range_pos = self.locate_encounter_banner()
-                        if in_range_pos is not None:
-                            rx, ry = self.move_mouse_inside_game(in_range_pos[0], in_range_pos[1])
-                            _log(f"  [ACTION 1/3] Re-clicking encounter banner in-range at ({rx}, {ry})...")
+
+                # Double-check / Verification: Check after approach/wait if encounter banner is still visible on screen
+                if self.banner_verify_click_enabled and not stop_handler.is_stopped() and self.is_active:
+                    if self.banner_approach_wait_seconds <= 0 and self.banner_verify_delay_seconds > 0:
+                        time.sleep(self.banner_verify_delay_seconds)
+
+                    for attempt_num in range(1, max(1, self.banner_max_click_attempts)):
+                        if stop_handler.is_stopped() or not self.is_active:
+                            break
+                        recheck_pos = self.locate_encounter_banner()
+                        if recheck_pos is not None:
+                            rx, ry = self.move_mouse_inside_game(recheck_pos[0], recheck_pos[1])
+                            _log(f"  [BANNER DOUBLE-CHECK] Encounter banner is STILL visible on screen after approach. Re-clicking in-range at ({rx}, {ry}) (attempt {attempt_num + 1}/{self.banner_max_click_attempts})...")
+                            self.status_message = f"[PINK DOT] Re-clicking Banner ({rx}, {ry})"
                             if pydirectinput:
                                 pydirectinput.click()
                                 time.sleep(0.08)
                                 pydirectinput.mouseUp(button="left")
-                            time.sleep(0.15)
+                            time.sleep(max(0.4, self.banner_verify_delay_seconds))
+                        else:
+                            _log(f"  [BANNER VERIFIED] Encounter banner click confirmed (no longer visible on screen).")
+                            break
+                elif self.reclick_after_approach:
+                    in_range_pos = self.locate_encounter_banner()
+                    if in_range_pos is not None:
+                        rx, ry = self.move_mouse_inside_game(in_range_pos[0], in_range_pos[1])
+                        _log(f"  [ACTION 1/3] Re-clicking encounter banner in-range at ({rx}, {ry})...")
+                        if pydirectinput:
+                            pydirectinput.click()
+                            time.sleep(0.08)
+                            pydirectinput.mouseUp(button="left")
+                        time.sleep(0.15)
             else:
                 _log(f"  [WARNING] Encounter banner not detected on screen. Positioning cursor inside game.")
                 self.move_mouse_inside_game()

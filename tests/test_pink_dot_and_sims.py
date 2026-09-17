@@ -272,6 +272,65 @@ def test_pink_dot_no_sims_fallback_to_banner_and_middle_click(tmp_path):
     assert banner_i < rclick_i < mdown_i < mup_i
 
 
+def test_pink_dot_fallback_banner_double_check_when_still_present(tmp_path):
+    """
+    Verifies that in pink dot fallback sequence, if encounter banner is still detected after clicking,
+    the double-check logic re-clicks the banner in-range.
+    """
+    cfg_file = tmp_path / "config.json"
+    cfg_file.write_text(json.dumps({
+        "autopilot": {
+            "pink_dot_stop_seconds": 0.01,
+            "middle_click_hold_seconds": 0.01,
+            "banner_search_attempts": 1,
+            "banner_approach_wait_seconds": 0.0,
+            "banner_verify_click_enabled": True,
+            "banner_verify_delay_seconds": 0.01,
+            "banner_max_click_attempts": 2,
+        }
+    }))
+
+    mock_movement_path = MagicMock()
+    mock_movement_path.is_configured = True
+    mock_movement_path.waypoints = [{"index": 0, "name": "Pink", "x": 150, "y": 100, "action": "pink_encounter"}]
+
+    navigator = RouteNavigator(
+        movement_path=mock_movement_path,
+        config_path=str(cfg_file),
+    )
+    navigator.is_active = True
+
+    click_count = 0
+    def mock_click():
+        nonlocal click_count
+        click_count += 1
+
+    banner_calls = 0
+    def mock_locate_banner():
+        nonlocal banner_calls
+        banner_calls += 1
+        if banner_calls <= 2:
+            return (550, 320)  # Found on 1st search AND 2nd verification check
+        return None
+
+    navigator.locate_sim_template = MagicMock(return_value=None)
+    navigator.locate_encounter_banner = MagicMock(side_effect=mock_locate_banner)
+    navigator.collect_loot = MagicMock(return_value=0)
+    navigator.move_mouse_inside_game = MagicMock(side_effect=lambda x=None, y=None: (x or 100, y or 100))
+
+    with patch("src.route_navigator.pydirectinput.click", side_effect=mock_click), \
+         patch("src.route_navigator.pydirectinput.rightClick"), \
+         patch("src.route_navigator.pydirectinput.mouseDown"), \
+         patch("src.route_navigator.pydirectinput.mouseUp"), \
+         patch("time.sleep", return_value=None):
+
+        result = navigator.execute_pink_dot_interaction(target=mock_movement_path.waypoints[0])
+
+    assert result is True
+    # Initial click + in-range double-check re-click = 2 clicks
+    assert click_count == 2
+
+
 def test_navigator_triggers_pink_interaction_at_pink_waypoint(tmp_path):
     """Verifies that navigator.update() triggers pink dot encounter upon arriving at a pink_encounter waypoint."""
     cfg_file = tmp_path / "config.json"

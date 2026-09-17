@@ -173,3 +173,45 @@ def test_route_navigator_saves_loot_debug_screenshot(tmp_path):
         assert any(f.endswith("_crop.png") for f in files)
     nav.stop()
 
+
+def test_loot_detector_rejects_red_background_boxes():
+    """Verifies that currency boxes with RED background and WHITE text (e.g. Chance Shards) are NOT detected as Tier 1."""
+    detector = LootDetector()
+    canvas = np.zeros((600, 800, 3), dtype=np.uint8)
+    # Draw red background box at (200, 200, 120, 25) - BGR for salmon/red: (60, 70, 220)
+    canvas[200:225, 200:320] = (60, 70, 220)
+    # Draw white text inside
+    cv2.putText(canvas, "2x CHANCE SHARD", (205, 218), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+    detected = detector.detect_loot(canvas)
+    # Should NOT be classified as Tier 1 White Box / Red Text
+    t1_items = [d for d in detected if d.rule_id == "tier1_white_box_red_text"]
+    assert len(t1_items) == 0
+
+
+def test_loot_detector_ui_exclusion_zones():
+    """Verifies that text/boxes in chat, minimap, or status bars are ignored."""
+    detector = LootDetector()
+    canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    
+    # Draw white box with red text inside Chat window area (x=100, y=800)
+    canvas[800:830, 100:250] = (240, 240, 240)
+    cv2.putText(canvas, "DIVINE ORB", (110, 822), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 230), 2)
+
+    # Draw white box with red text inside Minimap area (x=1700, y=100)
+    canvas[100:130, 1700:1850] = (240, 240, 240)
+    cv2.putText(canvas, "DIVINE ORB", (1710, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 230), 2)
+
+    detected = detector.detect_loot(canvas)
+    assert len(detected) == 0
+
+    # Draw white box with red text in play area (x=800, y=400)
+    canvas[400:430, 800:950] = (240, 240, 240)
+    cv2.putText(canvas, "DIVINE ORB", (810, 422), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 230), 2)
+
+    detected_play = detector.detect_loot(canvas)
+    assert len(detected_play) == 1
+    assert detected_play[0].x >= 790
+    assert detected_play[0].y >= 390
+
+

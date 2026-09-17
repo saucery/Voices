@@ -108,13 +108,13 @@ class LootDetector:
                 "type": "color_box",
                 "bg_color": "white",
                 "text_color": "red",
-                "min_width": 25,
-                "max_width": 450,
-                "min_height": 10,
-                "max_height": 55,
-                "min_aspect_ratio": 1.5,
-                "min_bg_fraction": 0.30,
-                "min_text_pixels": 12,
+                "min_width": 55,
+                "max_width": 500,
+                "min_height": 16,
+                "max_height": 75,
+                "min_aspect_ratio": 1.6,
+                "min_bg_fraction": 0.40,
+                "min_text_pixels": 16,
             },
             {
                 "id": "ravens_reflection_purple",
@@ -124,11 +124,11 @@ class LootDetector:
                 "type": "color_box",
                 "bg_color": "purple",
                 "text_color": "white",
-                "min_width": 30,
-                "max_width": 400,
-                "min_height": 10,
-                "max_height": 55,
-                "min_aspect_ratio": 1.5,
+                "min_width": 55,
+                "max_width": 450,
+                "min_height": 16,
+                "max_height": 75,
+                "min_aspect_ratio": 1.6,
                 "min_bg_fraction": 0.35,
             },
             {
@@ -190,6 +190,48 @@ class LootDetector:
         filtered = self._apply_nms(all_detected, iou_threshold=0.30)
         return filtered
 
+    @staticmethod
+    def is_in_ui_exclusion_zone(x: int, y: int, w: int, h: int, screen_w: int, screen_h: int) -> bool:
+        """
+        Filters out detections falling inside static game UI elements
+        (Chat window, Health globe, Mana globe, Skill action bar, Buff bar, Minimap).
+        """
+        if screen_w < 600 or screen_h < 400:
+            return False
+
+        cx = x + w // 2
+        cy = y + h // 2
+
+        # 1. Top status bar / latency graph
+        if y < 45 or cy < 45:
+            return True
+
+        # 2. Chat window area (Bottom-Left: x < 28% width and y > 58% height)
+        if cx < int(screen_w * 0.28) and cy > int(screen_h * 0.58):
+            return True
+
+        # 3. Life / Flask globe (Bottom-Left: x < 240 and y > height - 240)
+        if cx < 240 and cy > (screen_h - 240):
+            return True
+
+        # 4. Mana globe (Bottom-Right: x > width - 240 and y > height - 240)
+        if cx > (screen_w - 240) and cy > (screen_h - 240):
+            return True
+
+        # 5. Bottom skill & flask action bar (y > height - 110)
+        if cy > (screen_h - 110):
+            return True
+
+        # 6. Minimap & Quest tracker (Top-Right: x > width - 380 and y < 380)
+        if cx > (screen_w - 380) and cy < 380:
+            return True
+
+        # 7. Top-Left Buff bar (x < 350 and y < 85)
+        if cx < 350 and cy < 85:
+            return True
+
+        return False
+
     def _detect_white_box_red_text(
         self,
         screen: np.ndarray,
@@ -204,13 +246,15 @@ class LootDetector:
         Uses dual-pass detection (horizontal white box contour segmentation +
         red text cluster projection) to handle tightly stacked loot boxes and vertical light beams.
         """
-        min_w = int(rule.get("min_width", 25))
+        sw = screen.shape[1]
+        sh = screen.shape[0]
+        min_w = int(rule.get("min_width", 55))
         max_w = int(rule.get("max_width", 500))
-        min_h = int(rule.get("min_height", 10))
+        min_h = int(rule.get("min_height", 16))
         max_h = int(rule.get("max_height", 65))
-        min_ar = float(rule.get("min_aspect_ratio", 1.3))
-        min_bg_frac = float(rule.get("min_bg_fraction", 0.25))
-        min_text_px = int(rule.get("min_text_pixels", 14))
+        min_ar = float(rule.get("min_aspect_ratio", 1.6))
+        min_bg_frac = float(rule.get("min_bg_fraction", 0.40))
+        min_text_px = int(rule.get("min_text_pixels", 16))
 
         # White background mask: high brightness, low saturation
         white_mask = (
@@ -235,8 +279,8 @@ class LootDetector:
 
         for cnt in w_contours:
             x, y, w, h = cv2.boundingRect(cnt)
-            # Avoid top/bottom UI edge overlays on full screenshots (FPS graphs, status bars)
-            if screen.shape[0] > 300 and (y < 35 or y + h > screen.shape[0] - 35):
+            # Avoid UI edge overlays on full screenshots (Chat, minimap, status bars)
+            if self.is_in_ui_exclusion_zone(x, y, w, h, sw, sh):
                 continue
 
             if w < min_w or w > max_w or h < min_h or h > max_h:
@@ -250,9 +294,11 @@ class LootDetector:
             box_red = red_text_mask[y:y+h, x:x+w]
 
             bg_frac = np.mean(box_white > 0)
+            red_frac = np.mean(box_red > 0)
             red_pixels = int(np.count_nonzero(box_red > 0))
 
-            if bg_frac >= min_bg_frac and red_pixels >= min_text_px:
+            # Must have dominant white background over red text (prevents false positives on red boxes)
+            if bg_frac >= min_bg_frac and red_pixels >= min_text_px and bg_frac > red_frac * 1.5:
                 confidence = min(1.0, 0.5 + (red_pixels / 80.0) + (bg_frac * 0.3))
                 items.append(
                     LootItem(
@@ -280,11 +326,11 @@ class LootDetector:
 
         for cnt in r_contours:
             rx, ry, rw, rh = cv2.boundingRect(cnt)
-            # Avoid top/bottom UI edge overlays on full screenshots
-            if screen.shape[0] > 300 and (ry < 35 or ry + rh > screen.shape[0] - 35):
+            # Avoid UI overlays
+            if self.is_in_ui_exclusion_zone(rx, ry, rw, rh, sw, sh):
                 continue
 
-            if rw < 18 or rh < 5:
+            if rw < 30 or rh < 6:
                 continue
 
             raw_red_pixels = int(np.count_nonzero(red_no_beams[ry:ry+rh, rx:rx+rw] > 0))
@@ -296,13 +342,19 @@ class LootDetector:
             pad_y = 6
             bx = max(0, rx - pad_x)
             by = max(0, ry - pad_y)
-            bw = min(screen.shape[1] - bx, rw + 2 * pad_x)
-            bh = min(screen.shape[0] - by, rh + 2 * pad_y)
+            bw = min(sw - bx, rw + 2 * pad_x)
+            bh = min(sh - by, rh + 2 * pad_y)
+
+            if bw < min_w or bh < min_h:
+                continue
 
             box_white = white_mask[by:by+bh, bx:bx+bw]
+            box_red = red_text_mask[by:by+bh, bx:bx+bw]
             bg_frac = np.mean(box_white > 0)
+            red_frac = np.mean(box_red > 0)
 
-            if bg_frac >= min_bg_frac:
+            # Must have dominant white background
+            if bg_frac >= min_bg_frac and bg_frac > red_frac * 1.5:
                 confidence = min(1.0, 0.5 + (raw_red_pixels / 80.0) + (bg_frac * 0.3))
                 items.append(
                     LootItem(
@@ -331,12 +383,14 @@ class LootDetector:
         rule: Dict[str, Any],
     ) -> List[LootItem]:
         """Detects purple/magenta background loot boxes (e.g., Raven's Reflection)."""
-        min_w = int(rule.get("min_width", 25))
+        sw = screen.shape[1]
+        sh = screen.shape[0]
+        min_w = int(rule.get("min_width", 55))
         max_w = int(rule.get("max_width", 450))
-        min_h = int(rule.get("min_height", 10))
+        min_h = int(rule.get("min_height", 16))
         max_h = int(rule.get("max_height", 65))
-        min_ar = float(rule.get("min_aspect_ratio", 1.3))
-        min_bg_frac = float(rule.get("min_bg_fraction", 0.30))
+        min_ar = float(rule.get("min_aspect_ratio", 1.6))
+        min_bg_frac = float(rule.get("min_bg_fraction", 0.35))
 
         # Purple / Magenta Hue in OpenCV HSV is ~ 135 to 172
         purple_mask = (
@@ -356,6 +410,9 @@ class LootDetector:
 
         for cnt in contours:
             x, y, w, h = cv2.boundingRect(cnt)
+            if self.is_in_ui_exclusion_zone(x, y, w, h, sw, sh):
+                continue
+
             if w < min_w or w > max_w or h < min_h or h > max_h:
                 continue
 

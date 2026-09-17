@@ -217,8 +217,10 @@ class PlayerTrackerVisualizer:
         # Get route search ROI and expected position prior based on current waypoint progress
         search_roi = None
         expected_pos = None
-        if hasattr(self.movement_path, "get_search_roi_for_progress"):
-            search_roi = self.movement_path.get_search_roi_for_progress(margin=90.0)
+        if hasattr(self.movement_path, "get_active_room_bounds"):
+            search_roi = self.movement_path.get_active_room_bounds(margin=60.0)
+        elif hasattr(self.movement_path, "get_search_roi_for_progress"):
+            search_roi = self.movement_path.get_search_roi_for_progress(margin=80.0)
         curr_target = self.movement_path.get_current_target() if hasattr(self.movement_path, "get_current_target") else None
         if curr_target and "x" in curr_target and "y" in curr_target:
             expected_pos = (float(curr_target["x"]), float(curr_target["y"]))

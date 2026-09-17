@@ -923,6 +923,28 @@ class MovementPath:
             int(max(ys) + margin),
         )
 
+    def get_active_room_bounds(self, margin: float = 60.0) -> Optional[Tuple[int, int, int, int]]:
+        """
+        Returns the (min_x, min_y, max_x, max_y) bounding box of the active room/zone
+        based on current waypoint progress. For Room 7 (Zone 7 / finish area), returns
+        a hard-clamped top-left quadrant [0, 0, 280, 280] to prevent false jumps to Room 3/4.
+        """
+        if not self.waypoints:
+            return None
+
+        # Check current room index
+        cur_room = self.get_current_room_index()
+        if cur_room == 7 or self.current_idx >= 65:
+            return (0, 0, 280, 280)
+
+        # Retrieve room bounding box for current room
+        room_box = self.get_room_bounding_box(cur_room, margin=margin)
+        if room_box is not None:
+            return room_box
+
+        # Fallback to local progress ROI
+        return self.get_search_roi_for_progress(margin=margin, lookahead=10, lookbehind=4)
+
     def get_search_roi_for_progress(
         self, margin: float = 80.0, lookahead: int = 14, lookbehind: int = 6
     ) -> Optional[Tuple[int, int, int, int]]:
@@ -933,6 +955,10 @@ class MovementPath:
         """
         if not self.waypoints:
             return None
+
+        cur_room = self.get_current_room_index()
+        if cur_room == 7 or self.current_idx >= 65:
+            return (0, 0, 280, 280)
 
         s_idx = max(0, self.current_idx - lookbehind)
         e_idx = min(len(self.waypoints) - 1, self.current_idx + lookahead)

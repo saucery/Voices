@@ -356,14 +356,14 @@ class RoomClassifier:
                         cx, cy = char_pos
                         if search_roi is not None:
                             rx1, ry1, rx2, ry2 = search_roi
-                            in_roi = (rx1 - 30 <= cx <= rx2 + 30) and (ry1 - 30 <= cy <= ry2 + 30)
+                            in_roi = (rx1 - 35 <= cx <= rx2 + 35) and (ry1 - 35 <= cy <= ry2 + 35)
                             if in_roi:
-                                effective_score += 0.05
-                            elif inliers < 8:
-                                # Candidate is outside active route room zone with weak inliers
-                                effective_score -= 0.08
+                                effective_score = max(effective_score, score + 0.05)
+                            else:
+                                # Candidate is outside active route room zone - hard reject
+                                effective_score = -1.0
 
-                        if expected_pos is not None:
+                        if search_roi is None and expected_pos is not None:
                             d_exp = math.hypot(cx - expected_pos[0], cy - expected_pos[1])
                             if d_exp < 60.0:
                                 effective_score += 0.03

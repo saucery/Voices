@@ -194,6 +194,36 @@ class MapLocalizer:
         c_h, c_w = minimap_crop.shape[:2]
         crop_features = self.extract_features(minimap_crop, is_crop=True)
 
+        # Handle sparse / empty crops (e.g. far corner unexplored black void)
+        if np.count_nonzero(crop_features) < 15:
+            if self.last_player_pos is not None:
+                lx, ly = self.last_player_pos
+                effective_roi = search_roi
+                if effective_roi is None and expected_pos is not None:
+                    ex, ey = int(expected_pos[0]), int(expected_pos[1])
+                    m = 120
+                    effective_roi = (max(0, ex - m), max(0, ey - m), min(self.ref_w, ex + m), min(self.ref_h, ey + m))
+
+                if effective_roi is None or (effective_roi[0] - 25 <= lx <= effective_roi[2] + 25 and effective_roi[1] - 25 <= ly <= effective_roi[3] + 25):
+                    self.locked_counter = max(1, self.locked_counter - 1)
+                    edge_dists = self.calculate_edge_distances(lx, ly)
+                    return {
+                        "located": True,
+                        "confidence": 0.20,
+                        "player_position": (lx, ly),
+                        "player_x": lx,
+                        "player_y": ly,
+                        "bounding_box": (max(0, lx - 20), max(0, ly - 20), min(self.ref_w, lx + 20), min(self.ref_h, ly + 20)),
+                        "matched_scale": self.last_scale or 0.22,
+                        "target_size": (40, 40),
+                        "map_width": self.ref_w,
+                        "map_height": self.ref_h,
+                        "edge_distances": edge_dists,
+                        "red_zone_bounds": self.red_zone_bounds,
+                        "minimap_crop": minimap_crop,
+                    }
+            return {"located": False, "confidence": 0.0, "player_position": None}
+
         # Tier 1: Fast Local ROI search around last known position (~2ms)
         if fast_track and self.last_player_pos is not None and self.locked_counter >= 1:
             lx, ly = self.last_player_pos
@@ -272,7 +302,7 @@ class MapLocalizer:
 
         if effective_roi is not None:
             gx1, gy1, gx2, gy2 = effective_roi
-            if (gx2 - gx1) > 40 and (gy2 - gy1) > 40:
+            if (gx2 - gx1) > 30 and (gy2 - gy1) > 30:
                 guided_roi = self.ref_edges[gy1:gy2, gx1:gx2]
                 g_cur_scale = self.last_scale or 0.22
                 g_scales = [
@@ -299,7 +329,7 @@ class MapLocalizer:
                         g_best_scale = s
                         g_best_size = (tw, th)
 
-                if g_best_score >= 0.16 and g_best_loc is not None:
+                if g_best_score >= 0.10 and g_best_loc is not None:
                     tw, th = g_best_size
                     player_x = int(g_best_loc[0] + tw // 2)
                     player_y = int(g_best_loc[1] + th // 2)
@@ -331,7 +361,7 @@ class MapLocalizer:
                         "minimap_crop": minimap_crop,
                     }
 
-        # Tier 3: Coarse Global Multi-scale search fallback
+        # Tier 3: Search fallback (constrained to effective_roi if available, otherwise global)
         candidate_scales: List[float] = []
         is_narrow_search = False
 
@@ -349,20 +379,29 @@ class MapLocalizer:
         best_top_left = (0, 0)
         best_target_size = (1, 1)
 
-        min_x, max_x, min_y, max_y = self.red_zone_bounds or (0, self.ref_w, 0, self.ref_h)
+        # Restrict Tier 3 search domain to effective_roi to eliminate cross-room false positives
+        if effective_roi is not None:
+            rx1, ry1, rx2, ry2 = effective_roi
+            search_edge_img = self.ref_edges[ry1:ry2, rx1:rx2]
+            offset_x, offset_y = rx1, ry1
+            max_w, max_h = rx2 - rx1, ry2 - ry1
+        else:
+            search_edge_img = self.ref_edges
+            offset_x, offset_y = 0, 0
+            max_w, max_h = self.ref_w, self.ref_h
 
         def evaluate_scale(s: float) -> Tuple[float, Tuple[int, int], Tuple[int, int]]:
             tw = max(10, int(c_w * s))
             th = max(10, int(c_h * s))
-            if tw >= self.ref_w or th >= self.ref_h:
+            if tw >= max_w or th >= max_h:
                 return -1.0, (0, 0), (tw, th)
 
             resized = cv2.resize(crop_features, (tw, th), interpolation=cv2.INTER_AREA)
-            res = cv2.matchTemplate(self.ref_edges, resized, cv2.TM_CCOEFF_NORMED)
+            res = cv2.matchTemplate(search_edge_img, resized, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, max_loc = cv2.minMaxLoc(res)
 
-            cx = max_loc[0] + tw // 2
-            cy = max_loc[1] + th // 2
+            cx = max_loc[0] + offset_x + tw // 2
+            cy = max_loc[1] + offset_y + th // 2
             score = float(max_val)
 
             # Spatial continuity bonus if near last known position or expected progress
@@ -373,14 +412,7 @@ class MapLocalizer:
                 elif dist > 80.0:
                     score -= 0.04
 
-            if effective_roi is not None:
-                rx1, ry1, rx2, ry2 = effective_roi
-                if (rx1 - 20 <= cx <= rx2 + 20) and (ry1 - 20 <= cy <= ry2 + 20):
-                    score += 0.04
-                else:
-                    score -= 0.05
-
-            return score, max_loc, (tw, th)
+            return score, (max_loc[0] + offset_x, max_loc[1] + offset_y), (tw, th)
 
         for scale in candidate_scales:
             score, loc, t_size = evaluate_scale(scale)
@@ -390,8 +422,8 @@ class MapLocalizer:
                 best_top_left = loc
                 best_target_size = t_size
 
-        # If narrow search gave poor score, fall back to global coarse search
-        if is_narrow_search and best_score < 0.18:
+        # If narrow search gave poor score, fall back to broader search
+        if is_narrow_search and best_score < 0.15:
             candidate_scales = list(np.linspace(self.min_scale, self.max_scale, 22))
             for scale in candidate_scales:
                 score, loc, t_size = evaluate_scale(scale)
@@ -428,8 +460,32 @@ class MapLocalizer:
 
         confidence = float(max(0.0, best_score))
 
-        # Accept match if confidence threshold met
-        if confidence < 0.12:
+        # Accept match if confidence threshold met or room-constrained
+        min_threshold = 0.08 if effective_roi is not None else 0.12
+        if confidence < min_threshold:
+            # Corner hysteresis: if previously locked inside active room, retain position
+            if self.last_player_pos is not None and effective_roi is not None:
+                lx, ly = self.last_player_pos
+                rx1, ry1, rx2, ry2 = effective_roi
+                if rx1 - 20 <= lx <= rx2 + 20 and ry1 - 20 <= ly <= ry2 + 20:
+                    self.locked_counter = max(1, self.locked_counter - 1)
+                    edge_dists = self.calculate_edge_distances(lx, ly)
+                    return {
+                        "located": True,
+                        "confidence": 0.20,
+                        "player_position": (lx, ly),
+                        "player_x": lx,
+                        "player_y": ly,
+                        "bounding_box": bounding_box,
+                        "matched_scale": round(best_scale, 4),
+                        "target_size": (tw, th),
+                        "map_width": self.ref_w,
+                        "map_height": self.ref_h,
+                        "edge_distances": edge_dists,
+                        "red_zone_bounds": self.red_zone_bounds,
+                        "minimap_crop": minimap_crop,
+                    }
+
             self.locked_counter = max(0, self.locked_counter - 1)
             return {
                 "located": False,

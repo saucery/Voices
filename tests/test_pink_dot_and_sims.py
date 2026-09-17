@@ -117,6 +117,7 @@ def test_pink_dot_sim_priority_clicks(tmp_path):
 
     navigator.locate_sim_template = MagicMock(side_effect=mock_locate_sim)
     navigator.locate_encounter_banner = MagicMock(return_value=(500, 500))
+    navigator.collect_loot = MagicMock(return_value=0)
     navigator.move_mouse_inside_game = MagicMock(side_effect=lambda x=None, y=None: (x or 100, y or 100))
 
     with patch("src.route_navigator.pydirectinput.click", side_effect=mock_click), \
@@ -927,6 +928,7 @@ def test_banner_reclick_after_approach_when_enabled(tmp_path):
 
     nav.locate_sim_template = MagicMock(return_value=None)
     nav.locate_encounter_banner = MagicMock(return_value=(500, 300))
+    nav.collect_loot = MagicMock(return_value=0)
     nav.move_mouse_inside_game = MagicMock(side_effect=lambda x=None, y=None: (x or 200, y or 200))
     nav._wait_for_approach = MagicMock()
 

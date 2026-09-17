@@ -1,0 +1,51 @@
+{
+  "enabled": true,
+  "max_pickups": 20,
+  "pickup_delay_seconds": 0.35,
+  "approach_wait_seconds": 1.5,
+  "rules": [
+    {
+      "id": "tier1_white_box_red_text",
+      "name": "Tier 1 High Value (White Box / Red Text)",
+      "enabled": true,
+      "priority": 1,
+      "type": "color_box",
+      "bg_color": "white",
+      "text_color": "red",
+      "min_width": 25,
+      "max_width": 450,
+      "min_height": 10,
+      "max_height": 55,
+      "min_aspect_ratio": 1.5,
+      "min_bg_fraction": 0.30,
+      "min_text_pixels": 12,
+      "description": "Matches all Divine Orbs, Mirror of Kalandra, Orbs of Annulment, Liquid Isolation, and any loot item styled with white background and red text."
+    },
+    {
+      "id": "ravens_reflection_purple",
+      "name": "Raven's Reflection / T1 Purple Uniques",
+      "enabled": true,
+      "priority": 2,
+      "type": "color_box",
+      "bg_color": "purple",
+      "text_color": "white",
+      "min_width": 30,
+      "max_width": 400,
+      "min_height": 10,
+      "max_height": 55,
+      "min_aspect_ratio": 1.5,
+      "min_bg_fraction": 0.35,
+      "description": "Matches purple/magenta background unique items (e.g., Raven's Reflection and valuable unique jewels)."
+    },
+    {
+      "id": "custom_template_loot1",
+      "name": "Template Matcher (ui/loot1.png)",
+      "enabled": true,
+      "priority": 3,
+      "type": "template",
+      "template_file": "ui/loot1.png",
+      "threshold": 0.50,
+      "description": "Fallback template matcher for specific cropped item images in ui/loot1.png."
+    }
+  ]
+}

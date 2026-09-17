@@ -32,6 +32,7 @@ from .movement_path import MovementPath
 from .screen_capturer import ScreenCapturer
 from .stop_handler import stop_handler
 from .window_focus import window_focuser
+from .loot_detector import LootDetector, LootItem
 
 
 
@@ -199,6 +200,7 @@ class RouteNavigator:
                 self.max_loot_pickups = int(ap_cfg.get("max_loot_pickups", self.max_loot_pickups))
                 self.wait_for_loot_confirmation = bool(ap_cfg.get("wait_for_loot_confirmation", self.wait_for_loot_confirmation))
                 self.zone_routines_file = ap_cfg.get("zone_routines_file", self.zone_routines_file)
+                self.loot_filter_file = ap_cfg.get("loot_filter_file", "routines/loot_filter.json")
             except Exception:
                 pass
 
@@ -212,6 +214,7 @@ class RouteNavigator:
         self.sim_templates: Dict[str, Optional[np.ndarray]] = {"sim1": None, "sim2": None, "sim3": None}
         self._load_sim_templates()
         self._load_loot_template()
+        self.loot_detector = LootDetector(getattr(self, "loot_filter_file", "routines/loot_filter.json"))
         self.load_zone_routines()
 
         if self.start_at_pink_dot > 0 and self.movement_path.is_configured:
@@ -1839,23 +1842,23 @@ class RouteNavigator:
         elapsed = time.time() - start_time
         _log(f"  [{reason}] Approach window finished ({elapsed:.2f}s).")
 
-    def locate_loot(self) -> Optional[Tuple[int, int]]:
+    def locate_loot(
+        self,
+        exclude_positions: Optional[List[Tuple[int, int]]] = None,
+        screen: Optional[np.ndarray] = None,
+    ) -> Optional[Tuple[int, int]]:
         """
-        Locates a loot label on screen matching ui/loot1.png using multi-scale template matching.
-        Returns desktop absolute coordinates (X, Y) of the loot label center, or None if not found.
+        Locates high-value loot on screen using LootDetector (white box / red text, purple uniques, etc.)
+        with fallback to template matching.
+        Returns desktop absolute coordinates (X, Y) of the loot item center, or None if not found.
         """
-        if self.loot1_img is None:
-            self._load_loot_template()
-
-        if self.loot1_img is None:
-            return None
-
         capt = self._get_capturer()
-        try:
-            screen = capt.capture()
-        except Exception as e:
-            _log(f"  [WARNING] Screen capture failed during loot search: {e}")
-            return None
+        if screen is None:
+            try:
+                screen = capt.capture()
+            except Exception as e:
+                _log(f"  [WARNING] Screen capture failed during loot search: {e}")
+                return None
 
         if screen is None or screen.size == 0:
             return None
@@ -1868,49 +1871,78 @@ class RouteNavigator:
                 mon_left = monitors[self.monitor_idx].get("left", 0)
                 mon_top = monitors[self.monitor_idx].get("top", 0)
 
-        g_screen = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
-        g_tmpl = cv2.cvtColor(self.loot1_img, cv2.COLOR_BGR2GRAY)
-        th, tw = g_tmpl.shape[:2]
-        sh, sw = g_screen.shape[:2]
+        # 1. First attempt: Use LootDetector (rules from loot_filter.json)
+        if hasattr(self, "loot_detector") and self.loot_detector:
+            detected_items = self.loot_detector.detect_loot(screen)
+            for item in detected_items:
+                desktop_x = mon_left + item.center_x
+                desktop_y = mon_top + item.center_y
 
-        best_val = -1.0
-        best_loc = None
-        best_scale = 1.0
+                # Check if this item was already clicked recently in this pickup cycle
+                if exclude_positions:
+                    too_close = False
+                    for ex_x, ex_y in exclude_positions:
+                        if math.hypot(desktop_x - ex_x, desktop_y - ex_y) < 28.0:
+                            too_close = True
+                            break
+                    if too_close:
+                        continue
 
-        if sw >= tw and sh >= th:
-            res = cv2.matchTemplate(g_screen, g_tmpl, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(res)
-            best_val = float(max_val)
-            best_loc = max_loc
+                _log(f"  [LOOT MATCH] Found [P{item.priority}] {item.rule_name} (conf={item.confidence:.2f}, {item.w}x{item.h}) at screen ({desktop_x}, {desktop_y})")
+                return desktop_x, desktop_y
 
-        if best_val < self.loot_match_threshold:
-            for scale in [0.70, 0.80, 0.90, 1.10, 1.20, 1.30]:
-                sc_w = int(tw * scale)
-                sc_h = int(th * scale)
-                if sc_w > sw or sc_h > sh or sc_w < 15 or sc_h < 15:
-                    continue
-                resized = cv2.resize(g_tmpl, (sc_w, sc_h), interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR)
-                res = cv2.matchTemplate(g_screen, resized, cv2.TM_CCOEFF_NORMED)
+        # 2. Fallback attempt: Template match with ui/loot1.png
+        if self.loot1_img is None:
+            self._load_loot_template()
+
+        if self.loot1_img is not None:
+            g_screen = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
+            g_tmpl = cv2.cvtColor(self.loot1_img, cv2.COLOR_BGR2GRAY)
+            th, tw = g_tmpl.shape[:2]
+            sh, sw = g_screen.shape[:2]
+
+            best_val = -1.0
+            best_loc = None
+            best_scale = 1.0
+
+            if sw >= tw and sh >= th:
+                res = cv2.matchTemplate(g_screen, g_tmpl, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
-                if max_val > best_val:
-                    best_val = float(max_val)
-                    best_loc = max_loc
-                    best_scale = scale
+                best_val = float(max_val)
+                best_loc = max_loc
 
-        if best_val >= self.loot_match_threshold and best_loc is not None:
-            cx = int(best_loc[0] + (tw * best_scale) / 2)
-            cy = int(best_loc[1] + (th * best_scale) / 2)
-            desktop_x = mon_left + cx
-            desktop_y = mon_top + cy
-            _log(f"  [LOOT MATCH] Found loot1 (conf={best_val:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
-            return desktop_x, desktop_y
+            if best_val < self.loot_match_threshold:
+                for scale in [0.70, 0.80, 0.90, 1.10, 1.20, 1.30]:
+                    sc_w = int(tw * scale)
+                    sc_h = int(th * scale)
+                    if sc_w > sw or sc_h > sh or sc_w < 15 or sc_h < 15:
+                        continue
+                    resized = cv2.resize(g_tmpl, (sc_w, sc_h), interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR)
+                    res = cv2.matchTemplate(g_screen, resized, cv2.TM_CCOEFF_NORMED)
+                    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                    if max_val > best_val:
+                        best_val = float(max_val)
+                        best_loc = max_loc
+                        best_scale = scale
+
+            if best_val >= self.loot_match_threshold and best_loc is not None:
+                cx = int(best_loc[0] + (tw * best_scale) / 2)
+                cy = int(best_loc[1] + (th * best_scale) / 2)
+                desktop_x = mon_left + cx
+                desktop_y = mon_top + cy
+                if exclude_positions:
+                    for ex_x, ex_y in exclude_positions:
+                        if math.hypot(desktop_x - ex_x, desktop_y - ex_y) < 28.0:
+                            return None
+                _log(f"  [LOOT MATCH] Found fallback template loot1 (conf={best_val:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
+                return desktop_x, desktop_y
 
         return None
 
     def collect_loot(self, max_pickups: Optional[int] = None, approach_wait: Optional[float] = None) -> int:
         """
-        Scans screen for loot labels matching ui/loot1.png.
-        Clicks left mouse button on each detected loot item and scans again.
+        Scans screen for high-value loot matching active loot filter rules.
+        Clicks left mouse button on each detected item and scans again.
         Stops when no more loot is detected or max_pickups reached.
         Returns total number of loots clicked.
         """
@@ -1924,27 +1956,29 @@ class RouteNavigator:
         self.release_all_keys()
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
 
+        clicked_positions: List[Tuple[int, int]] = []
         try:
-            limit = max_pickups if max_pickups is not None else self.max_loot_pickups
-            _log("\n[AUTOPILOT] >>> Scanning screen for LOOT (ui/loot1.png)...")
+            limit = max_pickups if max_pickups is not None else getattr(self.loot_detector, "max_pickups", self.max_loot_pickups)
+            _log("\n[AUTOPILOT] >>> Scanning screen for HIGH-VALUE LOOT (White Box/Red Text, Purple Uniques)...")
             self.status_message = "[LOOT] Scanning screen for loot..."
 
             picked_count = 0
             while picked_count < limit:
-                if stop_handler.is_stopped() or not self.is_active:
-                    break
-
-                loot_pos = self.locate_loot()
+                try:
+                    loot_pos = self.locate_loot(exclude_positions=clicked_positions)
+                except TypeError:
+                    loot_pos = self.locate_loot()
                 if loot_pos is None:
                     if picked_count == 0:
-                        _log("  [LOOT] No loot detected on screen.")
+                        _log("  [LOOT] No high-value loot detected on screen.")
                     else:
                         _log(f"  [LOOT] Finished picking up {picked_count} loot item(s). None remaining.")
                     break
 
                 lx, ly = self.move_mouse_inside_game(loot_pos[0], loot_pos[1])
                 picked_count += 1
-                _log(f"  [LOOT #{picked_count}] Found loot at ({lx}, {ly}). Clicking left mouse button...")
+                clicked_positions.append((lx, ly))
+                _log(f"  [LOOT #{picked_count}] Targeting loot item at ({lx}, {ly}). Clicking left mouse button...")
                 self.status_message = f"[LOOT] Picking #{picked_count} at ({lx}, {ly})"
 
                 if pydirectinput:
@@ -1952,11 +1986,12 @@ class RouteNavigator:
                     time.sleep(0.08)
                     pydirectinput.mouseUp(button="left")
 
-                eff_app_wait = approach_wait if approach_wait is not None else self.loot_approach_wait_seconds
+                eff_app_wait = approach_wait if approach_wait is not None else getattr(self.loot_detector, "approach_wait_seconds", self.loot_approach_wait_seconds)
                 if eff_app_wait > 0:
                     self._wait_for_approach(eff_app_wait, reason=f"LOOT #{picked_count}")
 
-                time.sleep(self.loot_pickup_wait_seconds)
+                pick_delay = getattr(self.loot_detector, "pickup_delay_seconds", self.loot_pickup_wait_seconds)
+                time.sleep(pick_delay)
 
             self.status_message = f"Loot Check Complete ({picked_count} picked). Resuming route..."
             return picked_count

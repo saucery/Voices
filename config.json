@@ -47,7 +47,8 @@
     "max_loot_pickups": 15,
     "wait_for_loot_confirmation": true,
     "start_at_pink_dot": 3,
-    "zone_routines_file": "routines/zone_routines.json"
+    "zone_routines_file": "routines/zone_routines.json",
+    "loot_filter_file": "routines/loot_filter.json"
   },
   "rooms": [
     {

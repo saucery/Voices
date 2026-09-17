@@ -214,8 +214,13 @@ class LootDetector:
             (hsv[:, :, 1] < 65) & (hsv[:, :, 2] > 170)
         ).astype(np.uint8) * 255
 
-        # Red text / border mask: high R, low G, low B
-        red_text_mask = ((r > 150) & (g < 95) & (b < 95)).astype(np.uint8) * 255
+        # Red text / border mask: pure red (high R, distinct difference from G and B)
+        red_text_mask = (
+            (r > 155) &
+            (r.astype(np.int16) - g.astype(np.int16) > 55) &
+            (r.astype(np.int16) - b.astype(np.int16) > 55) &
+            (g < 110) & (b < 110)
+        ).astype(np.uint8) * 255
 
         items: List[LootItem] = []
 
@@ -226,6 +231,10 @@ class LootDetector:
 
         for cnt in w_contours:
             x, y, w, h = cv2.boundingRect(cnt)
+            # Avoid top/bottom UI edge overlays on full screenshots (FPS graphs, status bars)
+            if screen.shape[0] > 300 and (y < 35 or y + h > screen.shape[0] - 35):
+                continue
+
             if w < min_w or w > max_w or h < min_h or h > max_h:
                 continue
 
@@ -256,17 +265,25 @@ class LootDetector:
                     )
                 )
 
-        # Pass 2: Red Text Cluster Analysis (unbreakable for vertically stacked loot / beam collisions)
-        kernel_red = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3))
-        red_dilated = cv2.dilate(red_text_mask, kernel_red)
+        # Pass 2: Strictly 1D Horizontal Red Text Cluster Analysis (unbreakable for stacked loot & beams)
+        # Filter out thin vertical light beams (width <= 2px) using horizontal morphological opening (3, 1)
+        k_remove_beams = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 1))
+        red_no_beams = cv2.morphologyEx(red_text_mask, cv2.MORPH_OPEN, k_remove_beams)
+
+        kernel_red = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1))
+        red_dilated = cv2.dilate(red_no_beams, kernel_red)
         r_contours, _ = cv2.findContours(red_dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for cnt in r_contours:
             rx, ry, rw, rh = cv2.boundingRect(cnt)
-            if rw < 20 or rh < 6:
+            # Avoid top/bottom UI edge overlays on full screenshots
+            if screen.shape[0] > 300 and (ry < 35 or ry + rh > screen.shape[0] - 35):
                 continue
 
-            raw_red_pixels = int(np.count_nonzero(red_text_mask[ry:ry+rh, rx:rx+rw] > 0))
+            if rw < 18 or rh < 5:
+                continue
+
+            raw_red_pixels = int(np.count_nonzero(red_no_beams[ry:ry+rh, rx:rx+rw] > 0))
             if raw_red_pixels < min_text_px:
                 continue
 

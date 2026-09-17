@@ -68,6 +68,7 @@ class PlayerTrackerVisualizer:
         self.show_overlay: bool = False
         self.show_edges: bool = False
         self.show_trajectory: bool = True
+        self.show_bounding_boxes: bool = True
         self.last_result: Optional[Dict[str, Any]] = None
         self.fps: float = 0.0
         self.latency_ms: float = 0.0
@@ -812,7 +813,71 @@ class PlayerTrackerVisualizer:
                             cv2.putText(right_view_img, f"LOOT #{p_idx}", (max(0, lx - 18), max(10, ly - 8)),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.28, (255, 255, 255), 1, cv2.LINE_AA)
 
-            # 2. Live Character Trajectory
+            # 2. Room Bounding Boxes & Active Search ROI Overlay
+            if self.show_bounding_boxes and self.movement_path and self.movement_path.is_configured:
+                cur_room_idx = self.movement_path.get_current_room_index()
+                # Draw room bounding boxes for all 7 rooms
+                for r_i in range(1, 8):
+                    r_box = self.movement_path.get_room_bounding_box(r_i, margin=35.0)
+                    if r_box:
+                        bx1, by1, bx2, by2 = r_box
+                        bx1 = max(0, min(rw - 1, bx1))
+                        by1 = max(0, min(rh - 1, by1))
+                        bx2 = max(0, min(rw - 1, bx2))
+                        by2 = max(0, min(rh - 1, by2))
+                        is_active_room = (r_i == cur_room_idx)
+                        if is_active_room:
+                            # Highlighted active room box (cyan border)
+                            cv2.rectangle(right_view_img, (bx1, by1), (bx2, by2), (0, 230, 255), 2, cv2.LINE_AA)
+                            cv2.rectangle(right_view_img, (bx1, by1), (bx1 + 95, by1 + 16), (0, 140, 160), -1)
+                            cv2.putText(
+                                right_view_img,
+                                f"ROOM {r_i} (ACTIVE)",
+                                (bx1 + 4, by1 + 12),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.28,
+                                (255, 255, 255),
+                                1,
+                                cv2.LINE_AA,
+                            )
+                        else:
+                            # Inactive room box (slate blue)
+                            cv2.rectangle(right_view_img, (bx1, by1), (bx2, by2), (90, 80, 70), 1, cv2.LINE_AA)
+                            cv2.putText(
+                                right_view_img,
+                                f"ROOM {r_i}",
+                                (bx1 + 4, by1 + 12),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.26,
+                                (160, 150, 140),
+                                1,
+                                cv2.LINE_AA,
+                            )
+
+                # Active Search ROI Gated Window (Green / Lime border)
+                active_roi = None
+                if hasattr(self.movement_path, "get_active_room_bounds"):
+                    active_roi = self.movement_path.get_active_room_bounds(margin=60.0)
+                elif hasattr(self.movement_path, "get_search_roi_for_progress"):
+                    active_roi = self.movement_path.get_search_roi_for_progress(margin=80.0)
+
+                if active_roi:
+                    ax1, ay1, ax2, ay2 = active_roi
+                    ax1, by_ay1 = max(0, min(rw - 1, ax1)), max(0, min(rh - 1, ay1))
+                    ax2, by_ay2 = max(0, min(rw - 1, ax2)), max(0, min(rh - 1, ay2))
+                    cv2.rectangle(right_view_img, (ax1, by_ay1), (ax2, by_ay2), (50, 255, 120), 1, cv2.LINE_AA)
+                    cv2.putText(
+                        right_view_img,
+                        f"[SEARCH ROI: ROOM {cur_room_idx}]",
+                        (ax1 + 4, max(12, by_ay2 - 4)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.28,
+                        (50, 255, 120),
+                        1,
+                        cv2.LINE_AA,
+                    )
+
+            # 3. Live Character Trajectory
             if self.show_trajectory and len(self.trajectory_history) > 1:
                 pts = [h["pos"] for h in self.trajectory_history if h.get("pos")]
                 for i in range(len(pts) - 1):
@@ -912,10 +977,10 @@ class PlayerTrackerVisualizer:
         # =========================================================================
         footer_y = canvas_h - 20
         if nav_res.get("waiting_for_green_light"):
-            shortcuts = "[G / CLICK] GREEN LIGHT (RESUME)  |  [F3 / X] Pause/Resume Attack  |  [P] Pink Dot  |  [F4] Pause  |  [N] Skip WP  |  [R] Reload  |  [Q] Exit"
+            shortcuts = "[G / CLICK] GREEN LIGHT (RESUME)  |  [F3 / X] Attack  |  [P] Pink Dot  |  [F4] Pause  |  [B] Boxes  |  [N] Skip WP  |  [R] Reload  |  [Q] Exit"
             shortcut_color = (0, 255, 160)
         else:
-            shortcuts = "[A / G] Autopilot  |  [F3 / X] Attack ON/OFF  |  [P] Pink Dot  |  [F4] Pause/Resume  |  [N] Skip WP  |  [R] Reload  |  [V] View  |  [Q] Exit"
+            shortcuts = "[A / G] Autopilot  |  [F3 / X] Attack  |  [P] Pink Dot  |  [F4] Pause/Resume  |  [B] Boxes  |  [N] Skip WP  |  [R] Reload  |  [V] View  |  [Q] Exit"
             shortcut_color = (140, 150, 165)
         cv2.putText(
             dashboard,
@@ -1056,6 +1121,11 @@ class PlayerTrackerVisualizer:
                 elif key in [ord("t"), ord("T")]:
                     self.show_trajectory = not self.show_trajectory
                     print(f"\n[TRACKER VISUALIZER] Trajectory Trail: {'ON' if self.show_trajectory else 'OFF'}")
+                elif key in [ord("b"), ord("B")]:
+                    self.show_bounding_boxes = not self.show_bounding_boxes
+                    self.notification_msg = f"ROOM BOUNDING BOXES: {'VISIBLE' if self.show_bounding_boxes else 'HIDDEN'}"
+                    self.notification_expiry = time.time() + 2.5
+                    print(f"\n[TRACKER VISUALIZER] Room Bounding Boxes: {'ENABLED' if self.show_bounding_boxes else 'DISABLED'}")
                 elif key in [ord("c"), ord("C")]:
                     self.trajectory_history.clear()
                     print("\n[TRACKER VISUALIZER] Trajectory history cleared.")

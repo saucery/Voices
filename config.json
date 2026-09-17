@@ -36,7 +36,7 @@
     "banner_max_click_attempts": 2,
     "sim_approach_wait_seconds": 2.0,
     "sim_verify_click_enabled": true,
-    "sim_verify_delay_seconds": 1.0,
+    "sim_verify_delay_seconds": 1.4,
     "sim_max_click_attempts": 2,
     "reclick_after_approach": false,
     "pink_dot_stop_seconds": 2.5,

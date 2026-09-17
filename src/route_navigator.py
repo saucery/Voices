@@ -1705,7 +1705,8 @@ class RouteNavigator:
 
     def locate_sim_template(self, sim_key: str, threshold: Optional[float] = None) -> Optional[Tuple[int, int]]:
         """
-        Locates a sim selection template (sim1, sim2, sim3) on screen using multi-scale template matching.
+        Locates a sim selection template (sim1, sim2, sim3) on screen using multi-scale template matching
+        with cross-template candidate discrimination to prevent false positives between sim banners.
         Returns desktop absolute coordinates (X, Y) of the match center, or None if not found.
         """
         tmpl = self.sim_templates.get(sim_key)
@@ -1743,41 +1744,89 @@ class RouteNavigator:
         th, tw = g_tmpl.shape[:2]
         sh, sw = g_screen.shape[:2]
 
-        best_val = -1.0
-        best_loc = None
-        best_scale = 1.0
+        scales = [1.0, 0.95, 1.05, 0.90, 1.10, 0.85, 1.15, 0.80, 1.20, 0.75, 1.25, 0.70, 1.30]
 
-        if sw >= tw and sh >= th:
-            res = cv2.matchTemplate(g_screen, g_tmpl, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(res)
-            best_val = float(max_val)
-            best_loc = max_loc
+        temp_screen = g_screen.copy()
+        overall_best_val = -1.0
+        overall_best_scale = 1.0
 
-        if best_val < eff_threshold:
-            for scale in [0.70, 0.80, 0.90, 1.10, 1.20, 1.30]:
+        # Evaluate up to 3 candidate peaks to find genuine match even if another SIM has a higher peak on temp_screen
+        for _ in range(3):
+            best_val = -1.0
+            best_loc = None
+            best_scale = 1.0
+
+            for scale in scales:
                 sc_w = int(tw * scale)
                 sc_h = int(th * scale)
                 if sc_w > sw or sc_h > sh or sc_w < 15 or sc_h < 15:
                     continue
                 resized = cv2.resize(g_tmpl, (sc_w, sc_h), interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR)
-                res = cv2.matchTemplate(g_screen, resized, cv2.TM_CCOEFF_NORMED)
+                res = cv2.matchTemplate(temp_screen, resized, cv2.TM_CCOEFF_NORMED)
                 _, max_val, _, max_loc = cv2.minMaxLoc(res)
                 if max_val > best_val:
                     best_val = float(max_val)
                     best_loc = max_loc
                     best_scale = scale
 
-        self._last_sim_best_conf = best_val
-        self._last_sim_best_scale = best_scale
+            if best_val > overall_best_val:
+                overall_best_val = best_val
+                overall_best_scale = best_scale
 
-        if best_val >= eff_threshold and best_loc is not None:
-            cx = int(best_loc[0] + (tw * best_scale) / 2)
-            cy = int(best_loc[1] + (th * best_scale) / 2)
-            desktop_x = mon_left + cx
-            desktop_y = mon_top + cy
-            _log(f"  [SIM MATCH] Found {sim_key} (conf={best_val:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
-            return desktop_x, desktop_y
+            if best_val < eff_threshold or best_loc is None:
+                break
 
+            # Cross-template discrimination: verify if candidate area actually matches target sim vs other loaded sims
+            cx, cy = best_loc
+            cw, ch = int(tw * best_scale), int(th * best_scale)
+            pad_x, pad_y = 20, 15
+            y1 = max(0, cy - pad_y)
+            y2 = min(sh, cy + ch + pad_y)
+            x1 = max(0, cx - pad_x)
+            x2 = min(sw, cx + cw + pad_x)
+            crop = g_screen[y1:y2, x1:x2]
+
+            scores: Dict[str, float] = {}
+            for k, other_tmpl in self.sim_templates.items():
+                if other_tmpl is None:
+                    continue
+                gt = cv2.cvtColor(other_tmpl, cv2.COLOR_BGR2GRAY)
+                t_best = -1.0
+                for sc in [best_scale * 0.95, best_scale, best_scale * 1.05]:
+                    stw, sth = int(gt.shape[1] * sc), int(gt.shape[0] * sc)
+                    if stw > crop.shape[1] or sth > crop.shape[0] or stw < 15 or sth < 15:
+                        continue
+                    r = cv2.resize(gt, (stw, sth), interpolation=cv2.INTER_AREA if sc < 1.0 else cv2.INTER_LINEAR)
+                    mres = cv2.matchTemplate(crop, r, cv2.TM_CCOEFF_NORMED)
+                    _, mv, _, _ = cv2.minMaxLoc(mres)
+                    if mv > t_best:
+                        t_best = float(mv)
+                scores[k] = t_best
+
+            winner = max(scores, key=scores.get) if scores else sim_key
+            target_score = scores.get(sim_key, best_val)
+            winner_score = scores.get(winner, target_score)
+
+            if winner == sim_key or winner_score <= target_score + 0.05:
+                # Validated genuine match for sim_key
+                self._last_sim_best_conf = best_val
+                self._last_sim_best_scale = best_scale
+                center_x = int(cx + (tw * best_scale) / 2)
+                center_y = int(cy + (th * best_scale) / 2)
+                desktop_x = mon_left + center_x
+                desktop_y = mon_top + center_y
+                _log(f"  [SIM MATCH] Found {sim_key} (conf={best_val:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
+                return desktop_x, desktop_y
+            else:
+                # Candidate area is a competing SIM banner (e.g. sim2/sim3 while searching for sim1) -> mask region and search next peak
+                mask_y1 = max(0, cy - 5)
+                mask_y2 = min(sh, cy + ch + 5)
+                mask_x1 = max(0, cx - 5)
+                mask_x2 = min(sw, cx + cw + 5)
+                temp_screen[mask_y1:mask_y2, mask_x1:mask_x2] = 0
+
+        self._last_sim_best_conf = overall_best_val
+        self._last_sim_best_scale = overall_best_scale
         return None
 
     def _detect_and_click_sims(
@@ -1795,8 +1844,8 @@ class RouteNavigator:
         max_click_attempts: Optional[int] = None,
     ) -> List[str]:
         """
-        Detects and selects Sims according to priority:
-        Default priority: sim1 -> wait 2.0s -> sim3 -> wait 2.0s -> sim2.
+        Detects and selects Sims according to strict priority order:
+        Default priority: SIM1 -> SIM3 (if exists) -> SIM2 (if still exists).
         Returns list of sim names that were clicked (e.g. ['sim1', 'sim3']).
         Clicks are offset by sim_click_y_offset_px (e.g. +35px) below the detected template center.
         Includes double-check verification after approach/wait to ensure the SIM was registered.
@@ -1808,6 +1857,7 @@ class RouteNavigator:
         eff_verify = verify_click if verify_click is not None else getattr(self, "sim_verify_click_enabled", True)
         eff_verify_delay = verify_delay if verify_delay is not None else getattr(self, "sim_verify_delay_seconds", 1.0)
         eff_max_attempts = max_click_attempts if max_click_attempts is not None else getattr(self, "sim_max_click_attempts", 2)
+        effective_order = sim_order if (sim_order is not None and len(sim_order) > 0) else ["sim1", "sim3", "sim2"]
 
         if settle_wait > 0:
             time.sleep(settle_wait)
@@ -1869,94 +1919,36 @@ class RouteNavigator:
 
             return cx, cy
 
-        if sim_order is not None and len(sim_order) > 0:
-            for sim_key in sim_order:
+        for sim_key in effective_order:
+            if stop_handler.is_stopped() or not self.is_active:
+                return sims_clicked
+            sim_label = f"Sim {sim_key.replace('sim', '')}"
+            self.status_message = f"{prefix} Checking for {sim_label}..."
+            sim_pos = None
+            best_conf = 0.0
+            for attempt in range(1, max(1, search_attempts) + 1):
                 if stop_handler.is_stopped() or not self.is_active:
                     return sims_clicked
-                sim_label = f"Sim {sim_key.replace('sim', '')}"
-                self.status_message = f"{prefix} Checking for {sim_label}..."
-                sim_pos = None
-                best_conf = 0.0
-                for attempt in range(1, max(1, search_attempts) + 1):
-                    if stop_handler.is_stopped() or not self.is_active:
-                        return sims_clicked
-                    sim_pos = self.locate_sim_template(sim_key) if threshold is None else self.locate_sim_template(sim_key, threshold)
-                    best_conf = max(best_conf, getattr(self, "_last_sim_best_conf", 0.0))
-                    if sim_pos is not None:
-                        break
-                    if attempt < search_attempts:
-                        time.sleep(0.20)
-
+                sim_pos = self.locate_sim_template(sim_key) if threshold is None else self.locate_sim_template(sim_key, threshold)
+                best_conf = max(best_conf, getattr(self, "_last_sim_best_conf", 0.0))
                 if sim_pos is not None:
-                    _click_sim_at(sim_key, sim_label, sim_pos)
-                    w_start = time.time()
-                    while (time.time() - w_start) < 1.5:
-                        if stop_handler.is_stopped() or not self.is_active:
-                            return sims_clicked
-                        time.sleep(0.05)
-                else:
-                    eff_thresh = threshold if threshold is not None else self.sim_match_threshold
-                    _log(f"  [SIM] {sim_label} not detected (best conf={best_conf:.2f}, threshold={eff_thresh:.2f})")
-            if not sims_clicked:
-                _log(f"  {prefix} No sim banners detected. Proceeding with routine...")
-            return sims_clicked
+                    break
+                if attempt < search_attempts:
+                    time.sleep(0.20)
 
-        self.status_message = f"{prefix} Checking for Sim 1..."
-        sim1_pos = self.locate_sim_template("sim1")
-        if sim1_pos is not None:
-            _click_sim_at("sim1", "Sim 1", sim1_pos)
-
-            # Wait 2 seconds
-            wait_start = time.time()
-            while (time.time() - wait_start) < 2.0:
-                if stop_handler.is_stopped() or not self.is_active:
-                    return sims_clicked
-                time.sleep(0.05)
-
-            # Check Sim 3
-            self.status_message = f"{prefix} Checking for Sim 3..."
-            sim3_pos = self.locate_sim_template("sim3")
-            if sim3_pos is not None:
-                _click_sim_at("sim3", "Sim 3", sim3_pos)
-
-                # Wait another 2 seconds
-                wait_start = time.time()
-                while (time.time() - wait_start) < 2.0:
+            if sim_pos is not None:
+                _click_sim_at(sim_key, sim_label, sim_pos)
+                w_start = time.time()
+                while (time.time() - w_start) < 1.5:
                     if stop_handler.is_stopped() or not self.is_active:
                         return sims_clicked
                     time.sleep(0.05)
-
-                # Check Sim 2
-                self.status_message = f"{prefix} Checking for Sim 2..."
-                sim2_pos = self.locate_sim_template("sim2")
-                if sim2_pos is not None:
-                    _click_sim_at("sim2", "Sim 2", sim2_pos)
-                    time.sleep(0.5)
             else:
-                sim2_pos = self.locate_sim_template("sim2")
-                if sim2_pos is not None:
-                    _click_sim_at("sim2", "Sim 2", sim2_pos)
-                    time.sleep(0.5)
-        else:
-            # Sim 1 not found: check if Sim 3 or Sim 2 are available
-            sim3_pos = self.locate_sim_template("sim3")
-            if sim3_pos is not None:
-                _click_sim_at("sim3", "Sim 3", sim3_pos)
-                wait_start = time.time()
-                while (time.time() - wait_start) < 2.0:
-                    if stop_handler.is_stopped() or not self.is_active:
-                        return sims_clicked
-                    time.sleep(0.05)
-                sim2_pos = self.locate_sim_template("sim2")
-                if sim2_pos is not None:
-                    _click_sim_at("sim2", "Sim 2", sim2_pos)
-                    time.sleep(0.5)
-            else:
-                sim2_pos = self.locate_sim_template("sim2")
-                if sim2_pos is not None:
-                    _click_sim_at("sim2", "Sim 2", sim2_pos)
-                    time.sleep(0.5)
+                eff_thresh = threshold if threshold is not None else self.sim_match_threshold
+                _log(f"  [SIM] {sim_label} not detected (best conf={best_conf:.2f}, threshold={eff_thresh:.2f})")
 
+        if not sims_clicked:
+            _log(f"  {prefix} No sim banners detected. Proceeding with routine...")
         return sims_clicked
 
     def _wait_for_approach(self, max_wait_seconds: float, reason: str = "Approach") -> None:

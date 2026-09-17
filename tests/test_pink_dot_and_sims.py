@@ -1267,6 +1267,95 @@ def test_pink_dot_arrival_detection_with_offset_pos(tmp_path):
     assert 18 in nav.interacted_pink_dots
 
 
+def test_locate_sim_template_cross_template_discrimination():
+    """
+    Verifies that when sim2 and sim3 are present on screen (and sim1 is gone),
+    locate_sim_template('sim1') does NOT falsely match sim2 despite grayscale header similarity,
+    and accurately locates sim3 and sim2.
+    """
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav._load_sim_templates()
+
+    sim2_tmpl = nav.sim_templates.get("sim2")
+    sim3_tmpl = nav.sim_templates.get("sim3")
+    if sim2_tmpl is None or sim3_tmpl is None:
+        pytest.skip("Sim templates not available on disk")
+
+    # Synthetic screen with sim3 at y=300 and sim2 at y=500
+    screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    screen[300:300+sim3_tmpl.shape[0], 800:800+sim3_tmpl.shape[1]] = sim3_tmpl
+    screen[500:500+sim2_tmpl.shape[0], 800:800+sim2_tmpl.shape[1]] = sim2_tmpl
+
+    mock_capt = MagicMock()
+    mock_capt.capture.return_value = screen
+    mock_capt._sct = None
+    nav._get_capturer = MagicMock(return_value=mock_capt)
+
+    # sim1 MUST NOT match (rejected because actual banner at best peak is sim2)
+    pos_sim1 = nav.locate_sim_template("sim1")
+    assert pos_sim1 is None
+
+    # sim3 MUST match at y ~ 300 + height/2
+    pos_sim3 = nav.locate_sim_template("sim3")
+    assert pos_sim3 is not None
+    assert abs(pos_sim3[0] - (800 + sim3_tmpl.shape[1] // 2)) <= 5
+    assert abs(pos_sim3[1] - (300 + sim3_tmpl.shape[0] // 2)) <= 5
+
+    # sim2 MUST match at y ~ 500 + height/2
+    pos_sim2 = nav.locate_sim_template("sim2")
+    assert pos_sim2 is not None
+    assert abs(pos_sim2[0] - (800 + sim2_tmpl.shape[1] // 2)) <= 5
+    assert abs(pos_sim2[1] - (500 + sim2_tmpl.shape[0] // 2)) <= 5
+
+
+def test_detect_and_click_sims_strict_order_sim1_sim3_sim2():
+    """
+    Verifies that _detect_and_click_sims strictly executes SIM1 -> SIM3 -> SIM2 order,
+    and when SIM1 is gone but SIM3 and SIM2 exist, it clicks SIM3 first, then SIM2.
+    """
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.sim_approach_wait_seconds = 0.0
+
+    # Simulate:
+    # 1. First cycle: sim1 is NOT found, sim3 is found at (500, 300), sim2 is found at (500, 500)
+    # 2. When sim3 is clicked, sim3 disappears
+    # 3. Next: sim2 is clicked
+    sim_state = {"sim1": False, "sim3": True, "sim2": True}
+
+    def mock_locate(key, threshold=None):
+        if key == "sim1" and sim_state["sim1"]:
+            return (500, 100)
+        if key == "sim3" and sim_state["sim3"]:
+            return (500, 300)
+        if key == "sim2" and sim_state["sim2"]:
+            return (500, 500)
+        return None
+
+    click_order = []
+    def mock_click():
+        pass
+
+    nav.locate_sim_template = MagicMock(side_effect=mock_locate)
+    nav.move_mouse_inside_game = MagicMock(side_effect=lambda x, y: (x, y))
+
+    def on_click_record(sim_key):
+        click_order.append(sim_key)
+        sim_state[sim_key] = False  # SIM disappears after click
+
+    with patch("src.route_navigator.pydirectinput.click", side_effect=mock_click), \
+         patch("src.route_navigator.pydirectinput.mouseUp"), \
+         patch("time.sleep", return_value=None):
+
+        # Hook into _click_sim_at by wrapping move_mouse_inside_game or checking sims_clicked
+        clicked = nav._detect_and_click_sims()
+
+    # SIM1 was missing, so SIM3 was clicked first, then SIM2
+    assert clicked == ["sim3", "sim2"]
+
+
+
 
 
 

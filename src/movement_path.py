@@ -831,6 +831,94 @@ class MovementPath:
         """
         return [(idx, wp) for idx, wp in enumerate(self.waypoints) if wp.get("action") == "pink_encounter"]
 
+    def get_current_room_index(self, wp_idx: Optional[int] = None) -> int:
+        """
+        Determines the 1-based room index (1..7) for the given waypoint index (defaults to self.current_idx).
+        Based on pink encounter boundary markers along the sequential route.
+        """
+        target_idx = wp_idx if wp_idx is not None else self.current_idx
+        if not self.waypoints:
+            return 1
+
+        pink_wps = self.get_pink_waypoints()
+        if not pink_wps:
+            return 1
+
+        for r_i, (p_idx, _) in enumerate(pink_wps, start=1):
+            if target_idx <= p_idx:
+                return r_i
+
+        return min(len(pink_wps), 7)
+
+    def get_room_bounding_box(
+        self, room_idx: int, margin: float = 60.0
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """
+        Calculates the bounding box (min_x, min_y, max_x, max_y) for a specific room (1..7)
+        including all waypoints and markers within that room plus a margin.
+        """
+        if not self.waypoints or room_idx < 1:
+            return None
+
+        pink_wps = self.get_pink_waypoints()
+        if not pink_wps:
+            xs = [wp["x"] for wp in self.waypoints]
+            ys = [wp["y"] for wp in self.waypoints]
+            return (
+                max(0, int(min(xs) - margin)),
+                max(0, int(min(ys) - margin)),
+                int(max(xs) + margin),
+                int(max(ys) + margin),
+            )
+
+        # Determine start and end waypoint indices for this room
+        seg_starts = [0] + [p[0] + 1 for p in pink_wps[:-1]]
+        seg_ends = [p[0] for p in pink_wps]
+        # Include any remaining waypoints after the last pink dot in the final room
+        seg_ends[-1] = len(self.waypoints) - 1
+
+        r_idx = min(room_idx, len(seg_starts)) - 1
+        s = seg_starts[r_idx]
+        e = seg_ends[r_idx]
+        sub = self.waypoints[s : e + 1]
+        if not sub:
+            return None
+
+        xs = [w["x"] for w in sub]
+        ys = [w["y"] for w in sub]
+        return (
+            max(0, int(min(xs) - margin)),
+            max(0, int(min(ys) - margin)),
+            int(max(xs) + margin),
+            int(max(ys) + margin),
+        )
+
+    def get_search_roi_for_progress(
+        self, margin: float = 80.0, lookahead: int = 14, lookbehind: int = 6
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """
+        Computes a focused (min_x, min_y, max_x, max_y) bounding box centered around
+        the current route progression (current_idx - lookbehind .. current_idx + lookahead)
+        to constrain local matching and eliminate cross-room false positives.
+        """
+        if not self.waypoints:
+            return None
+
+        s_idx = max(0, self.current_idx - lookbehind)
+        e_idx = min(len(self.waypoints) - 1, self.current_idx + lookahead)
+        sub = self.waypoints[s_idx : e_idx + 1]
+        if not sub:
+            return None
+
+        xs = [w["x"] for w in sub]
+        ys = [w["y"] for w in sub]
+        return (
+            max(0, int(min(xs) - margin)),
+            max(0, int(min(ys) - margin)),
+            int(max(xs) + margin),
+            int(max(ys) + margin),
+        )
+
     def find_nearest_waypoint_index(
         self,
         current_pos: Tuple[float, float],

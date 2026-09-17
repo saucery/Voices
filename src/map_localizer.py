@@ -61,6 +61,8 @@ class MapLocalizer:
         self.last_confidence: float = 0.0
         self.last_scale: Optional[float] = None
         self.locked_counter: int = 0
+        self.pending_jump_pos: Optional[Tuple[int, int]] = None
+        self.pending_jump_count: int = 0
 
         self.load_reference_map(self.reference_map_path)
 
@@ -157,6 +159,8 @@ class MapLocalizer:
         self,
         screenshot_or_crop: Union[str, np.ndarray, Image.Image],
         fast_track: bool = True,
+        search_roi: Optional[Tuple[int, int, int, int]] = None,
+        expected_pos: Optional[Tuple[float, float]] = None,
     ) -> Dict[str, Any]:
         """
         Localizes player's exact (X, Y) pixel coordinates on the full map reference image
@@ -164,6 +168,8 @@ class MapLocalizer:
 
         :param screenshot_or_crop: Full game screenshot or minimap crop.
         :param fast_track: If True, searches around cached scale first when locked.
+        :param search_roi: Optional (min_x, min_y, max_x, max_y) bounding box for guided route search.
+        :param expected_pos: Optional (X, Y) expected player coordinate prior from navigation.
         :return: Localization result dictionary with player_x, player_y, confidence, bounding_box, etc.
         """
         if self.ref_edges is None or self.ref_img is None:
@@ -188,7 +194,7 @@ class MapLocalizer:
         c_h, c_w = minimap_crop.shape[:2]
         crop_features = self.extract_features(minimap_crop, is_crop=True)
 
-        # Fast ROI search when previously locked (reduces search time from ~500ms to ~2ms)
+        # Tier 1: Fast Local ROI search around last known position (~2ms)
         if fast_track and self.last_player_pos is not None and self.locked_counter >= 1:
             lx, ly = self.last_player_pos
             roi_margin = 100
@@ -229,6 +235,8 @@ class MapLocalizer:
                     player_x = int(round(0.65 * player_x + 0.35 * lx))
                     player_y = int(round(0.65 * player_y + 0.35 * ly))
 
+                self.pending_jump_pos = None
+                self.pending_jump_count = 0
                 self.last_player_pos = (player_x, player_y)
                 self.last_confidence = roi_best_score
                 self.last_scale = roi_best_scale
@@ -254,8 +262,76 @@ class MapLocalizer:
                     "minimap_crop": minimap_crop,
                 }
 
-        # Multi-scale search strategy:
-        # If previously locked with high confidence, do a fast narrow search around last_scale
+        # Tier 2: Guided Route Search ROI (~3ms)
+        # If Tier 1 failed or wasn't locked, search specifically in the expected room / progress zone
+        effective_roi = search_roi
+        if effective_roi is None and expected_pos is not None:
+            ex, ey = int(expected_pos[0]), int(expected_pos[1])
+            m = 120
+            effective_roi = (max(0, ex - m), max(0, ey - m), min(self.ref_w, ex + m), min(self.ref_h, ey + m))
+
+        if effective_roi is not None:
+            gx1, gy1, gx2, gy2 = effective_roi
+            if (gx2 - gx1) > 40 and (gy2 - gy1) > 40:
+                guided_roi = self.ref_edges[gy1:gy2, gx1:gx2]
+                g_cur_scale = self.last_scale or 0.22
+                g_scales = [
+                    max(self.min_scale, g_cur_scale - 0.03),
+                    g_cur_scale,
+                    min(self.max_scale, g_cur_scale + 0.03),
+                ]
+                g_best_score = -1.0
+                g_best_loc = None
+                g_best_scale = g_cur_scale
+                g_best_size = (1, 1)
+
+                for s in g_scales:
+                    tw = max(10, int(c_w * s))
+                    th = max(10, int(c_h * s))
+                    if tw >= (gx2 - gx1) or th >= (gy2 - gy1):
+                        continue
+                    resized = cv2.resize(crop_features, (tw, th), interpolation=cv2.INTER_AREA)
+                    res = cv2.matchTemplate(guided_roi, resized, cv2.TM_CCOEFF_NORMED)
+                    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                    if float(max_val) > g_best_score:
+                        g_best_score = float(max_val)
+                        g_best_loc = (max_loc[0] + gx1, max_loc[1] + gy1)
+                        g_best_scale = s
+                        g_best_size = (tw, th)
+
+                if g_best_score >= 0.16 and g_best_loc is not None:
+                    tw, th = g_best_size
+                    player_x = int(g_best_loc[0] + tw // 2)
+                    player_y = int(g_best_loc[1] + th // 2)
+
+                    self.pending_jump_pos = None
+                    self.pending_jump_count = 0
+                    self.last_player_pos = (player_x, player_y)
+                    self.last_confidence = g_best_score
+                    self.last_scale = g_best_scale
+                    self.locked_counter = min(10, self.locked_counter + 1)
+                    bounding_box = (
+                        max(0, g_best_loc[0]),
+                        max(0, g_best_loc[1]),
+                        min(self.ref_w, g_best_loc[0] + tw),
+                        min(self.ref_h, g_best_loc[1] + th),
+                    )
+                    return {
+                        "located": True,
+                        "confidence": round(g_best_score, 4),
+                        "player_position": (player_x, player_y),
+                        "player_x": player_x,
+                        "player_y": player_y,
+                        "bounding_box": bounding_box,
+                        "matched_scale": round(g_best_scale, 4),
+                        "target_size": (tw, th),
+                        "map_width": self.ref_w,
+                        "map_height": self.ref_h,
+                        "red_zone_bounds": self.red_zone_bounds,
+                        "minimap_crop": minimap_crop,
+                    }
+
+        # Tier 3: Coarse Global Multi-scale search fallback
         candidate_scales: List[float] = []
         is_narrow_search = False
 
@@ -289,19 +365,20 @@ class MapLocalizer:
             cy = max_loc[1] + th // 2
             score = float(max_val)
 
-            # Spatial continuity bonus if near last known position
+            # Spatial continuity bonus if near last known position or expected progress
             if self.last_player_pos is not None and self.last_confidence > 0.20:
                 dist = ((cx - self.last_player_pos[0]) ** 2 + (cy - self.last_player_pos[1]) ** 2) ** 0.5
                 if dist < 25.0:
                     score += 0.04
                 elif dist > 80.0:
-                    score -= 0.03
+                    score -= 0.04
 
-            # Red zone priority if configured
-            if self.red_zone_bounds is not None:
-                in_zone = (min_x - 30 <= cx <= max_x + 30) and (min_y - 30 <= cy <= max_y + 30)
-                if in_zone:
-                    score += 0.03
+            if effective_roi is not None:
+                rx1, ry1, rx2, ry2 = effective_roi
+                if (rx1 - 20 <= cx <= rx2 + 20) and (ry1 - 20 <= cy <= ry2 + 20):
+                    score += 0.04
+                else:
+                    score -= 0.05
 
             return score, max_loc, (tw, th)
 
@@ -369,7 +446,7 @@ class MapLocalizer:
                 "minimap_crop": minimap_crop,
             }
 
-        # Temporal smoothing when tracking is continuous
+        # Temporal smoothing & jump anomaly gating
         if self.last_player_pos is not None and self.locked_counter >= 1:
             lx, ly = self.last_player_pos
             step_dist = ((player_x - lx) ** 2 + (player_y - ly) ** 2) ** 0.5
@@ -378,9 +455,31 @@ class MapLocalizer:
                 smoothed_x = int(round(0.65 * player_x + 0.35 * lx))
                 smoothed_y = int(round(0.65 * player_y + 0.35 * ly))
                 player_x, player_y = smoothed_x, smoothed_y
-            elif step_dist > 90.0 and confidence < 0.35:
-                # Reject single-frame wild teleportation if confidence is not extremely high
-                player_x, player_y = lx, ly
+                self.pending_jump_pos = None
+                self.pending_jump_count = 0
+            elif step_dist > 70.0:
+                # Far jump anomaly filter: require 3-frame consensus
+                if self.pending_jump_pos is not None:
+                    c_dist = math.hypot(player_x - self.pending_jump_pos[0], player_y - self.pending_jump_pos[1])
+                    if c_dist <= 30.0:
+                        self.pending_jump_count += 1
+                        if self.pending_jump_count >= 3 or confidence > 0.45:
+                            # Accepted after consensus
+                            self.pending_jump_pos = None
+                            self.pending_jump_count = 0
+                        else:
+                            player_x, player_y = lx, ly
+                    else:
+                        self.pending_jump_pos = (player_x, player_y)
+                        self.pending_jump_count = 1
+                        player_x, player_y = lx, ly
+                else:
+                    self.pending_jump_pos = (player_x, player_y)
+                    self.pending_jump_count = 1
+                    player_x, player_y = lx, ly
+            else:
+                self.pending_jump_pos = None
+                self.pending_jump_count = 0
 
         self.last_player_pos = (player_x, player_y)
         self.last_confidence = confidence

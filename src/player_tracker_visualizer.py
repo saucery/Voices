@@ -214,16 +214,29 @@ class PlayerTrackerVisualizer:
         # 1. Detect Player Icon on Minimap (~0.5ms)
         icon_found, icon_x, icon_y, icon_box = self.detect_minimap_player_icon(minimap_crop)
 
+        # Get route search ROI and expected position prior based on current waypoint progress
+        search_roi = None
+        expected_pos = None
+        if hasattr(self.movement_path, "get_search_roi_for_progress"):
+            search_roi = self.movement_path.get_search_roi_for_progress(margin=90.0)
+        curr_target = self.movement_path.get_current_target() if hasattr(self.movement_path, "get_current_target") else None
+        if curr_target and "x" in curr_target and "y" in curr_target:
+            expected_pos = (float(curr_target["x"]), float(curr_target["y"]))
+
         # 2. Room Classification & Template Matching (Authoritative Ground-Truth Tracking: ~15-20ms)
         # RoomClassifier matches live minimap features directly to the master map layout via RANSAC affine transform.
-        room_res = self.classifier.classify(minimap_crop, is_crop=True)
+        room_res = self.classifier.classify(minimap_crop, is_crop=True, search_roi=search_roi, expected_pos=expected_pos)
         self.cached_room_res = room_res
 
         # 3. Reference Map Localization (Only run when in Reference Map view or as secondary fallback)
         if self.view_mode == self.VIEW_REFERENCE_MAP or not room_res.get("character_position"):
-            loc_res = self.localizer.localize_player(minimap_crop, fast_track=True)
+            loc_res = self.localizer.localize_player(minimap_crop, fast_track=True, search_roi=search_roi, expected_pos=expected_pos)
         else:
             loc_res = {"player_position": None, "confidence": 0.0, "matched": False}
+
+        if room_res.get("jump_rejected") and time.time() > self.notification_expiry:
+            self.notification_msg = "JUMP ANOMALY SUPPRESSED (Holding Position)"
+            self.notification_expiry = time.time() + 2.0
 
         # 4. Dynamic World Map Stitching (Only run when viewing World Map or throttled)
         if self.view_mode == self.VIEW_WORLD_MAP or self.cached_map_res is None or (self.frame_idx % 10 == 0):

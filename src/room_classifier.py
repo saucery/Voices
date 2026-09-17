@@ -58,6 +58,11 @@ class RoomClassifier:
         self.last_room_name: Optional[str] = None
         self.last_variant: Optional[str] = None
         self.still_threshold: float = 3.5
+        self.jump_threshold: float = 60.0
+        self.jump_consensus_frames: int = 3
+        self.pending_jump_pos: Optional[Tuple[float, float]] = None
+        self.pending_jump_count: int = 0
+        self.jump_rejections_total: int = 0
         self.is_locked: bool = False
         self.lost_frame_count: int = 0
         self.outlier_frame_count: int = 0
@@ -281,6 +286,8 @@ class RoomClassifier:
         self,
         screenshot: Union[str, np.ndarray, Image.Image],
         is_crop: bool = False,
+        search_roi: Optional[Tuple[int, int, int, int]] = None,
+        expected_pos: Optional[Tuple[float, float]] = None,
     ) -> Dict[str, Any]:
         """
         Classifies current screenshot using loaded room templates,
@@ -288,6 +295,8 @@ class RoomClassifier:
 
         :param screenshot: Full game screenshot or pre-cropped minimap ROI.
         :param is_crop: Set to True if screenshot is already a cropped minimap ROI.
+        :param search_roi: Optional (min_x, min_y, max_x, max_y) bounding box to prioritize candidates.
+        :param expected_pos: Optional (X, Y) prior position from route progress.
         """
         if is_crop:
             minimap_crop = self.extractor._to_cv2(screenshot) if not isinstance(screenshot, np.ndarray) else screenshot
@@ -340,15 +349,36 @@ class RoomClassifier:
                     score, char_pos, inliers = self._match_orb_features(
                         minimap_crop, target_edges, target_kp, target_des, tmpl
                     )
-                    if score > room_best_score:
-                        room_best_score = score
+
+                    # Spatial prior bonus/penalty if search_roi or expected_pos is configured
+                    effective_score = score
+                    if char_pos is not None:
+                        cx, cy = char_pos
+                        if search_roi is not None:
+                            rx1, ry1, rx2, ry2 = search_roi
+                            in_roi = (rx1 - 30 <= cx <= rx2 + 30) and (ry1 - 30 <= cy <= ry2 + 30)
+                            if in_roi:
+                                effective_score += 0.05
+                            elif inliers < 8:
+                                # Candidate is outside active route room zone with weak inliers
+                                effective_score -= 0.08
+
+                        if expected_pos is not None:
+                            d_exp = math.hypot(cx - expected_pos[0], cy - expected_pos[1])
+                            if d_exp < 60.0:
+                                effective_score += 0.03
+                            elif d_exp > 200.0 and inliers < 8:
+                                effective_score -= 0.05
+
+                    if effective_score > room_best_score:
+                        room_best_score = effective_score
                         room_best_variant = variant_name
                         room_best_pos = char_pos
                         room_best_inliers = inliers
 
                 all_scores[r_id] = {
                     "name": r_name,
-                    "score": room_best_score,
+                    "score": round(min(1.0, max(0.0, room_best_score)), 4),
                     "best_variant": room_best_variant,
                     "character_position": room_best_pos,
                     "inliers": room_best_inliers,
@@ -376,13 +406,16 @@ class RoomClassifier:
             best_char_pos = (round(minimap_crop.shape[1] / 2.0, 1), round(minimap_crop.shape[0] / 2.0, 1))
             best_inliers = 999
 
-        # Position smoothing with outlier jump rejection & temporal persistence
+        # Position smoothing with velocity jump gating & temporal consensus
         final_char_pos = None
+        jump_rejected = False
+
         if recognized and best_char_pos is not None:
             self.lost_frame_count = 0
             self.is_locked = True
             self.last_room_name = best_room_name
             self.last_variant = best_variant
+
             if self.last_known_pos is not None and self.last_room_id == best_room_id:
                 dx = best_char_pos[0] - self.last_known_pos[0]
                 dy = best_char_pos[1] - self.last_known_pos[1]
@@ -390,12 +423,46 @@ class RoomClassifier:
 
                 if dist_moved < self.still_threshold:
                     final_char_pos = self.last_known_pos
-                elif dist_moved > 60.0 and self.outlier_frame_count < 2 and best_inliers < 6:
-                    # Single-frame wild jump with weak inliers: hold last position briefly
-                    self.outlier_frame_count += 1
-                    final_char_pos = self.last_known_pos
+                    self.pending_jump_pos = None
+                    self.pending_jump_count = 0
+                elif dist_moved > self.jump_threshold:
+                    # Potential wild jump / teleport anomaly
+                    if self.pending_jump_pos is not None:
+                        cluster_dist = math.hypot(
+                            best_char_pos[0] - self.pending_jump_pos[0],
+                            best_char_pos[1] - self.pending_jump_pos[1],
+                        )
+                        if cluster_dist <= 30.0:
+                            self.pending_jump_count += 1
+                            if self.pending_jump_count >= self.jump_consensus_frames or best_inliers >= 10:
+                                # Confirmed legitimate teleport/leap after consensus frames
+                                self.pending_jump_pos = None
+                                self.pending_jump_count = 0
+                                self.last_known_pos = best_char_pos
+                                final_char_pos = best_char_pos
+                            else:
+                                # Awaiting confirmation: hold last known position
+                                final_char_pos = self.last_known_pos
+                                self.jump_rejections_total += 1
+                                jump_rejected = True
+                        else:
+                            # Inconsistent jump targets (spurious noise)
+                            self.pending_jump_pos = best_char_pos
+                            self.pending_jump_count = 1
+                            final_char_pos = self.last_known_pos
+                            self.jump_rejections_total += 1
+                            jump_rejected = True
+                    else:
+                        # First anomalous jump frame: hold position and start consensus counter
+                        self.pending_jump_pos = best_char_pos
+                        self.pending_jump_count = 1
+                        final_char_pos = self.last_known_pos
+                        self.jump_rejections_total += 1
+                        jump_rejected = True
                 else:
-                    # Genuine movement or confirmed inliers: accept and update smoothly
+                    # Genuine smooth movement (<= jump_threshold)
+                    self.pending_jump_pos = None
+                    self.pending_jump_count = 0
                     self.outlier_frame_count = 0
                     alpha = 0.65
                     sm_x = round(alpha * best_char_pos[0] + (1.0 - alpha) * self.last_known_pos[0], 1)
@@ -403,6 +470,8 @@ class RoomClassifier:
                     final_char_pos = (sm_x, sm_y)
                     self.last_known_pos = final_char_pos
             else:
+                self.pending_jump_pos = None
+                self.pending_jump_count = 0
                 self.outlier_frame_count = 0
                 final_char_pos = best_char_pos
                 self.last_known_pos = final_char_pos
@@ -424,6 +493,8 @@ class RoomClassifier:
                 self.last_room_name = None
                 self.last_variant = None
                 self.lost_frame_count = 0
+                self.pending_jump_pos = None
+                self.pending_jump_count = 0
 
         return {
             "recognized": recognized,
@@ -431,7 +502,9 @@ class RoomClassifier:
             "room_name": best_room_name if recognized else "Unknown",
             "matched_variant": best_variant if recognized else None,
             "character_position": final_char_pos if recognized else None,
-            "confidence": highest_score if highest_score >= 0 else 0.0,
+            "confidence": round(min(1.0, max(0.0, highest_score)), 4) if highest_score >= 0 else 0.0,
             "all_scores": all_scores,
             "minimap_roi_shape": minimap_crop.shape,
+            "jump_rejected": jump_rejected,
+            "jump_rejections_total": self.jump_rejections_total,
         }

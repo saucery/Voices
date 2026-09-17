@@ -288,57 +288,81 @@ class MovementPath:
         yellow_mask_clean = cv2.morphologyEx(yellow_mask, cv2.MORPH_OPEN, open_kernel)
 
         y_cnts, _ = cv2.findContours(yellow_mask_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        self.orbit_zones = []
-        for yc in y_cnts:
-            area = cv2.contourArea(yc)
-            if area >= 35.0:
-                (cx, cy), radius = cv2.minEnclosingCircle(yc)
-                if radius < 5.0:
+        valid_cnts = [c for c in y_cnts if cv2.contourArea(c) >= 35.0]
+
+        # Merge fragmented yellow arcs that were severed by overlapping green lines / dots in the same room
+        merged_cnts = []
+        used = [False] * len(valid_cnts)
+        for i in range(len(valid_cnts)):
+            if used[i]:
+                continue
+            pts = [valid_cnts[i]]
+            used[i] = True
+            (cx1, cy1), r1 = cv2.minEnclosingCircle(valid_cnts[i])
+            for j in range(i + 1, len(valid_cnts)):
+                if used[j]:
                     continue
+                (cx2, cy2), r2 = cv2.minEnclosingCircle(valid_cnts[j])
+                dist = np.hypot(cx1 - cx2, cy1 - cy2)
+                if dist < (r1 + r2) * 0.75 or dist < 65.0:
+                    pts.append(valid_cnts[j])
+                    used[j] = True
+                    all_p = np.vstack(pts)
+                    (cx1, cy1), r1 = cv2.minEnclosingCircle(all_p)
 
-                # Must intersect or be within reach of the route line
-                if len(route_pts) > 0:
-                    d_to_route = np.min(np.hypot(route_pts[:, 0] - cx, route_pts[:, 1] - cy))
-                    if d_to_route > (radius + 35.0):
-                        continue  # Far away map texture artifact, ignore
+            all_p = np.vstack(pts)
+            hull = cv2.convexHull(all_p)
+            merged_cnts.append(hull)
 
-                bx, by, bw, bh = cv2.boundingRect(yc)
-                radius = max(float(radius), 12.0)
+        self.orbit_zones = []
+        for yc in merged_cnts:
+            (cx, cy), radius = cv2.minEnclosingCircle(yc)
+            if radius < 5.0:
+                continue
 
+            # Must intersect or be within reach of the route line
+            if len(route_pts) > 0:
+                d_to_route = np.min(np.hypot(route_pts[:, 0] - cx, route_pts[:, 1] - cy))
+                if d_to_route > (radius + 35.0):
+                    continue  # Far away map texture artifact, ignore
+
+            bx, by, bw, bh = cv2.boundingRect(yc)
+            radius = max(float(radius), 12.0)
+
+            if self.orbit_mode == "inside":
+                # Orbit strictly INSIDE the yellow field
+                inner_margin = max(4.0, self.orbit_margin_px)
+                orbit_radius = max(6.0, radius - inner_margin if (radius - inner_margin) >= 6.0 else radius * 0.65)
+            else:
+                orbit_radius = radius + self.orbit_margin_px
+
+            # 8-point perimeter orbit path around / inside shape
+            perimeter_pts = []
+            for deg in [0, 45, 90, 135, 180, 225, 270, 315]:
+                rad = math.radians(deg)
+                px = round(cx + orbit_radius * math.cos(rad), 1)
+                py = round(cy + orbit_radius * math.sin(rad), 1)
+
+                # Ensure points are strictly inside the contour if orbit_mode == "inside"
                 if self.orbit_mode == "inside":
-                    # Orbit strictly INSIDE the yellow field
-                    inner_margin = max(4.0, self.orbit_margin_px)
-                    orbit_radius = max(6.0, radius - inner_margin if (radius - inner_margin) >= 6.0 else radius * 0.65)
-                else:
-                    orbit_radius = radius + self.orbit_margin_px
+                    scale = 0.90
+                    while cv2.pointPolygonTest(yc, (float(px), float(py)), False) < 0 and scale > 0.2:
+                        px = round(cx + (orbit_radius * scale) * math.cos(rad), 1)
+                        py = round(cy + (orbit_radius * scale) * math.sin(rad), 1)
+                        scale -= 0.1
 
-                # 8-point perimeter orbit path around / inside shape
-                perimeter_pts = []
-                for deg in [0, 45, 90, 135, 180, 225, 270, 315]:
-                    rad = math.radians(deg)
-                    px = round(cx + orbit_radius * math.cos(rad), 1)
-                    py = round(cy + orbit_radius * math.sin(rad), 1)
+                perimeter_pts.append([px, py])
 
-                    # Ensure points are strictly inside the contour if orbit_mode == "inside"
-                    if self.orbit_mode == "inside":
-                        scale = 0.90
-                        while cv2.pointPolygonTest(yc, (float(px), float(py)), False) < 0 and scale > 0.2:
-                            px = round(cx + (orbit_radius * scale) * math.cos(rad), 1)
-                            py = round(cy + (orbit_radius * scale) * math.sin(rad), 1)
-                            scale -= 0.1
-
-                    perimeter_pts.append([px, py])
-
-                self.orbit_zones.append({
-                    "id": f"zone_{len(self.orbit_zones) + 1}",
-                    "center": [round(float(cx), 1), round(float(cy), 1)],
-                    "radius": round(float(radius), 1),
-                    "orbit_radius": round(float(orbit_radius), 1),
-                    "orbit_mode": self.orbit_mode,
-                    "bbox": [int(bx), int(by), int(bw), int(bh)],
-                    "duration": self.orbit_duration_seconds,
-                    "perimeter_points": perimeter_pts,
-                })
+            self.orbit_zones.append({
+                "id": f"zone_{len(self.orbit_zones) + 1}",
+                "center": [round(float(cx), 1), round(float(cy), 1)],
+                "radius": round(float(radius), 1),
+                "orbit_radius": round(float(orbit_radius), 1),
+                "orbit_mode": self.orbit_mode,
+                "bbox": [int(bx), int(by), int(bw), int(bh)],
+                "duration": self.orbit_duration_seconds,
+                "perimeter_points": perimeter_pts,
+            })
 
         # If yellow shapes exist, incorporate yellow_mask into path_canvas so BFS connects continuously
         if len(self.orbit_zones) > 0:
@@ -403,7 +427,7 @@ class MovementPath:
                 return False
             if start_pt is None:
                 start_pt = (int(gx[0]), int(gy[0]))
-            if finish_pt is None:
+            if finish_pt is None and len(self.pink_zones) == 0:
                 finish_pt = (int(gx[-1]), int(gy[-1]))
 
         # Bridge distance from start_pt and finish_pt directly to closest green route pixels
@@ -420,45 +444,89 @@ class MovementPath:
                 cv2.line(path_canvas, finish_pt, near_fin, 255, 5)
 
         sx, sy = start_pt
-        fx, fy = finish_pt
         path_canvas[max(0, sy - 5):min(h, sy + 6), max(0, sx - 5):min(w, sx + 6)] = 255
-        path_canvas[max(0, fy - 5):min(h, fy + 6), max(0, fx - 5):min(w, fx + 6)] = 255
+        if finish_pt is not None:
+            fx, fy = finish_pt
+            path_canvas[max(0, fy - 5):min(h, fy + 6), max(0, fx - 5):min(w, fx + 6)] = 255
 
-        # 5. BFS Breadth-First Path Tracer along Green Route
-        visited = np.zeros((h, w), dtype=bool)
-        parent = {}
-        queue = deque([start_pt])
-        visited[sy, sx] = True
+        # 5. Milestone & BFS Segment Tracer along Green Route
+        def _trace_segment(p1: Tuple[int, int], p2: Tuple[int, int], canvas: np.ndarray) -> Optional[List[Tuple[int, int]]]:
+            ch, cw = canvas.shape[:2]
+            visited = np.zeros((ch, cw), dtype=bool)
+            parent = {}
+            queue = deque([p1])
+            visited[p1[1], p1[0]] = True
+            reached = None
 
-        found = False
-        finish_reached = None
+            while queue:
+                cx, cy = queue.popleft()
+                if abs(cx - p2[0]) <= 8 and abs(cy - p2[1]) <= 8:
+                    reached = (cx, cy)
+                    break
 
-        while queue:
-            cx, cy = queue.popleft()
-            if abs(cx - fx) <= 3 and abs(cy - fy) <= 3:
-                finish_reached = (cx, cy)
-                found = True
-                break
+                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)]:
+                    nx, ny = cx + dx, cy + dy
+                    if 0 <= nx < cw and 0 <= ny < ch and not visited[ny, nx] and canvas[ny, nx] > 0:
+                        visited[ny, nx] = True
+                        parent[(nx, ny)] = (cx, cy)
+                        queue.append((nx, ny))
 
-            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)]:
-                nx, ny = cx + dx, cy + dy
-                if 0 <= nx < w and 0 <= ny < h and not visited[ny, nx] and path_canvas[ny, nx] > 0:
-                    visited[ny, nx] = True
-                    parent[(nx, ny)] = (cx, cy)
-                    queue.append((nx, ny))
+            if reached is None:
+                return None
 
-        if not found:
-            print("[MOVEMENT] Could not find continuous green path connecting Blue Start and Red Finish.")
+            path = []
+            curr = reached
+            while curr in parent:
+                path.append(curr)
+                curr = parent[curr]
+            path.append(p1)
+            path.reverse()
+            return path
+
+        full_path: List[Tuple[int, int]] = []
+
+        if len(self.pink_zones) > 1:
+            # Multi-encounter / multi-room route: trace milestone chain to prevent short-circuiting on crossing paths
+            pink_pts = [(pz["x"], pz["y"]) for pz in self.pink_zones]
+            # Order pink encounter markers along room sequence:
+            # 1. R1 (Room 1 zone above start) -> 2. R6 (Top room) -> 3. R5 (Mid-right) ->
+            # 4. R4 (Far-right) -> 5. R3 (Lower-right) -> 6. R2 (Bottom-middle) -> 7. R7 (Top-left finish)
+            ordered_pinks = sorted(pink_pts, key=lambda p: (
+                0 if (p[0] < 250 and 180 < p[1] <= 250) else   # R1 (Room 1 zone)
+                1 if (p[0] > 300 and p[1] <= 120) else         # R6 (Top room above R1)
+                2 if (450 < p[0] and 180 < p[1] <= 250) else   # R5 (Mid-right room)
+                3 if (p[0] >= 600 and p[1] > 200) else         # R4 (Far-right room)
+                4 if (p[0] >= 500 and p[1] > 300) else         # R3 (Lower-right room)
+                5 if (400 < p[0] < 500 and p[1] > 300) else    # R2 (Bottom-middle room)
+                6                                              # R7 (Top-left room / finish)
+            ))
+
+            milestones = [start_pt] + ordered_pinks
+            if finish_pt is not None and finish_pt != ordered_pinks[-1]:
+                milestones.append(finish_pt)
+
+            for i in range(len(milestones) - 1):
+                seg = _trace_segment(milestones[i], milestones[i + 1], path_canvas)
+                if seg:
+                    if not full_path:
+                        full_path.extend(seg)
+                    else:
+                        full_path.extend(seg[1:])
+                else:
+                    print(f"[MOVEMENT] Warning: Could not connect milestone {milestones[i]} -> {milestones[i+1]}. Using direct bridge.")
+                    if not full_path:
+                        full_path.append(milestones[i])
+                    full_path.append(milestones[i + 1])
+        else:
+            # Single segment route (Start -> Finish)
+            target_fin = finish_pt if finish_pt is not None else (self.pink_zones[0]["x"], self.pink_zones[0]["y"]) if self.pink_zones else start_pt
+            seg = _trace_segment(start_pt, target_fin, path_canvas)
+            if seg:
+                full_path = seg
+
+        if not full_path:
+            print("[MOVEMENT] Could not find continuous green path connecting Blue Start and Finish.")
             return False
-
-        # Reconstruct path from start to finish
-        full_path = []
-        curr = finish_reached
-        while curr in parent:
-            full_path.append(curr)
-            curr = parent[curr]
-        full_path.append(start_pt)
-        full_path.reverse()
 
         # 6. Downsample path to evenly spaced waypoints
         sampled = [full_path[0]]
@@ -471,8 +539,9 @@ class MovementPath:
                 sampled.append(full_path[i])
                 accum = 0.0
 
-        if sampled[-1] != finish_pt:
-            sampled.append(finish_pt)
+        last_pt = finish_pt if finish_pt is not None else full_path[-1]
+        if sampled[-1] != last_pt:
+            sampled.append(last_pt)
 
         self.route_name = "Painted Route"
         self.description = f"Auto-extracted from {image_path} (Blue start, Green path, Red finish)"
@@ -762,37 +831,53 @@ class MovementPath:
         """
         return [(idx, wp) for idx, wp in enumerate(self.waypoints) if wp.get("action") == "pink_encounter"]
 
-    def find_nearest_waypoint_index(self, current_pos: Tuple[float, float]) -> int:
+    def find_nearest_waypoint_index(
+        self,
+        current_pos: Tuple[float, float],
+        start_idx: Optional[int] = None,
+        max_lookahead: Optional[int] = None,
+    ) -> int:
         """
-        Finds index of the closest waypoint to current position.
+        Finds index of the closest waypoint to current position within an optional forward window.
 
         :param current_pos: (X, Y) tuple of current player position.
+        :param start_idx: Starting index to search from (defaults to 0).
+        :param max_lookahead: Optional maximum number of waypoints ahead to consider (prevents jumping on crossing paths).
         :return: Integer index of nearest waypoint in route.
         """
         if not self.waypoints:
             return 0
-        best_idx = 0
+        s_idx = max(0, start_idx) if start_idx is not None else 0
+        e_idx = min(len(self.waypoints), s_idx + max_lookahead) if max_lookahead is not None else len(self.waypoints)
+        if s_idx >= e_idx:
+            return s_idx
+        best_idx = s_idx
         best_dist = float("inf")
-        for idx, wp in enumerate(self.waypoints):
+        for idx in range(s_idx, e_idx):
+            wp = self.waypoints[idx]
             d = math.hypot(wp["x"] - current_pos[0], wp["y"] - current_pos[1])
             if d < best_dist:
                 best_dist = d
                 best_idx = idx
         return best_idx
 
-    def update_to_nearest(self, current_pos: Tuple[float, float]) -> Optional[Dict[str, Any]]:
+    def update_to_nearest(self, current_pos: Tuple[float, float], lookahead_window: int = 18) -> Optional[Dict[str, Any]]:
         """
-        Closed-loop verification: compares current character map position against all route waypoints.
+        Closed-loop verification: compares current character map position against route waypoints ahead.
         If character has progressed forward along the route (e.g. at 5th or 10th WP),
         dynamically resynchronizes current_idx to the appropriate target waypoint ahead.
+        Uses a forward-constrained lookahead window to prevent jumping between crossing paths in the same room.
 
         :param current_pos: (X, Y) tuple of current character position.
+        :param lookahead_window: Number of waypoints ahead to evaluate (default 18).
         :return: Current target waypoint after resynchronization.
         """
         if not self.waypoints or current_pos is None:
             return self.get_current_target()
 
-        nearest_idx = self.find_nearest_waypoint_index(current_pos)
+        # Constrain search window around current_idx to prevent jumping onto crossing tracks in the same room
+        search_start = max(0, self.current_idx - 2)
+        nearest_idx = self.find_nearest_waypoint_index(current_pos, start_idx=search_start, max_lookahead=lookahead_window)
         nearest_wp = self.waypoints[nearest_idx]
         dist_to_nearest = math.hypot(nearest_wp["x"] - current_pos[0], nearest_wp["y"] - current_pos[1])
 

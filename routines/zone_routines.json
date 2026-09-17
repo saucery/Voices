@@ -51,7 +51,7 @@
         {
           "action": "hold_mouse",
           "button": "middle",
-          "duration": 4.5,
+          "duration": 5,
           "combat_interval": 0.65,
           "combat_action": "key",
           "combat_key": "t",
@@ -519,6 +519,14 @@
           "button": "middle",
           "duration": 3.5,
           "description": "Hold middle mouse button for 4.0 seconds"
+        },
+        {
+          "action": "orbit_yellow_zone",
+          "duration": 50.0,
+          "right_click_interval": 0.75,
+          "rolling_enabled": true,
+          "rolling_interval": 2.0,
+          "description": "Orbit inside yellow zone for 50s"
         },
         {
           "action": "navigate_to_loot_location",

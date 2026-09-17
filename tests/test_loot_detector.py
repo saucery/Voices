@@ -208,9 +208,9 @@ def test_loot_detector_ui_exclusion_zones():
     canvas[800:830, 100:250] = (240, 240, 240)
     cv2.putText(canvas, "DIVINE ORB", (110, 822), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 230), 2)
 
-    # Draw white box with red text inside Minimap area (x=1700, y=100)
-    canvas[100:130, 1700:1850] = (240, 240, 240)
-    cv2.putText(canvas, "DIVINE ORB", (1710, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 230), 2)
+    # Draw white box with red text inside Bottom Mana Globe area (x=1750, y=980)
+    canvas[980:1010, 1750:1880] = (240, 240, 240)
+    cv2.putText(canvas, "DIVINE ORB", (1760, 1000), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 230), 2)
 
     detected = detector.detect_loot(canvas)
     assert len(detected) == 0

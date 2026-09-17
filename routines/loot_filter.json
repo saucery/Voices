@@ -14,13 +14,13 @@
       "type": "color_box",
       "bg_color": "white",
       "text_color": "red",
-      "min_width": 55,
+      "min_width": 35,
       "max_width": 500,
-      "min_height": 16,
+      "min_height": 14,
       "max_height": 75,
-      "min_aspect_ratio": 1.6,
-      "min_bg_fraction": 0.40,
-      "min_text_pixels": 16,
+      "min_aspect_ratio": 1.2,
+      "min_bg_fraction": 0.35,
+      "min_text_pixels": 12,
       "description": "Matches all Divine Orbs, Mirror of Kalandra, Orbs of Annulment, Liquid Isolation, and any loot item styled with white background and red text."
     },
     {

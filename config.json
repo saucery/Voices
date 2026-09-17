@@ -51,7 +51,7 @@
     "loot_pickup_wait_seconds": 0.4,
     "loot_approach_wait_seconds": 1.5,
     "max_loot_pickups": 15,
-    "wait_for_loot_confirmation": true,
+    "wait_for_loot_confirmation": false,
     "start_at_pink_dot": 0,
     "persistent_combat_action": "key",
     "persistent_combat_key": "t",

@@ -212,42 +212,34 @@ class LootDetector:
     @staticmethod
     def is_in_ui_exclusion_zone(x: int, y: int, w: int, h: int, screen_w: int, screen_h: int) -> bool:
         """
-        Filters out detections falling inside static game UI elements
-        (Chat window, Health globe, Mana globe, Skill action bar, Buff bar, Minimap).
+        Filters out detections falling inside static bottom/corner game HUD elements
+        (Chat window, Health globe, Mana globe, Skill action bar, Buff bar).
+        Does NOT block the top/top-right gameplay area where ground loot labels frequently appear.
         """
-        # Only apply UI zone masking to full-screen/near full-screen captures (e.g. 1080p, 1440p, 4k)
         if screen_w < 1200 or screen_h < 720:
             return False
 
         cx = x + w // 2
         cy = y + h // 2
 
-        # 1. Top status bar / latency graph
-        if y < 45 or cy < 45:
+        # 1. Chat window area (Bottom-Left)
+        if cx < int(screen_w * 0.22) and cy > int(screen_h * 0.65):
             return True
 
-        # 2. Chat window area (Bottom-Left: x < 26% width and y > 58% height)
-        if cx < int(screen_w * 0.26) and cy > int(screen_h * 0.58):
+        # 2. Life / Flask globe (Bottom-Left)
+        if cx < 230 and cy > (screen_h - 220):
             return True
 
-        # 3. Life / Flask globe (Bottom-Left: x < 240 and y > height - 240)
-        if cx < 240 and cy > (screen_h - 240):
+        # 3. Mana globe (Bottom-Right)
+        if cx > (screen_w - 230) and cy > (screen_h - 220):
             return True
 
-        # 4. Mana globe (Bottom-Right: x > width - 240 and y > height - 240)
-        if cx > (screen_w - 240) and cy > (screen_h - 240):
+        # 4. Bottom skill & flask action bar
+        if cy > (screen_h - 95):
             return True
 
-        # 5. Bottom skill & flask action bar (y > height - 110)
-        if cy > (screen_h - 110):
-            return True
-
-        # 6. Minimap & Quest tracker (Top-Right: x > width - 360 and y < 360)
-        if cx > (screen_w - 360) and cy < 360:
-            return True
-
-        # 7. Top-Left Buff bar (x < 320 and y < 80)
-        if cx < 320 and cy < 80:
+        # 5. Top-Left Buff bar (compact zone)
+        if cx < 220 and cy < 60:
             return True
 
         return False
@@ -268,26 +260,26 @@ class LootDetector:
         """
         sw = screen.shape[1]
         sh = screen.shape[0]
-        min_w = int(rule.get("min_width", 55))
+        min_w = int(rule.get("min_width", 45))
         max_w = int(rule.get("max_width", 500))
-        min_h = int(rule.get("min_height", 16))
-        max_h = int(rule.get("max_height", 65))
-        min_ar = float(rule.get("min_aspect_ratio", 1.6))
-        min_bg_frac = float(rule.get("min_bg_fraction", 0.40))
-        min_text_px = int(rule.get("min_text_pixels", 16))
+        min_h = int(rule.get("min_height", 14))
+        max_h = int(rule.get("max_height", 75))
+        min_ar = float(rule.get("min_aspect_ratio", 1.3))
+        min_bg_frac = float(rule.get("min_bg_fraction", 0.35))
+        min_text_px = int(rule.get("min_text_pixels", 14))
 
         # White background mask: high brightness, low saturation
         white_mask = (
-            (r > 175) & (g > 170) & (b > 170) &
-            (hsv[:, :, 1] < 65) & (hsv[:, :, 2] > 170)
+            (r > 170) & (g > 165) & (b > 165) &
+            (hsv[:, :, 1] < 70) & (hsv[:, :, 2] > 165)
         ).astype(np.uint8) * 255
 
         # Red text / border mask: pure red (high R, distinct difference from G and B)
         red_text_mask = (
             (r > 155) &
-            (r.astype(np.int16) - g.astype(np.int16) > 55) &
-            (r.astype(np.int16) - b.astype(np.int16) > 55) &
-            (g < 110) & (b < 110)
+            (r.astype(np.int16) - g.astype(np.int16) > 50) &
+            (r.astype(np.int16) - b.astype(np.int16) > 50) &
+            (g < 120) & (b < 120)
         ).astype(np.uint8) * 255
 
         items: List[LootItem] = []
@@ -299,15 +291,20 @@ class LootDetector:
 
         for cnt in w_contours:
             x, y, w, h = cv2.boundingRect(cnt)
-            # Avoid UI edge overlays on full screenshots (Chat, minimap, status bars)
+            # Avoid UI edge overlays on full screenshots (Chat, status bars)
             if self.is_in_ui_exclusion_zone(x, y, w, h, sw, sh):
                 continue
 
-            if w < min_w or w > max_w or h < min_h or h > max_h:
+            is_edge = (x <= 6 or x + w >= sw - 6 or y <= 6)
+            effective_min_w = 30 if is_edge else min_w
+            effective_min_ar = 0.9 if is_edge else min_ar
+            effective_min_text = 10 if is_edge else min_text_px
+
+            if w < effective_min_w or w > max_w or h < min_h or h > max_h:
                 continue
 
             aspect_ratio = w / max(1.0, float(h))
-            if aspect_ratio < min_ar:
+            if aspect_ratio < effective_min_ar:
                 continue
 
             box_white = white_mask[y:y+h, x:x+w]
@@ -318,7 +315,7 @@ class LootDetector:
             red_pixels = int(np.count_nonzero(box_red > 0))
 
             # Must have dominant white background over red text (prevents false positives on red boxes)
-            if bg_frac >= min_bg_frac and red_pixels >= min_text_px and bg_frac > red_frac * 1.5:
+            if bg_frac >= min_bg_frac and red_pixels >= effective_min_text and bg_frac > red_frac * 1.3:
                 confidence = min(1.0, 0.5 + (red_pixels / 80.0) + (bg_frac * 0.3))
                 items.append(
                     LootItem(
@@ -336,7 +333,6 @@ class LootDetector:
                 )
 
         # Pass 2: Strictly 1D Horizontal Red Text Cluster Analysis (unbreakable for stacked loot & beams)
-        # Filter out thin vertical light beams (width <= 2px) using horizontal morphological opening (3, 1)
         k_remove_beams = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 1))
         red_no_beams = cv2.morphologyEx(red_text_mask, cv2.MORPH_OPEN, k_remove_beams)
 
@@ -350,11 +346,11 @@ class LootDetector:
             if self.is_in_ui_exclusion_zone(rx, ry, rw, rh, sw, sh):
                 continue
 
-            if rw < 30 or rh < 6:
+            if rw < 25 or rh < 6:
                 continue
 
             raw_red_pixels = int(np.count_nonzero(red_no_beams[ry:ry+rh, rx:rx+rw] > 0))
-            if raw_red_pixels < min_text_px:
+            if raw_red_pixels < 10:
                 continue
 
             # Expand to cover the surrounding white background rectangle
@@ -365,7 +361,10 @@ class LootDetector:
             bw = min(sw - bx, rw + 2 * pad_x)
             bh = min(sh - by, rh + 2 * pad_y)
 
-            if bw < min_w or bh < min_h:
+            is_edge = (bx <= 6 or bx + bw >= sw - 6 or by <= 6)
+            effective_min_w = 30 if is_edge else min_w
+
+            if bw < effective_min_w or bh < min_h:
                 continue
 
             box_white = white_mask[by:by+bh, bx:bx+bw]
@@ -374,7 +373,7 @@ class LootDetector:
             red_frac = np.mean(box_red > 0)
 
             # Must have dominant white background
-            if bg_frac >= min_bg_frac and bg_frac > red_frac * 1.5:
+            if bg_frac >= min_bg_frac and bg_frac > red_frac * 1.3:
                 confidence = min(1.0, 0.5 + (raw_red_pixels / 80.0) + (bg_frac * 0.3))
                 items.append(
                     LootItem(
@@ -412,17 +411,24 @@ class LootDetector:
         min_ar = float(rule.get("min_aspect_ratio", 1.6))
         min_bg_frac = float(rule.get("min_bg_fraction", 0.35))
 
-        # Purple / Magenta Hue in OpenCV HSV is ~ 135 to 172
+        # Purple / Magenta Hue in OpenCV HSV is ~ 135 to 172 with high saturation/value
         purple_mask = (
             (
-                (hsv[:, :, 0] >= 135) & (hsv[:, :, 0] <= 172) &
-                (hsv[:, :, 1] > 70) & (hsv[:, :, 2] > 70)
+                (hsv[:, :, 0] >= 135) & (hsv[:, :, 0] <= 170) &
+                (hsv[:, :, 1] >= 105) & (hsv[:, :, 2] >= 95) &
+                (b.astype(int) > g.astype(int) + 20) &
+                (r.astype(int) > g.astype(int) + 20)
             ) | (
-                (r > 115) & (b > 125) & (g < 95)
+                (r > 125) & (b > 135) & (g < 85) &
+                (hsv[:, :, 1] >= 105)
             )
         ).astype(np.uint8) * 255
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
+        # Text glyphs inside unique box (black text like Inscribed Ultimatum or white text)
+        dark_text_mask = (r < 65) & (g < 65) & (b < 65)
+        white_text_mask = (r > 175) & (g > 175) & (b > 175)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 1))
         purple_closed = cv2.morphologyEx(purple_mask, cv2.MORPH_CLOSE, kernel)
 
         contours, _ = cv2.findContours(purple_closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -433,17 +439,20 @@ class LootDetector:
             if self.is_in_ui_exclusion_zone(x, y, w, h, sw, sh):
                 continue
 
-            if w < min_w or w > max_w or h < min_h or h > max_h:
+            if w < 70 or w > max_w or h < 18 or h > max_h:
                 continue
 
             aspect_ratio = w / max(1.0, float(h))
-            if aspect_ratio < min_ar:
+            if aspect_ratio < 2.0:
                 continue
 
             box_purple = purple_mask[y:y+h, x:x+w]
             bg_frac = np.mean(box_purple > 0)
+            text_count = np.count_nonzero(dark_text_mask[y:y+h, x:x+w]) + np.count_nonzero(white_text_mask[y:y+h, x:x+w])
 
-            if bg_frac >= min_bg_frac:
+            # Must have solid purple background (>= 50%) AND distinct text glyphs inside (>= 25px)
+            # Rejects ground fire, smoke, crystals, and transparent HUD text
+            if bg_frac >= 0.48 and text_count >= 25:
                 confidence = min(1.0, 0.6 + bg_frac * 0.4)
                 items.append(
                     LootItem(
@@ -454,8 +463,8 @@ class LootDetector:
                         center_x=x + w // 2,
                         center_y=y + h // 2,
                         rule_id=rule.get("id", "ravens_reflection_purple"),
-                        rule_name=rule.get("name", "Raven's Reflection (Purple)"),
-                        priority=int(rule.get("priority", 2)),
+                        rule_name=rule.get("name", "Raven's Reflection / T1 Purple Uniques"),
+                        priority=int(rule.get("priority", 3)),
                         confidence=confidence,
                     )
                 )

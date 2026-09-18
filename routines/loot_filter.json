@@ -2,7 +2,7 @@
   "enabled": true,
   "max_pickups": 20,
   "pickup_delay_seconds": 0.35,
-  "approach_wait_seconds": 1.5,
+  "approach_wait_seconds": 1.1,
   "save_debug_screenshots": true,
   "save_pre_loot_screenshot": true,
   "debug_dir": "loot_debug",

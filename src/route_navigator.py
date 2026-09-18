@@ -177,7 +177,10 @@ class RouteNavigator:
         self.loot1_template_file: str = "ui/loot1.png"
         self.loot_match_threshold: float = 0.50
         self.loot_pickup_wait_seconds: float = 0.4
-        self.loot_approach_wait_seconds: float = 1.5
+        self.loot_approach_wait_seconds: float = 1.1
+        self.loot_z_toggle_enabled: bool = True
+        self.loot_z_toggle_delay_seconds: float = 0.3
+        self._loot_labels_hidden: bool = False
         self.max_loot_pickups: int = 15
         self.wait_for_loot_confirmation: bool = True
         self.waiting_for_green_light: bool = False
@@ -227,6 +230,8 @@ class RouteNavigator:
                 self.loot_match_threshold = float(ap_cfg.get("loot_match_threshold", self.loot_match_threshold))
                 self.loot_pickup_wait_seconds = float(ap_cfg.get("loot_pickup_wait_seconds", self.loot_pickup_wait_seconds))
                 self.loot_approach_wait_seconds = float(ap_cfg.get("loot_approach_wait_seconds", self.loot_approach_wait_seconds))
+                self.loot_z_toggle_enabled = bool(ap_cfg.get("loot_z_toggle_enabled", self.loot_z_toggle_enabled))
+                self.loot_z_toggle_delay_seconds = float(ap_cfg.get("loot_z_toggle_delay_seconds", self.loot_z_toggle_delay_seconds))
                 self.max_loot_pickups = int(ap_cfg.get("max_loot_pickups", self.max_loot_pickups))
                 self.wait_for_loot_confirmation = bool(ap_cfg.get("wait_for_loot_confirmation", self.wait_for_loot_confirmation))
                 self.save_loot_debug_screenshots = bool(ap_cfg.get("save_loot_debug_screenshots", self.save_loot_debug_screenshots))
@@ -385,7 +390,7 @@ class RouteNavigator:
         Guarantees that attack execution continues during ALL events until the final destination is reached.
         If suppress_combat_during_approach is active and character is walking up to an interactable, pulses are suppressed.
         """
-        if (not self.persistent_combat_active and not self.persistent_right_click_active) or stop_handler.is_stopped():
+        if (not self.persistent_combat_active and not self.persistent_right_click_active and not (self.orbit_constant_right_click_enabled and self.is_orbiting)) or stop_handler.is_stopped():
             return False
 
         if getattr(self, "is_holding_mouse", False):
@@ -402,7 +407,7 @@ class RouteNavigator:
             self.last_orbit_right_click = now
             action_type = getattr(self, "persistent_combat_action", "key")
 
-            if action_type == "key":
+            if action_type in ("key", "right_click"):
                 attack_key = getattr(self, "persistent_combat_key", "t")
                 if pydirectinput and attack_key:
                     try:
@@ -411,25 +416,16 @@ class RouteNavigator:
                         pydirectinput.keyUp(attack_key)
                     except Exception:
                         pass
-            elif action_type == "right_click":
-                self.move_mouse_inside_game()
-                if pydirectinput:
-                    try:
-                        pydirectinput.rightClick()
-                        time.sleep(0.02)
-                        pydirectinput.mouseUp(button="right")
-                    except Exception:
-                        pass
             elif action_type == "middle_click":
-                self.move_mouse_inside_game()
+                attack_key = "q"
                 if pydirectinput:
                     try:
-                        pydirectinput.middleClick()
+                        pydirectinput.keyDown(attack_key)
                         time.sleep(0.02)
-                        pydirectinput.mouseUp(button="middle")
+                        pydirectinput.keyUp(attack_key)
                     except Exception:
                         pass
-            else:
+            elif action_type == "left_click":
                 self.move_mouse_inside_game()
                 if pydirectinput:
                     try:
@@ -596,18 +592,9 @@ class RouteNavigator:
                 now = time.time()
                 rem = max(0.0, duration - (now - orbit_start))
 
-                # Periodic right-click
-                if self.orbit_constant_right_click_enabled and right_click_interval > 0:
-                    if (now - last_right_click) >= right_click_interval:
-                        last_right_click = now
-                        self.move_mouse_inside_game()
-                        if pydirectinput:
-                            try:
-                                pydirectinput.rightClick()
-                                time.sleep(0.02)
-                                pydirectinput.mouseUp(button="right")
-                            except Exception:
-                                pass
+                # Periodic combat attack (key 't')
+                if self.orbit_constant_right_click_enabled:
+                    self._trigger_persistent_combat_if_due(now)
 
                 current_pos = self.latest_pos
                 if current_pos is None:
@@ -799,19 +786,9 @@ class RouteNavigator:
                 key_str = "+".join(k.upper() for k in sorted(needed_keys))
                 self.status_message = f"[{label}] Walking [{key_str}] (dist={dist:.0f}px, {rem:.1f}s)"
 
-                # Periodic right-click attack if persistent combat is active
-                if self.persistent_right_click_active:
-                    rc_int = getattr(self, "persistent_right_click_interval", 0.65)
-                    if (now - self.last_orbit_right_click) >= rc_int:
-                        self.last_orbit_right_click = now
-                        self.move_mouse_inside_game()
-                        if pydirectinput:
-                            try:
-                                pydirectinput.rightClick()
-                                time.sleep(0.02)
-                                pydirectinput.mouseUp(button="right")
-                            except Exception:
-                                pass
+                # Periodic combat attack if persistent combat is active (key 't')
+                if self.persistent_right_click_active or self.persistent_combat_active:
+                    self._trigger_persistent_combat_if_due(now)
 
                 self.is_simulating_key = True
                 try:
@@ -911,79 +888,102 @@ class RouteNavigator:
                 time.sleep(0.05)
             return True
 
-        elif action == "hold_mouse":
+        elif action in ("hold_mouse", "hold_key"):
             if self.has_executed_initial_hold:
-                _log(f"    [STEP] Hold mouse already executed once in this session. Skipping hold for {zone_label}.")
+                _log(f"    [STEP] Hold action already executed once in this session. Skipping hold for {zone_label}.")
                 return True
 
-            button = str(step.get("button", "middle")).lower().strip()
-            if button == "middle" and not getattr(self, "middle_click_hold_enabled", True):
-                _log(f"    [CONFIG] Middle click hold disabled (middle_click_hold_enabled=false). Skipping...")
+            hold_k = step.get("key")
+            if not hold_k:
+                button = str(step.get("button", "middle")).lower().strip()
+                if button == "middle":
+                    hold_k = "q"
+                elif button == "right":
+                    hold_k = "t"
+                else:
+                    hold_k = "q"
+
+            if hold_k == "q" and not getattr(self, "middle_click_hold_enabled", True):
+                _log(f"    [CONFIG] Hold Q key disabled (middle_click_hold_enabled=false). Skipping...")
                 self.has_executed_initial_hold = True
                 self.enable_persistent_combat()
                 return True
+
             duration = float(step.get("duration", self.middle_click_hold_seconds))
             window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
-            self.move_mouse_inside_game()
-            _log(f"    [ACTION] Holding mouse '{button}' button for {duration:.1f}s inside game (ONCE on first pink encounter)...")
+            _log(f"    [ACTION] Holding '{hold_k.upper()}' key for {duration:.1f}s (ONCE on first encounter)...")
             self.is_holding_mouse = True
             try:
                 if pydirectinput:
-                    pydirectinput.mouseDown(button=button)
+                    pydirectinput.keyDown(hold_k)
                 h_start = time.time()
                 while (time.time() - h_start) < duration:
                     if stop_handler.is_stopped() or not self.is_active:
                         break
                     rem_h = max(0.0, duration - (time.time() - h_start))
-                    self.status_message = f"[{zone_label}] Holding {button.title()} ({rem_h:.1f}s)..."
+                    self.status_message = f"[{zone_label}] Holding [{hold_k.upper()}] ({rem_h:.1f}s)..."
                     time.sleep(0.05)
             finally:
                 self.is_holding_mouse = False
                 if pydirectinput:
-                    pydirectinput.mouseUp(button=button)
-                try:
-                    import ctypes
-                    flag = 0x0040 if button == "middle" else (0x0010 if button == "right" else 0x0004)
-                    ctypes.windll.user32.mouse_event(flag, 0, 0, 0, 0)
-                except Exception:
-                    pass
-                _log(f"    [ACTION] Mouse '{button}' button released.")
+                    pydirectinput.keyUp(hold_k)
+                _log(f"    [ACTION] Key '{hold_k.upper()}' released.")
+
             # Mark initial hold as completed so subsequent pink dots never hold again in this run
             self.has_executed_initial_hold = True
             c_int = step.get("combat_interval") or step.get("right_click_interval") or step.get("persistent_right_click_interval")
-            c_act = step.get("combat_action")
-            c_key = step.get("combat_key")
+            c_act = step.get("combat_action", "key")
+            c_key = step.get("combat_key", "t")
             self.enable_persistent_combat(interval=c_int, action=c_act, key=c_key)
-            combat_desc = f"Key '{self.persistent_combat_key.upper()}'" if self.persistent_combat_action == "key" else "Mouse Click"
+            combat_desc = f"Key '{self.persistent_combat_key.upper()}'" if self.persistent_combat_action == "key" else "Combat Action"
             _log(f"    [COMBAT] Persistent combat attack ACTIVATED ({combat_desc} @ interval={self.persistent_combat_interval:.2f}s) until destination reached.")
             time.sleep(0.1)
             return True
 
-        elif action == "click_mouse":
+        elif action in ("click_mouse", "press_key"):
             if self.has_executed_initial_hold:
-                _log(f"    [STEP] Initial skill click already executed in this session. Skipping click for {zone_label}.")
+                _log(f"    [STEP] Initial skill already executed in this session. Skipping for {zone_label}.")
                 return True
 
+            press_k = step.get("key")
             button = str(step.get("button", "right")).lower().strip()
-            if button == "right" and not getattr(self, "right_click_after_banner_enabled", True):
-                _log(f"    [CONFIG] Right click after banner disabled (right_click_after_banner_enabled=false). Skipping...")
+            if not press_k:
+                if button == "right":
+                    press_k = "t"
+                elif button == "middle":
+                    press_k = "q"
+                elif button == "left":
+                    press_k = None
+                else:
+                    press_k = "t"
+
+            if press_k == "t" and not getattr(self, "right_click_after_banner_enabled", True):
+                _log(f"    [CONFIG] Skill press after banner disabled (right_click_after_banner_enabled=false). Skipping...")
                 return True
+
             clicks = int(step.get("clicks", 1))
             delay = float(step.get("delay", 0.15))
             window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
-            self.move_mouse_inside_game()
-            self.status_message = f"[{zone_label}] Clicking {button.title()}..."
-            for _ in range(clicks):
-                if stop_handler.is_stopped() or not self.is_active:
-                    return False
-                if pydirectinput:
-                    if button == "right":
-                        pydirectinput.rightClick()
-                    elif button == "middle":
-                        pydirectinput.middleClick()
-                    else:
+
+            if press_k:
+                self.status_message = f"[{zone_label}] Pressing [{press_k.upper()}]..."
+                for _ in range(clicks):
+                    if stop_handler.is_stopped() or not self.is_active:
+                        return False
+                    if pydirectinput:
+                        pydirectinput.keyDown(press_k)
+                        time.sleep(0.02)
+                        pydirectinput.keyUp(press_k)
+                    time.sleep(delay)
+            else:
+                self.move_mouse_inside_game()
+                self.status_message = f"[{zone_label}] Clicking Left Mouse..."
+                for _ in range(clicks):
+                    if stop_handler.is_stopped() or not self.is_active:
+                        return False
+                    if pydirectinput:
                         pydirectinput.click()
-                time.sleep(delay)
+                    time.sleep(delay)
             return True
 
         elif action == "navigate_to_sim_location":
@@ -1005,6 +1005,7 @@ class RouteNavigator:
             return self._walk_to_coordinate(sim_pos, label="NAV→SIM", timeout=timeout, arrival_threshold=thresh)
 
         elif action == "detect_and_click_sims":
+            self.ensure_loot_labels_visible()
             priority = step.get("priority", ["sim1", "sim3", "sim2"])
             y_offset = int(step.get("click_y_offset", self.sim_click_y_offset_px))
             x_offset = int(step.get("click_x_offset", self.sim_click_x_offset_px))
@@ -1058,8 +1059,10 @@ class RouteNavigator:
 
             if step.get("only_if_no_sims", False) and context.get("sims_clicked", False):
                 _log(f"    [STEP] Sims were already selected and only_if_no_sims is set. Skipping banner click.")
+                self.hide_loot_labels()
                 return True
 
+            self.ensure_loot_labels_visible()
             app_wait = float(step.get("approach_wait", self.banner_approach_wait_seconds))
             search_attempts = int(step.get("search_attempts", self.banner_search_attempts))
             verify_delay = float(step.get("verify_delay", self.banner_verify_delay_seconds))
@@ -1154,9 +1157,13 @@ class RouteNavigator:
             else:
                 _log(f"    [WARNING] Encounter banner not detected on screen.")
                 self.move_mouse_inside_game()
+
+            # Hide loot labels after sims/banner interaction before combat/orbit
+            self.hide_loot_labels()
             return True
 
         elif action == "orbit_yellow_zone":
+            self.hide_loot_labels()
             orbit_duration = float(step.get("duration", self.orbit_duration))
             rc_interval = float(step.get("right_click_interval", self.orbit_right_click_interval_seconds))
             roll_enabled = bool(step.get("rolling_enabled", False))
@@ -1222,7 +1229,7 @@ class RouteNavigator:
             else:
                 wait_for_green = bool(step.get("wait_for_green_light", True))
             pickup_delay = float(step.get("pickup_delay", self.loot_pickup_wait_seconds))
-            app_wait = float(step.get("approach_wait", getattr(self, "loot_approach_wait_seconds", 1.5)))
+            app_wait = float(step.get("approach_wait", getattr(self, "loot_approach_wait_seconds", 1.1)))
             prev_delay = self.loot_pickup_wait_seconds
             self.loot_pickup_wait_seconds = pickup_delay
             try:
@@ -1899,6 +1906,8 @@ class RouteNavigator:
         eff_max_attempts = max_click_attempts if max_click_attempts is not None else getattr(self, "sim_max_click_attempts", 2)
         effective_order = sim_order if (sim_order is not None and len(sim_order) > 0) else ["sim1", "sim3", "sim2"]
 
+        self.ensure_loot_labels_visible()
+
         if settle_wait > 0:
             time.sleep(settle_wait)
 
@@ -2174,11 +2183,59 @@ class RouteNavigator:
 
         return None
 
+    def _press_z_key(self):
+        """Sends a clean Z keypress with 40ms duration to toggle ground item visibility."""
+        if pydirectinput:
+            try:
+                pydirectinput.keyDown("z")
+                time.sleep(0.04)
+                pydirectinput.keyUp("z")
+            except Exception:
+                try:
+                    pydirectinput.press("z")
+                except Exception:
+                    pass
+        elif pyautogui:
+            try:
+                pyautogui.press("z")
+            except Exception:
+                pass
+
+    def ensure_loot_labels_visible(self):
+        """
+        Ensures ground item/entity labels are visible (unhidden) so SIM templates
+        and encounter banners can be detected on screen.
+        If loot labels were previously hidden, presses 'Z' to unhide them.
+        """
+        if not getattr(self, "loot_z_toggle_enabled", True):
+            return
+        if getattr(self, "_loot_labels_hidden", False):
+            _log("  [LOOT] Unhiding ground labels for Sims / Encounter banner detection (Pressing [Z])...")
+            self._press_z_key()
+            self._loot_labels_hidden = False
+            time.sleep(getattr(self, "loot_z_toggle_delay_seconds", 0.3))
+
+    def hide_loot_labels(self):
+        """
+        Hides ground item/entity labels after SIMs and encounter banners have been clicked
+        so the screen remains clean during combat, movement, and orbiting.
+        If loot labels are currently visible, presses 'Z' to hide them.
+        """
+        if not getattr(self, "loot_z_toggle_enabled", True):
+            return
+        if not getattr(self, "_loot_labels_hidden", False):
+            _log("  [LOOT] Hiding ground labels after Sims / Encounter banner interaction (Pressing [Z])...")
+            self._press_z_key()
+            self._loot_labels_hidden = True
+            time.sleep(0.1)
+
     def collect_loot(self, max_pickups: Optional[int] = None, approach_wait: Optional[float] = None) -> int:
         """
         Scans screen for high-value loot matching active loot filter rules.
         Clicks left mouse button on each detected item and scans again.
-        Stops when no more loot is detected or max_pickups reached.
+        Toggles 'Z' key before looting (2x on first cycle, 3x on subsequent cycles) to collapse/unhide item labels.
+        Toggles 'Z' key after looting to hide item labels.
+        Provides detailed start-to-end timing and telemetry.
         Returns total number of loots clicked.
         """
         if getattr(self, "_is_collecting_loot", False):
@@ -2191,14 +2248,56 @@ class RouteNavigator:
         self.release_all_keys()
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
 
+        loot_start_time = time.time()
+        start_timestr = time.strftime("%H:%M:%S", time.localtime(loot_start_time))
+        z_enabled = getattr(self, "loot_z_toggle_enabled", True)
+        z_delay = getattr(self, "loot_z_toggle_delay_seconds", 0.3)
+        initial_hidden_state = getattr(self, "_loot_labels_hidden", False)
         clicked_positions: List[Tuple[int, int]] = []
+        picked_count = 0
+        pre_loot_duration = 0.0
+        post_loot_duration = 0.0
+
+        eff_app_wait = approach_wait if approach_wait is not None else getattr(self.loot_detector, "approach_wait_seconds", self.loot_approach_wait_seconds)
+
+        _log("\n" + "=" * 80)
+        _log(f"[LOOT SESSION START] Initiated at {start_timestr}")
+        _log(f"  • Item labels state : {'Hidden (Subsequent Session)' if initial_hidden_state else 'Visible (Initial Session)'}")
+        _log(f"  • Approach wait     : {eff_app_wait:.2f}s (default: {self.loot_approach_wait_seconds:.1f}s)")
+        _log(f"  • Z-key realignment : {'Enabled' if z_enabled else 'Disabled'} (Delay: {z_delay*1000:.0f}ms)")
+        _log("-" * 80)
+
         try:
+            # Pre-loot Z-key sequence to collapse item labels closer
+            if z_enabled and not stop_handler.is_stopped() and self.is_active:
+                pre_z_start = time.time()
+                if not initial_hidden_state:
+                    # First looting cycle: Press Z (hide) -> wait 300ms -> Press Z (unhide & collapse closer)
+                    _log("  [LOOT] Pre-loot sequence (Initial): Pressing [Z] -> wait 300ms -> [Z] to collapse item labels closer...")
+                    self.status_message = "[LOOT] Re-aligning items (Z -> Z)..."
+                    self._press_z_key()
+                    time.sleep(z_delay)
+                    self._press_z_key()
+                    time.sleep(z_delay)
+                else:
+                    # Subsequent looting cycle: Press Z (unhide) -> wait 300ms -> Press Z (hide) -> wait 300ms -> Press Z (unhide & collapse)
+                    _log("  [LOOT] Pre-loot sequence (Subsequent): Pressing [Z] (unhide) -> [Z] (hide) -> [Z] (unhide) to collapse labels closer...")
+                    self.status_message = "[LOOT] Unhiding & re-aligning items (Z -> Z -> Z)..."
+                    self._press_z_key()
+                    time.sleep(z_delay)
+                    self._press_z_key()
+                    time.sleep(z_delay)
+                    self._press_z_key()
+                    time.sleep(z_delay)
+                pre_loot_duration = time.time() - pre_z_start
+
             limit = max_pickups if max_pickups is not None else getattr(self.loot_detector, "max_pickups", self.max_loot_pickups)
-            _log("\n[AUTOPILOT] >>> Scanning screen for HIGH-VALUE LOOT (White Box/Red Text, Purple Uniques)...")
+            _log("[AUTOPILOT] >>> Scanning screen for HIGH-VALUE LOOT (White Box/Red Text, Purple Uniques)...")
             self.status_message = "[LOOT] Scanning screen for loot..."
 
-            picked_count = 0
             while picked_count < limit:
+                if stop_handler.is_stopped() or not self.is_active:
+                    break
                 try:
                     loot_pos = self.locate_loot(exclude_positions=clicked_positions)
                 except TypeError:
@@ -2247,6 +2346,26 @@ class RouteNavigator:
             self.status_message = f"Loot Check Complete ({picked_count} picked). Resuming route..."
             return picked_count
         finally:
+            # Post-loot Z-key sequence to hide item labels on ground
+            if z_enabled and not (stop_handler.is_stopped() or not self.is_active):
+                post_z_start = time.time()
+                _log("  [LOOT] Post-loot cleanup: Pressing [Z] to hide item labels on ground...")
+                self._press_z_key()
+                self._loot_labels_hidden = True
+                time.sleep(0.1)
+                post_loot_duration = time.time() - post_z_start
+
+            total_duration = time.time() - loot_start_time
+            end_timestr = time.strftime("%H:%M:%S", time.localtime())
+            _log("-" * 80)
+            _log(f"[LOOT SESSION FINISHED] Completed at {end_timestr}")
+            _log(f"  • Items Collected    : {picked_count}")
+            _log(f"  • Total Duration     : {total_duration:.2f}s (Start to End)")
+            if z_enabled:
+                scan_pickup_duration = max(0.0, total_duration - pre_loot_duration - post_loot_duration)
+                _log(f"  • Timing Breakdown   : Pre-loot Z alignment: {pre_loot_duration:.2f}s | Scan & Pickup: {scan_pickup_duration:.2f}s | Post-loot Z hide: {post_loot_duration:.2f}s")
+            _log("=" * 80 + "\n")
+
             self._is_collecting_loot = False
             self.is_interacting = prior_interacting
             now = time.time()
@@ -2264,7 +2383,15 @@ class RouteNavigator:
         # Fallback to monitor center
         capt = self._get_capturer()
         mon_left, mon_top, mon_w, mon_h = 0, 0, 1920, 1080
-        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+        if hasattr(capt, "get_monitors") and callable(getattr(capt, "get_monitors")):
+            monitors = capt.get_monitors()
+            if 0 <= self.monitor_idx < len(monitors):
+                mon = monitors[self.monitor_idx]
+                mon_left = mon.get("left", 0)
+                mon_top = mon.get("top", 0)
+                mon_w = mon.get("width", 1920)
+                mon_h = mon.get("height", 1080)
+        elif getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
             monitors = capt._sct.monitors
             if 0 <= self.monitor_idx < len(monitors):
                 mon = monitors[self.monitor_idx]
@@ -2350,8 +2477,9 @@ class RouteNavigator:
                 z_id = orbit_zone.get("id", "zone") if isinstance(orbit_zone, dict) else "zone"
                 return self._execute_zone_routine(custom_routine, zone_label=f"YELLOW ZONE ({z_id})", zone=orbit_zone)
 
-            # Ensure cursor starts inside the game window
+            # Ensure cursor starts inside the game window and loot labels are visible for SIM / banner detection
             self.move_mouse_inside_game()
+            self.ensure_loot_labels_visible()
 
             # Check if all interactions are disabled
             if not self.click_banner_enabled and not self.right_click_after_banner_enabled and not self.middle_click_hold_enabled:
@@ -2364,6 +2492,7 @@ class RouteNavigator:
             sims = self._detect_and_click_sims(prefix="[YELLOW ZONE]")
             if sims:
                 _log(f"  [YELLOW ZONE] Sims selected ({', '.join(sims)}). Encounter activated via Sim!")
+                self.hide_loot_labels()
                 return True
 
             # 1. Locate and click banner if enabled
@@ -2432,52 +2561,48 @@ class RouteNavigator:
                 _log("  [CONFIG] Banner clicking disabled (click_banner_enabled=false). Skipping...")
                 self.move_mouse_inside_game()
 
+            # Hide loot labels after sims/banner interaction before combat/orbit
+            self.hide_loot_labels()
+
             if stop_handler.is_stopped() or not self.is_active:
                 return False
 
-            # 2. Click right mouse button once if enabled
+            # 2. Press 'T' key skill once if enabled
             if self.right_click_after_banner_enabled:
-                self.move_mouse_inside_game()
-                _log("  [ACTION 2/3] Clicking right mouse button once inside game...")
-                self.status_message = "[YELLOW ZONE] Right-Clicking..."
+                _log("  [ACTION 2/3] Pressing 'T' key skill once...")
+                self.status_message = "[YELLOW ZONE] Pressing 'T' Skill..."
                 if pydirectinput:
-                    pydirectinput.rightClick()
-                    time.sleep(0.08)
-                    pydirectinput.mouseUp(button="right")
+                    pydirectinput.keyDown("t")
+                    time.sleep(0.04)
+                    pydirectinput.keyUp("t")
                 time.sleep(0.15)
             else:
-                _log("  [CONFIG] Right click after banner disabled. Skipping...")
+                _log("  [CONFIG] Skill after banner disabled. Skipping...")
 
             if stop_handler.is_stopped() or not self.is_active:
                 return False
 
-            # 3. Press and hold middle mouse button if enabled
+            # 3. Press and hold 'Q' key for configured duration if enabled
             if self.middle_click_hold_enabled:
-                self.move_mouse_inside_game()
                 hold_sec = self.middle_click_hold_seconds
-                _log(f"  [ACTION 3/3] Pressing and holding middle mouse button for {hold_sec:.1f}s inside game...")
+                _log(f"  [ACTION 3/3] Pressing and holding 'Q' key for {hold_sec:.1f}s...")
                 try:
                     if pydirectinput:
-                        pydirectinput.mouseDown(button="middle")
+                        pydirectinput.keyDown("q")
                     hold_start = time.time()
                     while (time.time() - hold_start) < hold_sec:
                         if stop_handler.is_stopped() or not self.is_active:
                             break
                         rem_h = max(0.0, hold_sec - (time.time() - hold_start))
-                        self.status_message = f"[YELLOW ZONE] Holding Middle Mouse ({rem_h:.1f}s)..."
+                        self.status_message = f"[YELLOW ZONE] Holding [Q] ({rem_h:.1f}s)..."
                         time.sleep(0.05)
                 finally:
                     if pydirectinput:
-                        pydirectinput.mouseUp(button="middle")
-                    try:
-                        import ctypes
-                        ctypes.windll.user32.mouse_event(0x0040, 0, 0, 0, 0)
-                    except Exception:
-                        pass
-                    _log("  [ACTION 3/3] Middle mouse button released.")
+                        pydirectinput.keyUp("q")
+                    _log("  [ACTION 3/3] 'Q' key released.")
                 time.sleep(0.1)
             else:
-                _log("  [CONFIG] Middle click hold disabled (middle_click_hold_enabled=false). Skipping...")
+                _log("  [CONFIG] Q key hold disabled (middle_click_hold_enabled=false). Skipping...")
 
             return True
         finally:
@@ -2523,6 +2648,7 @@ class RouteNavigator:
         self.release_all_keys()
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
         self.move_mouse_inside_game()
+        self.ensure_loot_labels_visible()
 
         self.status_message = "[PINK DOT] Arrived! Stopping movement..."
         _log(f"\n[AUTOPILOT] >>> REACHED PINK DOT! Stopping character for {self.pink_dot_stop_seconds:.1f}s...")
@@ -2541,6 +2667,8 @@ class RouteNavigator:
 
         # 2. Attempt to detect and click Sims: sim1 -> wait 2s -> sim3 -> wait 2s -> sim2
         sims_clicked = self._detect_and_click_sims(prefix="[PINK DOT]")
+        if sims_clicked:
+            self.hide_loot_labels()
 
         if stop_handler.is_stopped() or not self.is_active:
             return False
@@ -2609,45 +2737,41 @@ class RouteNavigator:
                 _log(f"  [WARNING] Encounter banner not detected on screen. Positioning cursor inside game.")
                 self.move_mouse_inside_game()
 
+            # Hide loot labels after banner interaction before combat/orbit
+            self.hide_loot_labels()
+
             if stop_handler.is_stopped() or not self.is_active:
                 return False
 
-            # Click right button of mouse
-            self.move_mouse_inside_game()
-            _log("  [ACTION 2/3] Clicking right mouse button once inside game...")
-            self.status_message = "[PINK DOT] Right-Clicking..."
+            # Press 'T' key skill once
+            _log("  [ACTION 2/3] Pressing 'T' key skill once...")
+            self.status_message = "[PINK DOT] Pressing 'T' Skill..."
             if pydirectinput:
-                pydirectinput.rightClick()
-                time.sleep(0.08)
-                pydirectinput.mouseUp(button="right")
+                pydirectinput.keyDown("t")
+                time.sleep(0.04)
+                pydirectinput.keyUp("t")
             time.sleep(0.15)
 
             if stop_handler.is_stopped() or not self.is_active:
                 return False
 
-            # Press and hold middle button of mouse for configured seconds
-            self.move_mouse_inside_game()
+            # Press and hold 'Q' key for configured seconds
             hold_sec = self.middle_click_hold_seconds
-            _log(f"  [ACTION 3/3] Pressing and holding middle mouse button for {hold_sec:.1f}s inside game...")
+            _log(f"  [ACTION 3/3] Pressing and holding 'Q' key for {hold_sec:.1f}s...")
             try:
                 if pydirectinput:
-                    pydirectinput.mouseDown(button="middle")
+                    pydirectinput.keyDown("q")
                 hold_start = time.time()
                 while (time.time() - hold_start) < hold_sec:
                     if stop_handler.is_stopped() or not self.is_active:
                         break
                     rem_h = max(0.0, hold_sec - (time.time() - hold_start))
-                    self.status_message = f"[PINK DOT] Holding Middle Mouse ({rem_h:.1f}s)..."
+                    self.status_message = f"[PINK DOT] Holding [Q] ({rem_h:.1f}s)..."
                     time.sleep(0.05)
             finally:
                 if pydirectinput:
-                    pydirectinput.mouseUp(button="middle")
-                try:
-                    import ctypes
-                    ctypes.windll.user32.mouse_event(0x0040, 0, 0, 0, 0)
-                except Exception:
-                    pass
-                _log("  [ACTION 3/3] Middle mouse button released.")
+                    pydirectinput.keyUp("q")
+                _log("  [ACTION 3/3] 'Q' key released.")
             time.sleep(0.1)
 
             if stop_handler.is_stopped() or not self.is_active:
@@ -2974,18 +3098,9 @@ class RouteNavigator:
                     self.last_progress_pos = current_pos
                     self.last_progress_time = now
                 else:
-                    # Periodic right-clicking while orbiting if enabled
+                    # Periodic combat attack while orbiting (key 't')
                     if self.orbit_constant_right_click_enabled:
-                        if (now - self.last_orbit_right_click) >= self.orbit_right_click_interval_seconds:
-                            self.last_orbit_right_click = now
-                            self.move_mouse_inside_game()
-                            if pydirectinput:
-                                try:
-                                    pydirectinput.rightClick()
-                                    time.sleep(0.02)
-                                    pydirectinput.mouseUp(button="right")
-                                except Exception:
-                                    pass
+                        self._trigger_persistent_combat_if_due(now)
 
                     # Orbiting around perimeter of yellow shape
                     if self.orbit_perimeter_pts:
@@ -3164,19 +3279,9 @@ class RouteNavigator:
             else:
                 self.status_message = f"WP #{target.get('index', 0)} ({target.get('name', 'WP')}) | [{key_str}] ({dist:.0f}px)"
 
-            # Periodic right-click attack during transit if persistent combat is active
-            if self.persistent_right_click_active and not self.is_orbiting:
-                rc_int = getattr(self, "persistent_right_click_interval", 0.65)
-                if (now - self.last_orbit_right_click) >= rc_int:
-                    self.last_orbit_right_click = now
-                    self.move_mouse_inside_game()
-                    if pydirectinput:
-                        try:
-                            pydirectinput.rightClick()
-                            time.sleep(0.02)
-                            pydirectinput.mouseUp(button="right")
-                        except Exception:
-                            pass
+            # Periodic combat attack during transit (key 't')
+            if (self.persistent_right_click_active or self.persistent_combat_active) and not self.is_orbiting:
+                self._trigger_persistent_combat_if_due(now)
 
             # Sustained step pulse directly into game
             self.is_simulating_key = True
@@ -3305,16 +3410,7 @@ class RouteNavigator:
                     return self.get_telemetry(target, dist, list(self.held_keys), tracking_lost=(current_pos is None))
 
                 if self.orbit_constant_right_click_enabled:
-                    if (now - self.last_orbit_right_click) >= self.orbit_right_click_interval_seconds:
-                        self.last_orbit_right_click = now
-                        self.move_mouse_inside_game()
-                        if pydirectinput:
-                            try:
-                                pydirectinput.rightClick()
-                                time.sleep(0.02)
-                                pydirectinput.mouseUp(button="right")
-                            except Exception:
-                                pass
+                    self._trigger_persistent_combat_if_due(now)
 
                 if self.orbit_perimeter_pts:
                     opt = self.orbit_perimeter_pts[self.orbit_point_idx % len(self.orbit_perimeter_pts)]

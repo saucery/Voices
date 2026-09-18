@@ -401,3 +401,137 @@ def test_orange_box_detection():
     assert 115 <= matched.x <= 125
     assert 95 <= matched.y <= 105
 
+
+def test_collect_loot_z_toggle_first_and_subsequent_cycles():
+    """
+    Verifies that collect_loot():
+    1. First cycle: presses 'Z' twice before looting, then 'Z' once after looting (hiding labels).
+    2. Subsequent cycle: presses 'Z' 3 times before looting (unhide, hide, unhide), then 'Z' once after looting.
+    """
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.loot_z_toggle_delay_seconds = 0.001  # fast in tests
+
+    z_presses: List[str] = []
+
+    def mock_press_z():
+        z_presses.append("z")
+
+    nav._press_z_key = MagicMock(side_effect=mock_press_z)
+    nav.locate_loot = MagicMock(return_value=None)  # No loot on screen
+
+    # Cycle 1 (Initial: _loot_labels_hidden is False)
+    assert nav._loot_labels_hidden is False
+    picked1 = nav.collect_loot()
+    assert picked1 == 0
+    # Pre-loot: 2 presses (Z -> Z), Post-loot: 1 press (Z) -> Total 3 presses
+    assert len(z_presses) == 3
+    assert nav._loot_labels_hidden is True
+
+    # Cycle 2 (Subsequent: _loot_labels_hidden is True)
+    z_presses.clear()
+    picked2 = nav.collect_loot()
+    assert picked2 == 0
+    # Pre-loot: 3 presses (Z -> Z -> Z), Post-loot: 1 press (Z) -> Total 4 presses
+    assert len(z_presses) == 4
+    assert nav._loot_labels_hidden is True
+
+
+def test_collect_loot_approach_wait_default_1_1s():
+    """Verifies that collect_loot defaults to 1.1s approach wait when picking up items."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.loot_z_toggle_delay_seconds = 0.001
+
+    assert nav.loot_approach_wait_seconds == 1.1
+    assert nav.loot_detector.approach_wait_seconds == 1.1
+
+    # Simulate 1 loot item
+    loot_positions = [(200, 200), None]
+    nav.locate_loot = MagicMock(side_effect=lambda **kw: loot_positions.pop(0) if loot_positions else None)
+    nav.move_mouse_inside_game = MagicMock(return_value=(200, 200))
+    nav._wait_for_approach = MagicMock()
+    nav._press_z_key = MagicMock()
+
+    with patch("src.route_navigator.pydirectinput.click"), \
+         patch("time.sleep", return_value=None):
+        picked = nav.collect_loot()
+
+    assert picked == 1
+    nav._wait_for_approach.assert_called_once_with(1.1, reason="LOOT #1")
+
+
+def test_ensure_loot_labels_visible_and_hide_loot_labels():
+    """Verifies that ensure_loot_labels_visible unhides labels and hide_loot_labels hides them."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.loot_z_toggle_delay_seconds = 0.001
+
+    z_presses: List[str] = []
+    nav._press_z_key = MagicMock(side_effect=lambda: z_presses.append("z"))
+
+    # Case 1: Already visible -> ensure_loot_labels_visible does nothing
+    nav._loot_labels_hidden = False
+    nav.ensure_loot_labels_visible()
+    assert len(z_presses) == 0
+    assert nav._loot_labels_hidden is False
+
+    # Case 2: Hide labels -> presses Z, becomes True
+    nav.hide_loot_labels()
+    assert len(z_presses) == 1
+    assert nav._loot_labels_hidden is True
+
+    # Case 3: Redundant hide -> does not send duplicate Z
+    nav.hide_loot_labels()
+    assert len(z_presses) == 1
+    assert nav._loot_labels_hidden is True
+
+    # Case 4: Unhide labels -> presses Z, becomes False
+    nav.ensure_loot_labels_visible()
+    assert len(z_presses) == 2
+    assert nav._loot_labels_hidden is False
+
+
+def test_encounter_banner_and_sims_toggle_loot_visibility():
+    """Verifies that zone routine steps unhide loot labels before search and hide them after."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.loot_z_toggle_delay_seconds = 0.001
+    nav.banner_search_attempts = 1
+    nav.banner_approach_wait_seconds = 0.0
+
+    z_actions: List[str] = []
+
+    def mock_ensure_visible():
+        z_actions.append("ensure_visible")
+        nav._loot_labels_hidden = False
+
+    def mock_hide():
+        z_actions.append("hide")
+        nav._loot_labels_hidden = True
+
+    nav.ensure_loot_labels_visible = MagicMock(side_effect=mock_ensure_visible)
+    nav.hide_loot_labels = MagicMock(side_effect=mock_hide)
+    nav.locate_encounter_banner = MagicMock(return_value=(500, 500))
+    nav.move_mouse_inside_game = MagicMock(return_value=(500, 500))
+
+    # Test click_encounter_banner step
+    step = {
+        "action": "click_encounter_banner",
+        "approach_wait": 0.0,
+        "search_attempts": 1,
+        "verify_click": False,
+        "reclick": False,
+    }
+    context = {}
+    with patch("src.route_navigator.pydirectinput.click"):
+        success = nav._execute_zone_routine_step(step, context, zone_label="TEST")
+
+    assert success is True
+    assert "ensure_visible" in z_actions
+    assert "hide" in z_actions
+    # Ensure visible was called before hide
+    assert z_actions.index("ensure_visible") < z_actions.index("hide")
+
+
+

@@ -30,10 +30,10 @@ def test_zone_routines_file_loads_on_init():
     pink3_steps = nav.zone_routines["pink_zones"]["pink_3"]["steps"]
     pink4_steps = nav.zone_routines["pink_zones"]["pink_4"]["steps"]
 
-    hold_p1 = next(s["duration"] for s in pink1_steps if s["action"] == "hold_mouse")
-    hold_p2 = next(s["duration"] for s in pink2_steps if s["action"] == "hold_mouse")
-    hold_p3 = next(s["duration"] for s in pink3_steps if s["action"] == "hold_mouse")
-    hold_p4 = next(s["duration"] for s in pink4_steps if s["action"] == "hold_mouse")
+    hold_p1 = next(s["duration"] for s in pink1_steps if s["action"] in ("hold_mouse", "hold_key"))
+    hold_p2 = next(s["duration"] for s in pink2_steps if s["action"] in ("hold_mouse", "hold_key"))
+    hold_p3 = next(s["duration"] for s in pink3_steps if s["action"] in ("hold_mouse", "hold_key"))
+    hold_p4 = next(s["duration"] for s in pink4_steps if s["action"] in ("hold_mouse", "hold_key"))
 
     assert isinstance(hold_p1, (int, float)) and hold_p1 > 0
     assert isinstance(hold_p2, (int, float)) and hold_p2 > 0
@@ -710,7 +710,7 @@ def test_persistent_combat_during_all_events_key_mode():
 
 
 def test_persistent_combat_during_all_events_right_click_mode():
-    """Verifies that right-clicking continues when persistent_combat_action is 'right_click'."""
+    """Verifies that combat key 't' continues when persistent_combat_action is 'right_click'."""
     nav = RouteNavigator(movement_path=MovementPath())
     nav.is_active = True
     nav.persistent_combat_action = "right_click"
@@ -720,7 +720,8 @@ def test_persistent_combat_during_all_events_right_click_mode():
     with patch("src.route_navigator.pydirectinput") as mock_pdi:
         nav.last_orbit_right_click = time.time() - 1.0
         nav.update((100, 100))
-        assert mock_pdi.rightClick.call_count >= 1
+        mock_pdi.keyDown.assert_any_call("t")
+        mock_pdi.keyUp.assert_any_call("t")
 
     nav.stop()
     assert nav.persistent_combat_active is False
@@ -759,12 +760,15 @@ def test_hold_mouse_and_click_mouse_only_once_on_first_pink_dot():
     step_click = {"action": "click_mouse", "button": "right", "clicks": 1}
 
     with patch("src.route_navigator.pydirectinput") as mock_pdi:
-        # First pink encounter: executes click and hold
+        # First pink encounter: executes key 't' and key 'q' hold
         nav._execute_zone_routine_step(step_click, {}, zone_label="Pink 1")
-        assert mock_pdi.rightClick.call_count == 1
+        mock_pdi.keyDown.assert_any_call("t")
+        mock_pdi.keyUp.assert_any_call("t")
 
+        mock_pdi.reset_mock()
         nav._execute_zone_routine_step(step_hold, {}, zone_label="Pink 1")
-        assert mock_pdi.mouseDown.call_count == 1
+        mock_pdi.keyDown.assert_any_call("q")
+        mock_pdi.keyUp.assert_any_call("q")
         assert nav.has_executed_initial_hold is True
         assert nav.persistent_combat_active is True
         assert nav.persistent_combat_action == "key"
@@ -773,10 +777,10 @@ def test_hold_mouse_and_click_mouse_only_once_on_first_pink_dot():
         # Second pink encounter: skips click and hold
         mock_pdi.reset_mock()
         nav._execute_zone_routine_step(step_click, {}, zone_label="Pink 2")
-        assert mock_pdi.rightClick.call_count == 0
+        mock_pdi.keyDown.assert_not_called()
 
         nav._execute_zone_routine_step(step_hold, {}, zone_label="Pink 2")
-        assert mock_pdi.mouseDown.call_count == 0
+        mock_pdi.keyDown.assert_not_called()
 
     nav.stop()
 

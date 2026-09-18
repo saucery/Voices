@@ -235,19 +235,15 @@ def test_pink_dot_no_sims_fallback_to_banner_and_middle_click(tmp_path):
     def log_click():
         actions.append("banner_click")
 
-    def log_rclick():
-        actions.append("right_click")
+    def log_kdown(key):
+        actions.append(f"down_{key}")
 
-    def log_mdown(button=None):
-        actions.append(f"down_{button}")
-
-    def log_mup(button=None):
-        actions.append(f"up_{button}")
+    def log_kup(key):
+        actions.append(f"up_{key}")
 
     with patch("src.route_navigator.pydirectinput.click", side_effect=log_click), \
-         patch("src.route_navigator.pydirectinput.rightClick", side_effect=log_rclick), \
-         patch("src.route_navigator.pydirectinput.mouseDown", side_effect=log_mdown), \
-         patch("src.route_navigator.pydirectinput.mouseUp", side_effect=log_mup), \
+         patch("src.route_navigator.pydirectinput.keyDown", side_effect=log_kdown), \
+         patch("src.route_navigator.pydirectinput.keyUp", side_effect=log_kup), \
          patch("time.sleep", return_value=None):
 
         result = navigator.execute_pink_dot_interaction(target=mock_movement_path.waypoints[0])
@@ -257,19 +253,20 @@ def test_pink_dot_no_sims_fallback_to_banner_and_middle_click(tmp_path):
     assert navigator.locate_encounter_banner.called
     assert "banner_click" in actions
 
-    # Right mouse button clicked once
-    assert "right_click" in actions
+    # 'T' key pressed down and up
+    assert "down_t" in actions
+    assert "up_t" in actions
 
-    # Middle button pressed down and up
-    assert "down_middle" in actions
-    assert "up_middle" in actions
+    # 'Q' key pressed down and up
+    assert "down_q" in actions
+    assert "up_q" in actions
 
-    # Verify execution order: banner_click -> right_click -> down_middle -> up_middle
+    # Verify execution order: banner_click -> down_t -> down_q -> up_q
     banner_i = actions.index("banner_click")
-    rclick_i = actions.index("right_click")
-    mdown_i = actions.index("down_middle")
-    mup_i = actions.index("up_middle")
-    assert banner_i < rclick_i < mdown_i < mup_i
+    t_i = actions.index("down_t")
+    qdown_i = actions.index("down_q")
+    qup_i = actions.index("up_q")
+    assert banner_i < t_i < qdown_i < qup_i
 
 
 def test_pink_dot_fallback_banner_double_check_when_still_present(tmp_path):
@@ -989,21 +986,17 @@ def test_banner_approach_wait_before_right_and_middle_click(tmp_path):
     def mock_approach(seconds, reason=""):
         event_order.append(f"approach_wait_{seconds}")
 
-    def mock_rclick():
-        event_order.append("right_click")
+    def mock_kdown(key):
+        event_order.append(f"down_{key}")
 
-    def mock_mdown(button=None):
-        event_order.append("middle_down")
-
-    def mock_mup(button=None):
-        event_order.append("middle_up")
+    def mock_kup(key):
+        event_order.append(f"up_{key}")
 
     nav._wait_for_approach = MagicMock(side_effect=mock_approach)
 
     with patch("src.route_navigator.pydirectinput.click", side_effect=mock_click), \
-         patch("src.route_navigator.pydirectinput.rightClick", side_effect=mock_rclick), \
-         patch("src.route_navigator.pydirectinput.mouseDown", side_effect=mock_mdown), \
-         patch("src.route_navigator.pydirectinput.mouseUp", side_effect=mock_mup), \
+         patch("src.route_navigator.pydirectinput.keyDown", side_effect=mock_kdown), \
+         patch("src.route_navigator.pydirectinput.keyUp", side_effect=mock_kup), \
          patch("time.sleep", return_value=None):
 
         res = nav.execute_pink_dot_interaction(target=mock_movement_path.waypoints[0])
@@ -1011,16 +1004,16 @@ def test_banner_approach_wait_before_right_and_middle_click(tmp_path):
     assert res is True
     assert "banner_click" in event_order
     assert "approach_wait_2.5" in event_order
-    assert "right_click" in event_order
-    assert "middle_down" in event_order
+    assert "down_t" in event_order
+    assert "down_q" in event_order
 
-    # Check strict sequence: banner_click -> approach_wait_2.5 -> right_click -> middle_down
+    # Check strict sequence: banner_click -> approach_wait_2.5 -> down_t -> down_q
     idx_click = event_order.index("banner_click")
     idx_wait = event_order.index("approach_wait_2.5")
-    idx_rclick = event_order.index("right_click")
-    idx_mdown = event_order.index("middle_down")
+    idx_t = event_order.index("down_t")
+    idx_q = event_order.index("down_q")
 
-    assert idx_click < idx_wait < idx_rclick < idx_mdown
+    assert idx_click < idx_wait < idx_t < idx_q
 
 
 def test_banner_reclick_after_approach_when_enabled(tmp_path):

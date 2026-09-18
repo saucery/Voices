@@ -12,6 +12,7 @@ import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from unittest.mock import MagicMock
 from src.movement_path import MovementPath
 from src.route_navigator import RouteNavigator
 
@@ -210,7 +211,7 @@ def test_locate_encounter_banner(tmp_path):
 
 
 def test_execute_yellow_zone_interaction_sequence(tmp_path, monkeypatch):
-    """Test full interaction sequence: left-click banner -> right-click -> middle hold -> release."""
+    """Test full interaction sequence: left-click banner -> key 't' -> key 'q' hold -> release."""
     actions = []
 
     # Mock pydirectinput actions
@@ -231,43 +232,43 @@ def test_execute_yellow_zone_interaction_sequence(tmp_path, monkeypatch):
             actions.append((f"mouseUp_{button}",))
 
         @staticmethod
-        def rightClick():
-            actions.append(("rightClick",))
+        def keyDown(key):
+            actions.append((f"keyDown_{key}",))
 
         @staticmethod
-        def mouseDown(button="middle"):
-            actions.append((f"mouseDown_{button}",))
+        def keyUp(key):
+            actions.append((f"keyUp_{key}",))
 
     import src.route_navigator as rn
     monkeypatch.setattr(rn, "pydirectinput", MockDirectInput)
 
     # Fast hold for unit test
     nav = RouteNavigator()
+    nav.is_active = True
     nav.zone_routines = None
     nav.middle_click_hold_seconds = 0.1
     nav.banner_search_attempts = 1
-    nav.is_active = True
-
-    # Mock banner location
+    # Mock banner location and prevent desktop sim matching
+    nav.locate_sim_template = MagicMock(return_value=None)
     monkeypatch.setattr(nav, "locate_encounter_banner", lambda: (500, 350))
 
     success = nav.execute_yellow_zone_interaction()
     assert success is True
 
     action_names = [a[0] for a in actions]
-    assert "moveTo" in action_names
     assert "click_left" in action_names
-    assert "rightClick" in action_names
-    assert "mouseDown_middle" in action_names
-    assert "mouseUp_middle" in action_names
+    assert "keyDown_t" in action_names
+    assert "keyUp_t" in action_names
+    assert "keyDown_q" in action_names
+    assert "keyUp_q" in action_names
 
-    # Check order: left click -> right click -> middle down -> middle up
+    # Check order: left click -> key t -> key q down -> key q up
     idx_left = action_names.index("click_left")
-    idx_right = action_names.index("rightClick")
-    idx_m_down = action_names.index("mouseDown_middle")
-    idx_m_up = action_names.index("mouseUp_middle")
+    idx_t = action_names.index("keyDown_t")
+    idx_q_down = action_names.index("keyDown_q")
+    idx_q_up = action_names.index("keyUp_q")
 
-    assert idx_left < idx_right < idx_m_down < idx_m_up
+    assert idx_left < idx_t < idx_q_down < idx_q_up
 
 
 def test_yellow_zone_interaction_before_orbit(synthetic_route_with_yellow_shape, monkeypatch):
@@ -278,34 +279,51 @@ def test_yellow_zone_interaction_before_orbit(synthetic_route_with_yellow_shape,
     path_mgr.load_from_painted_image(synthetic_route_with_yellow_shape, spacing=25.0)
 
     for z in path_mgr.orbit_zones:
-        z["duration"] = 0.2
-    for wp in path_mgr.waypoints:
-        if wp.get("action") == "orbit":
-            wp["orbit_zone"]["duration"] = 0.2
+        z["interacted"] = False
 
     nav = RouteNavigator(movement_path=path_mgr)
-    nav.middle_click_hold_seconds = 0.05
-    nav.banner_search_attempts = 1
+    nav.is_active = True
+    nav.zone_routines = None
 
-    def mock_interaction(orbit_zone=None):
+    def mock_interact(target=None):
         interaction_called.append(True)
         return True
 
-    monkeypatch.setattr(nav, "execute_yellow_zone_interaction", mock_interaction)
+    monkeypatch.setattr(nav, "execute_yellow_zone_interaction", mock_interact)
 
-    nav.start()
     orbit_wp = next(wp for wp in path_mgr.waypoints if wp.get("action") == "orbit")
-    path_mgr.current_idx = orbit_wp["index"]
+    orbit_idx = orbit_wp["index"]
+    path_mgr.current_idx = orbit_idx
 
-    # First arrival at yellow zone
+    # Update on arrival at orbit waypoint
     nav.update((orbit_wp["x"], orbit_wp["y"]))
+
     assert len(interaction_called) == 1
     assert nav.is_orbiting is True
 
-    # Updating while already inside the orbit does not re-trigger interaction
+    # Subsequent updates in orbit do NOT re-trigger interaction
     nav.update((orbit_wp["x"], orbit_wp["y"]))
     assert len(interaction_called) == 1
-    nav.stop()
+
+
+def test_game_center_coords_fallback(monkeypatch):
+    """Test fallback to primary monitor center when game window is not detected."""
+    nav = RouteNavigator()
+    import src.route_navigator as rn
+    monkeypatch.setattr(rn.window_focuser, "get_game_window_bounds", lambda: None)
+
+    monitors = [
+        {},
+        {"left": 100, "top": 100, "width": 900, "height": 700}
+    ]
+    mock_capt = MagicMock()
+    mock_capt.get_monitors = MagicMock(return_value=monitors)
+    nav.capturer = mock_capt
+    nav.monitor_idx = 1
+
+    cx, cy = nav.get_game_center_coords()
+    assert cx == (100 + 1000) // 2
+    assert cy == (100 + 800) // 2
 
 
 def test_mouse_movement_clamped_inside_game_window(monkeypatch):
@@ -353,12 +371,12 @@ def test_config_toggles_disable_banner_or_middle_click(monkeypatch):
             actions.append((f"mouseUp_{button}",))
 
         @staticmethod
-        def rightClick():
-            actions.append(("rightClick",))
+        def keyDown(key):
+            actions.append((f"keyDown_{key}",))
 
         @staticmethod
-        def mouseDown(button="middle"):
-            actions.append((f"mouseDown_{button}",))
+        def keyUp(key):
+            actions.append((f"keyUp_{key}",))
 
     import src.route_navigator as rn
     monkeypatch.setattr(rn, "pydirectinput", MockDirectInput)
@@ -370,14 +388,16 @@ def test_config_toggles_disable_banner_or_middle_click(monkeypatch):
     nav.click_banner_enabled = False       # Banner disabled
     nav.right_click_after_banner_enabled = True
     nav.middle_click_hold_enabled = False   # Middle hold disabled
+    nav.locate_sim_template = MagicMock(return_value=None)
+    nav.locate_encounter_banner = MagicMock(return_value=None)
 
     success = nav.execute_yellow_zone_interaction()
     assert success is True
 
     action_names = [a[0] for a in actions]
     assert "click_left" not in action_names
-    assert "mouseDown_middle" not in action_names
-    assert "rightClick" in action_names
+    assert "keyDown_q" not in action_names
+    assert "keyDown_t" in action_names
 
 
 def test_orbit_yellow_zone_disabled_toggle(synthetic_route_with_yellow_shape):
@@ -400,19 +420,20 @@ def test_orbit_yellow_zone_disabled_toggle(synthetic_route_with_yellow_shape):
 
 
 def test_orbit_constant_right_click(synthetic_route_with_yellow_shape, monkeypatch):
-    """Test that constant right-clicking fires periodically while orbiting."""
-    right_clicks = []
+    """Test that constant combat attack (key 't') fires periodically while orbiting."""
+    key_t_presses = []
 
     class MockDirectInput:
         FAILSAFE = False
         PAUSE = 0.01
 
         @staticmethod
-        def rightClick():
-            right_clicks.append(time.time())
+        def keyDown(key):
+            if key == "t":
+                key_t_presses.append(time.time())
 
         @staticmethod
-        def mouseUp(button="right"):
+        def keyUp(key):
             pass
 
     import src.route_navigator as rn
@@ -425,6 +446,9 @@ def test_orbit_constant_right_click(synthetic_route_with_yellow_shape, monkeypat
     nav = RouteNavigator(movement_path=path_mgr)
     nav.orbit_constant_right_click_enabled = True
     nav.orbit_right_click_interval_seconds = 0.05
+    nav.persistent_combat_interval = 0.05
+    nav.persistent_combat_action = "key"
+    nav.persistent_combat_key = "t"
     nav.is_orbiting = True
     nav.orbit_start_time = time.time()
     nav.orbit_duration = 5.0
@@ -436,6 +460,4 @@ def test_orbit_constant_right_click(synthetic_route_with_yellow_shape, monkeypat
     time.sleep(0.06)
     nav.update((150.0, 100.0))
 
-    assert len(right_clicks) >= 2
-
-
+    assert len(key_t_presses) >= 2

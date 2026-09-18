@@ -33,7 +33,7 @@ class EmergencyStopHandler:
         self.on_stop_callback = on_stop_callback
         self.stop_requested = False
         self._listener_running = False
-        self.tracked_keys: List[str] = ["w", "a", "s", "d", "q", "e", "space", "shift", "ctrl", "alt"]
+        self.tracked_keys: List[str] = ["w", "a", "s", "d", "q", "e", "t", "z", "space", "shift", "ctrl", "alt"]
 
         self.start_listener()
 

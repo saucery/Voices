@@ -1,6 +1,6 @@
 {
   "name": "Trail of Suffering Encounter Routine",
-  "description": "Walk to room, single right-click, verify banner, left-click (disabled), press Q for 3s, and run WASD key loop for 50s",
+  "description": "Walk to room, press T key, verify banner, left-click (disabled), press Q for 3s, and run WASD key loop for 50s",
   "steps": [
     {
       "action": "follow_edge",
@@ -16,9 +16,10 @@
       "description": "Walk towards room (Hold W for 2.5s)"
     },
     {
-      "action": "click",
-      "button": "right",
-      "description": "Single Right Click once"
+      "action": "press_key",
+      "key": "t",
+      "duration": 0.05,
+      "description": "Press T key once"
     },
     {
       "action": "wait_for_detection",

@@ -146,6 +146,17 @@ class SequenceExecutor:
                 x, y = game_center
 
         button_str = button.lower()
+        if button_str == "right":
+            print("  [ACTION] Executing single skill press 'T' (mapped from right-click)...")
+            self.press_key("t", duration=0.05)
+            time.sleep(0.1)
+            return
+        elif button_str == "middle":
+            print("  [ACTION] Executing single skill press 'Q' (mapped from middle-click)...")
+            self.press_key("q", duration=0.05)
+            time.sleep(0.1)
+            return
+
         if x is not None and y is not None:
             print(f"  [ACTION] Executing single {button_str.upper()}-click at game coordinate ({x}, {y})...")
         else:
@@ -156,14 +167,9 @@ class SequenceExecutor:
                 pydirectinput.moveTo(x, y)
                 time.sleep(0.05)
 
-            if button_str == "right":
-                pydirectinput.rightClick()
-                time.sleep(0.05)
-                pydirectinput.mouseUp(button="right")
-            else:
-                pydirectinput.click()
-                time.sleep(0.05)
-                pydirectinput.mouseUp(button="left")
+            pydirectinput.click()
+            time.sleep(0.05)
+            pydirectinput.mouseUp(button="left")
         elif pyautogui:
             if x is not None and y is not None:
                 pyautogui.moveTo(x, y)
@@ -171,12 +177,11 @@ class SequenceExecutor:
         else:
             print(f"  [SIMULATED] Single {button_str.upper()}-click at ({x}, {y})")
 
-        # Explicit Win32 mouse release safety check (0x0010 = RIGHTUP, 0x0004 = LEFTUP)
+        # Explicit Win32 mouse release safety check (0x0004 = LEFTUP)
         try:
             import ctypes
             user32 = ctypes.windll.user32
-            flag = 0x0010 if button_str == "right" else 0x0004
-            user32.mouse_event(flag, 0, 0, 0, 0)
+            user32.mouse_event(0x0004, 0, 0, 0, 0)
         except Exception:
             pass
 

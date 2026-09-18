@@ -42,21 +42,21 @@
           "description": "Click encounter banner to start encounter"
         },
         {
-          "action": "click_mouse",
-          "button": "right",
+          "action": "press_key",
+          "key": "t",
           "clicks": 1,
           "delay": 0.15,
-          "description": "Single right-click skill"
+          "description": "Press 'T' key skill"
         },
         {
-          "action": "hold_mouse",
-          "button": "middle",
+          "action": "hold_key",
+          "key": "q",
           "duration": 5,
           "combat_interval": 0.65,
           "combat_action": "key",
           "combat_key": "t",
           "right_click_interval": 0.65,
-          "description": "Hold middle mouse button for 4.0s and activate persistent 'T' key combat attack"
+          "description": "Hold 'Q' key for 5.0s and activate persistent 'T' key combat attack"
         },
         {
           "action": "orbit_yellow_zone",
@@ -76,7 +76,7 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 1,
-          "approach_wait": 1.5,
+          "approach_wait": 1.1,
           "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
@@ -123,17 +123,21 @@
           "description": "Click encounter banner to start encounter"
         },
         {
-          "action": "click_mouse",
-          "button": "right",
+          "action": "press_key",
+          "key": "t",
           "clicks": 1,
           "delay": 0.15,
-          "description": "Single right-click skill"
+          "description": "Press 'T' key skill"
         },
         {
-          "action": "hold_mouse",
-          "button": "middle",
+          "action": "hold_key",
+          "key": "q",
           "duration": 4.0,
-          "description": "Hold middle mouse button for 4.0 seconds"
+          "combat_interval": 0.65,
+          "combat_action": "key",
+          "combat_key": "t",
+          "right_click_interval": 0.65,
+          "description": "Hold 'Q' key for 4.0 seconds"
         },
         {
           "action": "orbit_yellow_zone",
@@ -153,7 +157,7 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 1,
-          "approach_wait": 1.5,
+          "approach_wait": 1.1,
           "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
@@ -200,17 +204,21 @@
           "description": "Click encounter banner to start encounter"
         },
         {
-          "action": "click_mouse",
-          "button": "right",
+          "action": "press_key",
+          "key": "t",
           "clicks": 1,
           "delay": 0.15,
-          "description": "Single right-click skill"
+          "description": "Press 'T' key skill"
         },
         {
-          "action": "hold_mouse",
-          "button": "middle",
+          "action": "hold_key",
+          "key": "q",
           "duration": 3.5,
-          "description": "Hold middle mouse button for 4.0 seconds"
+          "combat_interval": 0.65,
+          "combat_action": "key",
+          "combat_key": "t",
+          "right_click_interval": 0.65,
+          "description": "Hold 'Q' key for 3.5 seconds"
         },
         {
           "action": "orbit_yellow_zone",
@@ -230,7 +238,7 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 1,
-          "approach_wait": 1.5,
+          "approach_wait": 1.1,
           "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
@@ -277,17 +285,21 @@
           "description": "Click encounter banner to start encounter"
         },
         {
-          "action": "click_mouse",
-          "button": "right",
+          "action": "press_key",
+          "key": "t",
           "clicks": 1,
           "delay": 0.15,
-          "description": "Single right-click skill"
+          "description": "Press 'T' key skill"
         },
         {
-          "action": "hold_mouse",
-          "button": "middle",
+          "action": "hold_key",
+          "key": "q",
           "duration": 3.5,
-          "description": "Hold middle mouse button for 4.0 seconds"
+          "combat_interval": 0.65,
+          "combat_action": "key",
+          "combat_key": "t",
+          "right_click_interval": 0.65,
+          "description": "Hold 'Q' key for 3.5 seconds"
         },
         {
           "action": "orbit_yellow_zone",
@@ -307,7 +319,7 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 1,
-          "approach_wait": 1.5,
+          "approach_wait": 1.1,
           "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
@@ -354,17 +366,21 @@
           "description": "Click encounter banner to start encounter"
         },
         {
-          "action": "click_mouse",
-          "button": "right",
+          "action": "press_key",
+          "key": "t",
           "clicks": 1,
           "delay": 0.15,
-          "description": "Single right-click skill"
+          "description": "Press 'T' key skill"
         },
         {
-          "action": "hold_mouse",
-          "button": "middle",
+          "action": "hold_key",
+          "key": "q",
           "duration": 3.5,
-          "description": "Hold middle mouse button for 4.0 seconds"
+          "combat_interval": 0.65,
+          "combat_action": "key",
+          "combat_key": "t",
+          "right_click_interval": 0.65,
+          "description": "Hold 'Q' key for 3.5 seconds"
         },
         {
           "action": "orbit_yellow_zone",
@@ -384,7 +400,7 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 1,
-          "approach_wait": 1.5,
+          "approach_wait": 1.1,
           "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
@@ -431,17 +447,21 @@
           "description": "Click encounter banner to start encounter"
         },
         {
-          "action": "click_mouse",
-          "button": "right",
+          "action": "press_key",
+          "key": "t",
           "clicks": 1,
           "delay": 0.15,
-          "description": "Single right-click skill"
+          "description": "Press 'T' key skill"
         },
         {
-          "action": "hold_mouse",
-          "button": "middle",
+          "action": "hold_key",
+          "key": "q",
           "duration": 3.5,
-          "description": "Hold middle mouse button for 4.0 seconds"
+          "combat_interval": 0.65,
+          "combat_action": "key",
+          "combat_key": "t",
+          "right_click_interval": 0.65,
+          "description": "Hold 'Q' key for 3.5 seconds"
         },
         {
           "action": "orbit_yellow_zone",
@@ -461,7 +481,7 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 1,
-          "approach_wait": 1.5,
+          "approach_wait": 1.1,
           "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
@@ -508,17 +528,21 @@
           "description": "Click encounter banner to start encounter"
         },
         {
-          "action": "click_mouse",
-          "button": "right",
+          "action": "press_key",
+          "key": "t",
           "clicks": 1,
           "delay": 0.15,
-          "description": "Single right-click skill"
+          "description": "Press 'T' key skill"
         },
         {
-          "action": "hold_mouse",
-          "button": "middle",
+          "action": "hold_key",
+          "key": "q",
           "duration": 3.5,
-          "description": "Hold middle mouse button for 4.0 seconds"
+          "combat_interval": 0.65,
+          "combat_action": "key",
+          "combat_key": "t",
+          "right_click_interval": 0.65,
+          "description": "Hold 'Q' key for 3.5 seconds"
         },
         {
           "action": "orbit_yellow_zone",
@@ -538,7 +562,7 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 1,
-          "approach_wait": 1.5,
+          "approach_wait": 1.1,
           "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
         }
@@ -556,14 +580,18 @@
           "search_attempts": 5
         },
         {
-          "action": "click_mouse",
-          "button": "right",
+          "action": "press_key",
+          "key": "t",
           "clicks": 1
         },
         {
-          "action": "hold_mouse",
-          "button": "middle",
-          "duration": 3.5
+          "action": "hold_key",
+          "key": "q",
+          "duration": 3.5,
+          "combat_interval": 0.65,
+          "combat_action": "key",
+          "combat_key": "t",
+          "right_click_interval": 0.65
         },
         {
           "action": "orbit_yellow_zone",
@@ -581,7 +609,7 @@
           "action": "pickup_loot",
           "max_items": 15,
           "pickup_delay": 1,
-          "approach_wait": 1.5,
+          "approach_wait": 1.1,
           "wait_for_green_light": false
         }
       ]

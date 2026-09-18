@@ -56,3 +56,21 @@ def prevent_hardware_takeover_during_tests(monkeypatch):
         monkeypatch.setattr(window_focuser, "bring_to_front", MagicMock(return_value=True))
     except Exception:
         pass
+
+    # 5. Neuter ctypes user32 mouse/keyboard events and cursor movement
+    try:
+        import ctypes
+        if hasattr(ctypes, "windll") and hasattr(ctypes.windll, "user32"):
+            u32 = ctypes.windll.user32
+            for fn in ["mouse_event", "keybd_event", "SetCursorPos", "SendInput"]:
+                if hasattr(u32, fn):
+                    monkeypatch.setattr(u32, fn, MagicMock(return_value=1))
+    except Exception:
+        pass
+
+    # 6. Neuter RouteNavigator move_mouse_inside_game
+    try:
+        from src.route_navigator import RouteNavigator
+        monkeypatch.setattr(RouteNavigator, "move_mouse_inside_game", MagicMock(return_value=(960, 540)))
+    except Exception:
+        pass

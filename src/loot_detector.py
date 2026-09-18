@@ -67,7 +67,7 @@ class LootDetector:
         self.enabled: bool = True
         self.max_pickups: int = 20
         self.pickup_delay_seconds: float = 0.35
-        self.approach_wait_seconds: float = 1.5
+        self.approach_wait_seconds: float = 1.1
         self.save_debug_screenshots: bool = True
         self.save_pre_loot_screenshot: bool = True
         self.debug_dir: str = "loot_debug"
@@ -87,7 +87,7 @@ class LootDetector:
                     self.enabled = bool(data.get("enabled", True))
                     self.max_pickups = int(data.get("max_pickups", 20))
                     self.pickup_delay_seconds = float(data.get("pickup_delay_seconds", 0.35))
-                    self.approach_wait_seconds = float(data.get("approach_wait_seconds", 1.5))
+                    self.approach_wait_seconds = float(data.get("approach_wait_seconds", 1.1))
                     self.save_debug_screenshots = bool(data.get("save_debug_screenshots", self.save_debug_screenshots))
                     self.save_pre_loot_screenshot = bool(data.get("save_pre_loot_screenshot", data.get("save_full_screen_before_pickup", self.save_pre_loot_screenshot)))
                     self.debug_dir = str(data.get("debug_dir", self.debug_dir))

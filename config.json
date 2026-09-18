@@ -61,7 +61,11 @@
     "save_pre_loot_screenshot": true,
     "loot_debug_dir": "loot_debug",
     "zone_routines_file": "routines/zone_routines.json",
-    "loot_filter_file": "routines/loot_filter.json"
+    "loot_filter_file": "routines/loot_filter.json",
+    "minimap_early_exit_enabled": true,
+    "minimap_early_exit_min_seconds": 25.0,
+    "minimap_early_exit_check_interval": 0.5,
+    "minimap_early_exit_min_icons": 1
   },
   "rooms": [
     {

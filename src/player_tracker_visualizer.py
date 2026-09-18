@@ -80,6 +80,8 @@ class PlayerTrackerVisualizer:
         self.btn_refresh_clicked: float = 0.0
         self.btn_pink_dot_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
         self.btn_pink_dot_hover: bool = False
+        self.btn_early_exit_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
+        self.btn_early_exit_hover: bool = False
         self.btn_green_light_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
         self.btn_green_light_hover: bool = False
         self.notification_msg: str = ""
@@ -166,6 +168,10 @@ class PlayerTrackerVisualizer:
         is_pink_inside = (px <= x <= px + pw and py <= y <= py + ph)
         self.btn_pink_dot_hover = is_pink_inside
 
+        ee_x, ee_y, ee_w, ee_h = self.btn_early_exit_rect
+        is_ee_inside = (ee_x <= x <= ee_x + ee_w and ee_y <= y <= ee_y + ee_h)
+        self.btn_early_exit_hover = is_ee_inside
+
         gx, gy, gw, gh = self.btn_green_light_rect
         is_green_inside = (gx <= x <= gx + gw and gy <= y <= gy + gh)
         self.btn_green_light_hover = is_green_inside
@@ -225,6 +231,13 @@ class PlayerTrackerVisualizer:
                     wp_str = f" (WP #{t_wp})" if t_wp is not None else ""
                     self.notification_msg = f"TARGETING PINK DOT #{new_pink}{wp_str} (Next Pink #{new_pink})"
                 self.notification_expiry = time.time() + 3.5
+                return
+
+            if is_ee_inside:
+                new_state = self.navigator.toggle_minimap_early_exit(save_to_config=True)
+                min_sec = getattr(self.navigator, "minimap_early_exit_min_seconds", 25.0)
+                self.notification_msg = f"MINIMAP EARLY EXIT: {'ENABLED (Trigger >= ' + str(int(min_sec)) + 's on Loot Drop)' if new_state else 'DISABLED (Full 50s Orbit)'}"
+                self.notification_expiry = time.time() + 3.0
                 return
 
             if is_refresh_inside:
@@ -610,10 +623,48 @@ class PlayerTrackerVisualizer:
             cv2.LINE_AA,
         )
 
+        # Interactive Button: [E] EARLY EXIT TOGGLE
+        early_exit_enabled = nav_res.get("minimap_early_exit_enabled", getattr(self.navigator, "minimap_early_exit_enabled", True))
+        early_min_sec = nav_res.get("minimap_early_exit_min_seconds", getattr(self.navigator, "minimap_early_exit_min_seconds", 25.0))
+        ee_btn_w, ee_btn_h = 160, 30
+        ee_btn_x = pink_btn_x - ee_btn_w - 12
+        ee_btn_y = 12
+        self.btn_early_exit_rect = (ee_btn_x, ee_btn_y, ee_btn_w, ee_btn_h)
+
+        if early_exit_enabled:
+            ee_label = f"[E] EARLY EXIT: {int(early_min_sec)}s"
+            ee_bg = (20, 65, 95) if not self.btn_early_exit_hover else (30, 95, 135)
+            ee_border = (0, 200, 255) if not self.btn_early_exit_hover else (50, 230, 255)
+            ee_text_col = (230, 245, 255)
+            ee_dot_col = (0, 215, 255)
+        else:
+            ee_label = "[E] EARLY EXIT: OFF"
+            ee_bg = (40, 42, 48) if not self.btn_early_exit_hover else (60, 64, 72)
+            ee_border = (90, 95, 105) if not self.btn_early_exit_hover else (140, 145, 160)
+            ee_text_col = (170, 175, 185)
+            ee_dot_col = (110, 115, 125)
+
+        cv2.rectangle(dashboard, (ee_btn_x, ee_btn_y), (ee_btn_x + ee_btn_w, ee_btn_y + ee_btn_h), ee_bg, -1)
+        cv2.rectangle(dashboard, (ee_btn_x, ee_btn_y), (ee_btn_x + ee_btn_w, ee_btn_y + ee_btn_h), ee_border, 1)
+        # Glowing indicator dot
+        cv2.circle(dashboard, (ee_btn_x + 14, ee_btn_y + 15), 5, ee_dot_col, -1, cv2.LINE_AA)
+        if early_exit_enabled:
+            cv2.circle(dashboard, (ee_btn_x + 14, ee_btn_y + 15), 2, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.putText(
+            dashboard,
+            ee_label,
+            (ee_btn_x + 24, ee_btn_y + 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.36,
+            ee_text_col,
+            1,
+            cv2.LINE_AA,
+        )
+
         # Interactive Button: [G] GREEN LIGHT (GO) when waiting for loot verification
         if nav_res.get("waiting_for_green_light"):
             gl_w, gl_h = 190, 30
-            gl_x = pink_btn_x - gl_w - 12
+            gl_x = ee_btn_x - gl_w - 12
             gl_y = 12
             self.btn_green_light_rect = (gl_x, gl_y, gl_w, gl_h)
 
@@ -1265,7 +1316,7 @@ class PlayerTrackerVisualizer:
             shortcuts = "[G / CLICK] GREEN LIGHT (RESUME)  |  [F3 / X] Attack  |  [P] Pink Dot  |  [F4] Pause  |  [B] Edit Boxes  |  [N] Skip WP  |  [R] Reload  |  [Q] Exit"
             shortcut_color = (0, 255, 160)
         else:
-            shortcuts = "[A / G] Autopilot  |  [B / E] Edit Boxes  |  [1-7] Select Room  |  [S] Save  |  [F3 / X] Attack  |  [P] Pink Dot  |  [F4] Pause  |  [V] View  |  [Q] Exit"
+            shortcuts = "[A / G] Autopilot  |  [E] Early Exit  |  [P] Pink Dot  |  [B] Edit Boxes  |  [F3 / X] Attack  |  [F4] Pause  |  [V] View  |  [Q] Exit"
             shortcut_color = (140, 150, 165)
         cv2.putText(
             dashboard,
@@ -1443,6 +1494,12 @@ class PlayerTrackerVisualizer:
                     active = self.navigator.toggle_persistent_right_click()
                     self.notification_msg = "COMBAT ATTACK: ACTIVE" if active else "COMBAT ATTACK: PAUSED"
                     self.notification_expiry = time.time() + 3.0
+                elif key in [ord("e"), ord("E")]:
+                    if not self.edit_boxes_mode:
+                        new_state = self.navigator.toggle_minimap_early_exit(save_to_config=True)
+                        min_sec = getattr(self.navigator, "minimap_early_exit_min_seconds", 25.0)
+                        self.notification_msg = f"MINIMAP EARLY EXIT: {'ENABLED (Exit >= ' + str(int(min_sec)) + 's on Loot Drop)' if new_state else 'DISABLED (Full 50s Orbit)'}"
+                        self.notification_expiry = time.time() + 3.0
                 elif key in [ord("r"), ord("R")]:
                     self.reload_route()
                 elif key in [ord("n"), ord("N")]:

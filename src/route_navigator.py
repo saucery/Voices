@@ -34,6 +34,7 @@ from .screen_capturer import ScreenCapturer
 from .stop_handler import stop_handler
 from .window_focus import window_focuser
 from .loot_detector import LootDetector, LootItem
+from .minimap_extractor import MinimapExtractor
 
 
 
@@ -190,6 +191,12 @@ class RouteNavigator:
         self.zone_routines_file: str = "routines/zone_routines.json"
         self.zone_routines: Optional[Dict[str, Any]] = None
 
+        # Minimap Early Encounter Exit State & Configuration
+        self.minimap_early_exit_enabled: bool = True
+        self.minimap_early_exit_min_seconds: float = 25.0
+        self.minimap_early_exit_check_interval: float = 0.5
+        self.minimap_early_exit_min_icons: int = 1
+
         if os.path.exists(config_path):
             try:
                 with open(config_path, "r", encoding="utf-8") as f:
@@ -239,6 +246,10 @@ class RouteNavigator:
                 self.loot_debug_dir = str(ap_cfg.get("loot_debug_dir", self.loot_debug_dir))
                 self.zone_routines_file = ap_cfg.get("zone_routines_file", self.zone_routines_file)
                 self.loot_filter_file = ap_cfg.get("loot_filter_file", "routines/loot_filter.json")
+                self.minimap_early_exit_enabled = bool(ap_cfg.get("minimap_early_exit_enabled", self.minimap_early_exit_enabled))
+                self.minimap_early_exit_min_seconds = float(ap_cfg.get("minimap_early_exit_min_seconds", self.minimap_early_exit_min_seconds))
+                self.minimap_early_exit_check_interval = float(ap_cfg.get("minimap_early_exit_check_interval", self.minimap_early_exit_check_interval))
+                self.minimap_early_exit_min_icons = int(ap_cfg.get("minimap_early_exit_min_icons", self.minimap_early_exit_min_icons))
             except Exception:
                 pass
 
@@ -255,6 +266,7 @@ class RouteNavigator:
         self.loot_detector = LootDetector(getattr(self, "loot_filter_file", "routines/loot_filter.json"))
         if hasattr(self.loot_detector, "save_pre_loot_screenshot"):
             self.save_pre_loot_screenshot = bool(self.save_pre_loot_screenshot or self.loot_detector.save_pre_loot_screenshot)
+        self.minimap_extractor = MinimapExtractor()
         self.load_zone_routines()
 
         if self.start_at_pink_dot > 0 and self.movement_path.is_configured:
@@ -317,6 +329,62 @@ class RouteNavigator:
                 except Exception as e:
                     _log(f"[ROUTINES] Warning: Error parsing '{candidate}': {e}")
         return False
+
+    def toggle_minimap_early_exit(self, save_to_config: bool = True) -> bool:
+        """Toggles the minimap early encounter exit on/off and optionally persists to config.json."""
+        self.minimap_early_exit_enabled = not self.minimap_early_exit_enabled
+        state_str = "ENABLED" if self.minimap_early_exit_enabled else "DISABLED"
+        _log(f"[CONFIG] Minimap Early Encounter Exit is now {state_str} (Trigger >= {self.minimap_early_exit_min_seconds:.1f}s)")
+        if save_to_config:
+            self._save_minimap_early_exit_to_config(self.minimap_early_exit_enabled)
+        return self.minimap_early_exit_enabled
+
+    def _save_minimap_early_exit_to_config(self, enabled: bool):
+        """Persists current minimap early exit setting to config.json."""
+        config_path = getattr(self, "config_path", "config.json") or "config.json"
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                if "autopilot" not in cfg:
+                    cfg["autopilot"] = {}
+                cfg["autopilot"]["minimap_early_exit_enabled"] = bool(enabled)
+                with open(config_path, "w", encoding="utf-8") as f:
+                    json.dump(cfg, f, indent=2)
+            except Exception as e:
+                _log(f"[CONFIG] Warning: Could not save minimap_early_exit_enabled to config.json: {e}")
+
+    def check_minimap_loot_drop(self, save_debug: bool = False) -> Tuple[int, List[Dict[str, Any]]]:
+        """
+        Captures the current screen, extracts the minimap ROI, and detects
+        if any loot filter drop icons (stars, diamonds, circles) are present.
+        Returns (count, list_of_icons).
+        If save_debug is True and icons are found, saves annotated screenshot.
+        """
+        try:
+            capt = self._get_capturer()
+            screen = capt.capture()
+            if screen is None or screen.size == 0:
+                return 0, []
+            if not hasattr(self, "minimap_extractor") or self.minimap_extractor is None:
+                self.minimap_extractor = MinimapExtractor()
+            mm_crop = self.minimap_extractor.extract_roi(screen)
+            if mm_crop is None or mm_crop.size == 0:
+                return 0, []
+            if hasattr(self, "loot_detector") and self.loot_detector:
+                count, icons = self.loot_detector.detect_minimap_loot_icons(mm_crop)
+                if count > 0 and save_debug:
+                    mm_path, raw_path = self.loot_detector.save_minimap_early_exit_debug(
+                        full_screen=screen,
+                        minimap_crop=mm_crop,
+                        icons=icons,
+                        output_dir=self.loot_debug_dir or "loot_debug",
+                    )
+                    _log(f"  [EARLY EXIT SCREENSHOT] Saved detection debug image: '{mm_path}'")
+                return count, icons
+        except Exception as e:
+            _log(f"[EARLY EXIT] Warning: Minimap loot check failed: {e}")
+        return 0, []
 
     def stop(self):
         """Stops route navigation and deactivates persistent combat attacking."""
@@ -576,6 +644,9 @@ class RouteNavigator:
         self.status_message = f"Orbiting Yellow Zone ({duration:.1f}s left)"
 
         last_roll_time = time.time()
+        last_early_exit_check = 0.0
+        early_exit_confirmations = 0
+        early_exit_triggered = False
         orbit_start = time.time()
         try:
             while (time.time() - orbit_start) < duration:
@@ -595,6 +666,29 @@ class RouteNavigator:
                 # Periodic combat attack (key 't')
                 if self.orbit_constant_right_click_enabled:
                     self._trigger_persistent_combat_if_due(now)
+
+                # Check for Early Encounter Exit via Minimap Loot Drop
+                elapsed_orbit = now - orbit_start
+                if (
+                    getattr(self, "minimap_early_exit_enabled", True)
+                    and elapsed_orbit >= getattr(self, "minimap_early_exit_min_seconds", 25.0)
+                    and (now - last_early_exit_check) >= getattr(self, "minimap_early_exit_check_interval", 0.5)
+                ):
+                    last_early_exit_check = now
+                    mm_loot_count, mm_icons = self.check_minimap_loot_drop()
+                    min_req = getattr(self, "minimap_early_exit_min_icons", 1)
+                    if mm_loot_count >= min_req:
+                        early_exit_confirmations += 1
+                        # Trigger if either >=2 loot icons detected immediately, or confirmed across 2 checks
+                        if mm_loot_count >= 2 or early_exit_confirmations >= 2:
+                            _log(f"\n[ENCOUNTER EARLY EXIT] Confirmed {mm_loot_count} minimap loot icon(s) (Monsters defeated at {elapsed_orbit:.1f}s / {duration:.1f}s)! Ending combat early to collect loot...")
+                            self.status_message = f"[{zone_label}] Early Exit (Loot Detected @ {elapsed_orbit:.1f}s)"
+                            # Save annotated debug screenshots
+                            self.check_minimap_loot_drop(save_debug=True)
+                            early_exit_triggered = True
+                            break
+                    else:
+                        early_exit_confirmations = 0
 
                 current_pos = self.latest_pos
                 if current_pos is None:
@@ -708,7 +802,10 @@ class RouteNavigator:
             self.current_orbit_zone = None
             self.orbit_perimeter_pts = []
 
-        _log(f"    [ACTION] Finished orbiting yellow shape ({zone_id}) ({duration:.1f}s elapsed)!")
+        if early_exit_triggered:
+            _log(f"    [ACTION] Early encounter exit triggered for yellow shape ({zone_id}) ({time.time() - orbit_start:.1f}s elapsed)!")
+        else:
+            _log(f"    [ACTION] Finished orbiting yellow shape ({zone_id}) ({duration:.1f}s elapsed)!")
         return True
 
     def _walk_to_coordinate(
@@ -2082,6 +2179,8 @@ class RouteNavigator:
         # 1. First attempt: Use LootDetector (rules from loot_filter.json)
         if hasattr(self, "loot_detector") and self.loot_detector:
             detected_items = self.loot_detector.detect_loot(screen)
+            self._last_detected_loot_items = detected_items
+            self._last_loot_screen = screen
             for item in detected_items:
                 desktop_x = mon_left + item.center_x
                 desktop_y = mon_top + item.center_y
@@ -2309,16 +2408,20 @@ class RouteNavigator:
                         _log(f"  [LOOT] Finished picking up {picked_count} loot item(s). None remaining.")
                     break
 
-                # Save clean full-screen screenshot before picking up any loot item if enabled
+                # Save clean full-screen screenshot before picking up any loot item if enabled (reusing first scan capture)
                 if picked_count == 0 and (self.save_pre_loot_screenshot or getattr(self.loot_detector, "save_pre_loot_screenshot", False)):
                     try:
-                        capt = self._get_capturer()
-                        pre_screen = capt.capture()
-                        if pre_screen is not None and pre_screen.size > 0 and hasattr(self, "loot_detector") and self.loot_detector:
-                            detected_items = self.loot_detector.detect_loot(pre_screen)
+                        cached_screen = getattr(self, "_last_loot_screen", None)
+                        cached_items = getattr(self, "_last_detected_loot_items", None)
+                        if cached_screen is None:
+                            capt = self._get_capturer()
+                            cached_screen = capt.capture()
+                            if cached_screen is not None and cached_screen.size > 0 and hasattr(self, "loot_detector") and self.loot_detector:
+                                cached_items = self.loot_detector.detect_loot(cached_screen)
+                        if cached_screen is not None and cached_screen.size > 0 and hasattr(self, "loot_detector") and self.loot_detector:
                             out_p = self.loot_detector.save_pre_pickup_screenshot(
-                                pre_screen,
-                                all_items=detected_items,
+                                cached_screen,
+                                all_items=cached_items,
                                 output_dir=self.loot_debug_dir or getattr(self.loot_detector, "debug_dir", "loot_debug"),
                             )
                             _log(f"  [LOOT SCREENSHOT] Captured full-screen image before pickup: {out_p}")
@@ -3570,5 +3673,8 @@ class RouteNavigator:
             "persistent_combat_key": self.persistent_combat_key,
             "persistent_combat_interval": self.persistent_combat_interval,
             "has_executed_initial_hold": self.has_executed_initial_hold,
+            "minimap_early_exit_enabled": getattr(self, "minimap_early_exit_enabled", True),
+            "minimap_early_exit_min_seconds": getattr(self, "minimap_early_exit_min_seconds", 25.0),
+            "minimap_early_exit_min_icons": getattr(self, "minimap_early_exit_min_icons", 1),
         }
 

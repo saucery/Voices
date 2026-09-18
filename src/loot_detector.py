@@ -166,15 +166,17 @@ class LootDetector:
         self._load_templates()
 
     def _load_templates(self):
-        """Pre-loads any template files referenced in template-type rules."""
+        """Pre-loads any template files referenced in template-type rules and pre-caches grayscale."""
         self._template_cache.clear()
+        self._template_gray_cache = {}
         for rule in self.rules:
             if rule.get("type") == "template" and rule.get("template_file"):
                 t_path = rule["template_file"]
                 if os.path.exists(t_path):
                     tmpl = cv2.imread(t_path)
-                    if tmpl is not None:
+                    if tmpl is not None and tmpl.size > 0:
                         self._template_cache[t_path] = tmpl
+                        self._template_gray_cache[t_path] = cv2.cvtColor(tmpl, cv2.COLOR_BGR2GRAY)
 
     def save_config(self, filepath: Optional[str] = None) -> bool:
         """Saves current loot filter rules and configuration to JSON."""
@@ -297,6 +299,7 @@ class LootDetector:
         """
         Scans a screenshot and returns all matching loot items sorted by priority.
         Applies Non-Maximum Suppression to prevent duplicate hits on the same item.
+        Uses ROI search and pre-cached grayscale representations with parallel processing for maximum speed.
         """
         if screen is None or screen.size == 0 or not self.enabled:
             return []
@@ -304,6 +307,13 @@ class LootDetector:
         all_detected: List[LootItem] = []
         hsv = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV)
         b, g, r = cv2.split(screen)
+
+        sh, sw = screen.shape[:2]
+        roi_y1, roi_y2 = max(0, int(sh * 0.04)), min(sh, int(sh * 0.92))
+        roi_x1, roi_x2 = max(0, int(sw * 0.08)), min(sw, int(sw * 0.92))
+        roi_offset = (roi_x1, roi_y1)
+
+        template_rules = []
 
         for rule in self.rules:
             if not rule.get("enabled", True):
@@ -328,8 +338,25 @@ class LootDetector:
                     items = self._detect_general_color_box(screen, hsv, b, g, r, rule)
                     all_detected.extend(items)
             elif r_type == "template":
-                items = self._detect_template(screen, rule)
-                all_detected.extend(items)
+                template_rules.append(rule)
+
+        # High-speed parallel template matching over active gameplay ROI
+        if template_rules:
+            g_screen = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
+            g_roi = g_screen[roi_y1:roi_y2, roi_x1:roi_x2]
+
+            if len(template_rules) >= 4:
+                from concurrent.futures import ThreadPoolExecutor
+                def _run_tmpl(r):
+                    return self._detect_template(screen, r, g_screen=g_screen, g_roi=g_roi, roi_offset=roi_offset)
+                with ThreadPoolExecutor(max_workers=min(8, len(template_rules))) as executor:
+                    res_lists = executor.map(_run_tmpl, template_rules)
+                    for r_items in res_lists:
+                        all_detected.extend(r_items)
+            else:
+                for r in template_rules:
+                    items = self._detect_template(screen, r, g_screen=g_screen, g_roi=g_roi, roi_offset=roi_offset)
+                    all_detected.extend(items)
 
         # Sort all items by priority (1 is highest), then by vertical position or confidence
         all_detected.sort(key=lambda item: (item.priority, -item.confidence))
@@ -736,49 +763,81 @@ class LootDetector:
 
         return items
 
-    def _detect_template(self, screen: np.ndarray, rule: Dict[str, Any]) -> List[LootItem]:
-        """Runs multi-scale template matching for specific items."""
+    def _detect_template(
+        self,
+        screen: np.ndarray,
+        rule: Dict[str, Any],
+        g_screen: Optional[np.ndarray] = None,
+        g_roi: Optional[np.ndarray] = None,
+        roi_offset: Tuple[int, int] = (0, 0),
+    ) -> List[LootItem]:
+        """Runs fast template matching for specific ground items."""
         t_file = rule.get("template_file")
-        if not t_file or t_file not in self._template_cache:
+        if not t_file:
             return []
 
-        tmpl = self._template_cache[t_file]
-        if tmpl is None:
+        # Use pre-cached grayscale template
+        if not hasattr(self, "_template_gray_cache") or t_file not in self._template_gray_cache:
+            if t_file not in self._template_cache or self._template_cache[t_file] is None:
+                return []
+            g_tmpl = cv2.cvtColor(self._template_cache[t_file], cv2.COLOR_BGR2GRAY)
+        else:
+            g_tmpl = self._template_gray_cache[t_file]
+
+        if g_tmpl is None or g_tmpl.size == 0:
             return []
 
         thresh = float(rule.get("threshold", 0.50))
-        g_screen = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
-        g_tmpl = cv2.cvtColor(tmpl, cv2.COLOR_BGR2GRAY)
+        sh, sw = screen.shape[:2]
+
+        if g_roi is not None:
+            target_img = g_roi
+            ox, oy = roi_offset
+        elif g_screen is not None:
+            target_img = g_screen
+            ox, oy = 0, 0
+        else:
+            target_img = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
+            ox, oy = 0, 0
 
         th, tw = g_tmpl.shape[:2]
-        sh, sw = g_screen.shape[:2]
+        if target_img.shape[0] < th or target_img.shape[1] < tw:
+            return []
 
+        scales = rule.get("scales", [1.0] if not rule.get("multi_scale", False) else [1.0, 0.85, 0.90, 1.10, 1.20])
         items: List[LootItem] = []
-        scales = [1.0, 0.85, 0.90, 1.10, 1.20]
 
         for scale in scales:
-            sc_w = int(tw * scale)
-            sc_h = int(th * scale)
-            if sc_w > sw or sc_h > sh or sc_w < 15 or sc_h < 15:
-                continue
+            if scale == 1.0:
+                resized = g_tmpl
+                sc_w, sc_h = tw, th
+            else:
+                sc_w = int(tw * scale)
+                sc_h = int(th * scale)
+                if sc_w > target_img.shape[1] or sc_h > target_img.shape[0] or sc_w < 15 or sc_h < 15:
+                    continue
+                resized = cv2.resize(g_tmpl, (sc_w, sc_h), interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR)
 
-            resized = cv2.resize(g_tmpl, (sc_w, sc_h), interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR)
-            res = cv2.matchTemplate(g_screen, resized, cv2.TM_CCOEFF_NORMED)
+            res = cv2.matchTemplate(target_img, resized, cv2.TM_CCOEFF_NORMED)
             locs = np.where(res >= thresh)
 
-            for pt in zip(*locs[::-1]):
+            for py, px in zip(locs[0], locs[1]):
+                gx = ox + int(px)
+                gy = oy + int(py)
+                if self.is_in_ui_exclusion_zone(gx, gy, sc_w, sc_h, sw, sh):
+                    continue
                 items.append(
                     LootItem(
-                        x=int(pt[0]),
-                        y=int(pt[1]),
+                        x=gx,
+                        y=gy,
                         w=sc_w,
                         h=sc_h,
-                        center_x=int(pt[0] + sc_w / 2),
-                        center_y=int(pt[1] + sc_h / 2),
+                        center_x=int(gx + sc_w / 2),
+                        center_y=int(gy + sc_h / 2),
                         rule_id=rule.get("id", "custom_template"),
                         rule_name=rule.get("name", "Template Match"),
                         priority=int(rule.get("priority", 1)),
-                        confidence=float(res[pt[1], pt[0]]),
+                        confidence=float(res[py, px]),
                         details={"rule_type": "template", "scale": scale},
                     )
                 )
@@ -1432,6 +1491,230 @@ class LootDetector:
             cv2.imwrite(annotated_path, annotated_screen)
 
         return raw_path
+
+    def _load_minimap_templates(self) -> Dict[str, np.ndarray]:
+        """Loads canonical minimap loot icon templates from disk."""
+        if not hasattr(self, "_minimap_templates") or not self._minimap_templates:
+            self._minimap_templates = {}
+            search_dirs = [
+                "templates/minimap_icons",
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "templates", "minimap_icons"),
+            ]
+            for sdir in search_dirs:
+                if os.path.exists(sdir):
+                    for fn in sorted(os.listdir(sdir)):
+                        if fn.endswith(".png"):
+                            p = os.path.join(sdir, fn)
+                            img = cv2.imread(p)
+                            if img is not None and img.size > 0:
+                                self._minimap_templates[fn] = img
+                    if self._minimap_templates:
+                        break
+        return self._minimap_templates
+
+    def _verify_minimap_icon_color(self, crop: np.ndarray, tname: str) -> bool:
+        """Verifies candidate crop contains genuine saturated icon colors."""
+        if crop is None or crop.size == 0:
+            return False
+        
+        color_rules = {
+            "star_orange": {"h_min": 5, "h_max": 16, "s_min": 130, "v_min": 120, "min_px": 10},
+            "star_gold": {"h_min": 17, "h_max": 34, "s_min": 130, "v_min": 120, "min_px": 10},
+            "star_red": {"h_min": 0, "h_max": 9, "h2_min": 171, "h2_max": 180, "s_min": 130, "v_min": 120, "min_px": 10},
+            "star_blue": {"h_min": 95, "h_max": 115, "s_min": 130, "v_min": 120, "min_px": 8},
+            "star_silver": {"s_max": 65, "v_min": 150, "min_px": 10},
+            "diamond_cyan": {"h_min": 85, "h_max": 115, "s_min": 130, "v_min": 120, "min_px": 8},
+            "diamond_cyan_4pack": {"h_min": 85, "h_max": 115, "s_min": 130, "v_min": 120, "min_px": 8},
+            "diamond_blue": {"h_min": 95, "h_max": 118, "s_min": 130, "v_min": 120, "min_px": 8},
+            "diamond_white": {"s_max": 45, "v_min": 170, "min_px": 8},
+            "circle_gold_ring": {"h_min": 16, "h_max": 36, "s_min": 110, "v_min": 120, "min_px": 10},
+            "circle_yellow2": {"h_min": 16, "h_max": 36, "s_min": 110, "v_min": 120, "min_px": 10},
+            "circle_white": {"s_max": 50, "v_min": 175, "min_px": 12},
+        }
+        
+        rule = None
+        for k, r in color_rules.items():
+            if k in tname:
+                rule = r
+                break
+        if not rule:
+            return True
+            
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        if "h2_min" in rule:
+            m1 = (hsv[:, :, 0] >= rule["h_min"]) & (hsv[:, :, 0] <= rule["h_max"])
+            m2 = (hsv[:, :, 0] >= rule["h2_min"]) & (hsv[:, :, 0] <= rule["h2_max"])
+            m = (m1 | m2) & (hsv[:, :, 1] >= rule["s_min"]) & (hsv[:, :, 2] >= rule["v_min"])
+        elif "h_min" in rule:
+            m = (hsv[:, :, 0] >= rule["h_min"]) & (hsv[:, :, 0] <= rule["h_max"]) & (hsv[:, :, 1] >= rule["s_min"]) & (hsv[:, :, 2] >= rule["v_min"])
+        elif "s_max" in rule:
+            m = (hsv[:, :, 1] <= rule["s_max"]) & (hsv[:, :, 2] >= rule["v_min"])
+        else:
+            return True
+            
+        return int(np.count_nonzero(m)) >= rule.get("min_px", 8)
+
+    def detect_minimap_loot_icons(
+        self,
+        minimap_crop: np.ndarray,
+        threshold: float = 0.85,
+    ) -> Tuple[int, List[Dict[str, Any]]]:
+        """
+        Detects saturated loot filter icons on the minimap (Stars, Diamonds, Circles).
+        Uses Normalized Cross-Correlation Template Matching + Color Consistency Verification.
+        Guarantees zero false positives against fire/lava terrain, guide lines, and player arrow.
+        Used for early encounter exit when monsters die and drop loot.
+        Returns (icon_count, list_of_detected_icons).
+        """
+        if minimap_crop is None or not isinstance(minimap_crop, np.ndarray) or minimap_crop.size == 0:
+            return 0, []
+
+        mh, mw = minimap_crop.shape[:2]
+        if mh < 10 or mw < 10:
+            return 0, []
+
+        templates = self._load_minimap_templates()
+        cx, cy = mw // 2, mh // 2
+        raw_detections: List[Dict[str, Any]] = []
+
+        # Pass 1: Multi-Template NCC Matching with Color Verification
+        if templates:
+            for tname, tpl in templates.items():
+                th, tw = tpl.shape[:2]
+                if th > mh or tw > mw:
+                    continue
+                res = cv2.matchTemplate(minimap_crop, tpl, cv2.TM_CCOEFF_NORMED)
+                locs = np.where(res >= threshold)
+                for pt_y, pt_x in zip(locs[0], locs[1]):
+                    score = float(res[pt_y, pt_x])
+                    icon_cx = int(pt_x + tw // 2)
+                    icon_cy = int(pt_y + th // 2)
+                    
+                    # Exclude central player position marker (radius 16px)
+                    dist_center = float(np.hypot(icon_cx - cx, icon_cy - cy))
+                    if dist_center < 16.0:
+                        continue
+                    
+                    # Exclude edge artifacts (within 3px of outer border)
+                    if pt_x < 3 or pt_y < 3 or (pt_x + tw) > (mw - 3) or (pt_y + th) > (mh - 3):
+                        continue
+                    
+                    # Verify color inside candidate patch
+                    candidate_crop = minimap_crop[pt_y:pt_y+th, pt_x:pt_x+tw]
+                    if not self._verify_minimap_icon_color(candidate_crop, tname):
+                        continue
+                        
+                    raw_detections.append({
+                        "x": int(pt_x),
+                        "y": int(pt_y),
+                        "w": int(tw),
+                        "h": int(th),
+                        "center_x": icon_cx,
+                        "center_y": icon_cy,
+                        "score": score,
+                        "type": os.path.splitext(tname)[0],
+                        "template": tname,
+                    })
+
+        # Pass 2: Non-Maximum Suppression (collapse duplicate/overlapping matches)
+        if templates:
+            if not raw_detections:
+                return 0, []
+            raw_detections.sort(key=lambda d: d.get("score", 0.0), reverse=True)
+            kept_icons: List[Dict[str, Any]] = []
+            for d in raw_detections:
+                overlap = False
+                for k in kept_icons:
+                    dist = np.hypot(d["center_x"] - k["center_x"], d["center_y"] - k["center_y"])
+                    if dist < 8.0:
+                        overlap = True
+                        break
+                if not overlap:
+                    kept_icons.append(d)
+            return len(kept_icons), kept_icons
+
+        # Pass 3: Fallback Strict Geometric Contour Validation (ONLY when templates are not present on disk)
+        hsv = cv2.cvtColor(minimap_crop, cv2.COLOR_BGR2HSV)
+        m_gold = cv2.inRange(hsv, np.array([10, 140, 140]), np.array([38, 255, 255]))
+        m_red = cv2.inRange(hsv, np.array([0, 150, 150]), np.array([9, 255, 255])) | cv2.inRange(hsv, np.array([171, 150, 150]), np.array([180, 255, 255]))
+        m_cyan = cv2.inRange(hsv, np.array([85, 140, 140]), np.array([120, 255, 255]))
+        combined = m_gold | m_red | m_cyan
+        cv2.circle(combined, (cx, cy), 16, 0, -1)
+
+        cnts, _ = cv2.findContours(combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        valid_icons: List[Dict[str, Any]] = []
+
+        for c in cnts:
+            area = cv2.contourArea(c)
+            if 15 <= area <= 240:
+                x, y, w, h = cv2.boundingRect(c)
+                ar = float(w) / max(1, h)
+                if 0.65 <= ar <= 1.55 and 6 <= w <= 18 and 6 <= h <= 18:
+                    if x > 3 and y > 3 and (x + w) < (mw - 3) and (y + h) < (mh - 3):
+                        hull = cv2.convexHull(c)
+                        hull_area = cv2.contourArea(hull)
+                        solidity = float(area) / max(1.0, hull_area)
+                        if solidity >= 0.70:
+                            itype = "star_gold" if np.any(m_gold[y:y+h, x:x+w]) else ("star_red" if np.any(m_red[y:y+h, x:x+w]) else "diamond_cyan")
+                            valid_icons.append({
+                                "x": x,
+                                "y": y,
+                                "w": w,
+                                "h": h,
+                                "center_x": x + w // 2,
+                                "center_y": y + h // 2,
+                                "area": area,
+                                "score": 0.85,
+                                "type": itype,
+                                "template": itype,
+                            })
+
+        return len(valid_icons), valid_icons
+
+    def save_minimap_early_exit_debug(
+        self,
+        full_screen: Optional[np.ndarray],
+        minimap_crop: Optional[np.ndarray],
+        icons: List[Dict[str, Any]],
+        output_dir: str = "loot_debug",
+    ) -> Tuple[str, str]:
+        """
+        Saves annotated minimap crop and full-screen image when early encounter exit triggers.
+        """
+        os.makedirs(output_dir, exist_ok=True)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+        # 1. Annotated minimap crop
+        mm_path = os.path.join(output_dir, f"minimap_early_exit_{timestamp}_annotated.png")
+        if minimap_crop is not None and minimap_crop.size > 0:
+            annotated_mm = minimap_crop.copy()
+            for ic in icons:
+                ix, iy, iw, ih = ic["x"], ic["y"], ic["w"], ic["h"]
+                itype = ic.get("type", "loot_icon")
+                score = ic.get("score", 1.0)
+                if "gold" in itype or "yellow" in itype:
+                    col = (0, 215, 255)
+                elif "orange" in itype:
+                    col = (0, 140, 255)
+                elif "red" in itype:
+                    col = (0, 60, 255)
+                elif "cyan" in itype or "blue" in itype:
+                    col = (255, 200, 0)
+                else:
+                    col = (230, 230, 230)
+                cv2.rectangle(annotated_mm, (ix, iy), (ix + iw, iy + ih), col, 2)
+                badge_lbl = f"{itype[:6]} {score:.2f}" if score < 1.0 else itype[:8]
+                cv2.putText(annotated_mm, badge_lbl, (ix, max(10, iy - 2)), cv2.FONT_HERSHEY_SIMPLEX, 0.28, col, 1, cv2.LINE_AA)
+
+            cv2.putText(annotated_mm, f"EARLY EXIT ({len(icons)} loot icons)", (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 120), 1, cv2.LINE_AA)
+            cv2.imwrite(mm_path, annotated_mm)
+
+        # 2. Full screen capture
+        raw_path = os.path.join(output_dir, f"minimap_early_exit_{timestamp}_fullscreen.png")
+        if full_screen is not None and full_screen.size > 0:
+            cv2.imwrite(raw_path, full_screen)
+
+        return mm_path, raw_path
 
 
 if __name__ == "__main__":

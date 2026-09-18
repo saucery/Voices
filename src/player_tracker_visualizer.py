@@ -85,6 +85,24 @@ class PlayerTrackerVisualizer:
         self.notification_msg: str = ""
         self.notification_expiry: float = 0.0
 
+        # Room Bounding Box Editor State
+        self.edit_boxes_mode: bool = False
+        self.selected_room_for_edit: int = 1
+        self.is_dragging_box: bool = False
+        self.drag_mode: Optional[str] = None
+        self.drag_start_map_pos: Optional[Tuple[int, int]] = None
+        self.drag_initial_box: Optional[Tuple[int, int, int, int]] = None
+        self.map_view_bounds: Tuple[int, int, int, int] = (0, 0, 1, 1)  # (offset_x, offset_y, disp_w, disp_h)
+        self.map_img_size: Tuple[int, int] = (794, 581)
+        self.cursor_map_pos: Optional[Tuple[int, int]] = None
+        self.boxes_modified: bool = False
+
+        self.btn_edit_boxes_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
+        self.btn_edit_boxes_hover: bool = False
+        self.btn_save_boxes_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
+        self.btn_save_boxes_hover: bool = False
+        self.btn_room_select_rects: Dict[int, Tuple[int, int, int, int]] = {}
+
         # Optimization & Pipeline Caching State
         self.frame_idx: int = 0
         self.cached_room_res: Optional[Dict[str, Any]] = None
@@ -109,8 +127,37 @@ class PlayerTrackerVisualizer:
             print("\n[VISUALIZER] Failed to reload route. Ensure templates/route.png has Blue start, Green line, and Red finish.")
         return success
 
+    def save_room_boxes(self) -> bool:
+        """Saves custom room bounding boxes to disk."""
+        success = self.movement_path.save_room_bounding_boxes("paths/room_bounding_boxes.json")
+        if success:
+            self.boxes_modified = False
+            self.notification_msg = "SUCCESSFULLY SAVED 7 ROOM BOUNDING BOXES!"
+            self.notification_expiry = time.time() + 3.5
+            print("\n[VISUALIZER] Successfully saved room bounding boxes to paths/room_bounding_boxes.json")
+        else:
+            self.notification_msg = "FAILED TO SAVE ROOM BOXES"
+            self.notification_expiry = time.time() + 3.5
+        return success
+
+    def nudge_active_room_box(self, dx: int, dy: int, dw: int, dh: int):
+        """Nudges or resizes the selected room bounding box."""
+        cur_box = self.movement_path.get_room_bounding_box(self.selected_room_for_edit, margin=35.0)
+        rw, rh = self.map_img_size
+        if not cur_box:
+            cur_box = (100, 100, 300, 300)
+        x1, y1, x2, y2 = cur_box
+        nx1 = max(0, min(rw - 20, x1 + dx - dw))
+        ny1 = max(0, min(rh - 20, y1 + dy - dh))
+        nx2 = max(nx1 + 20, min(rw, x2 + dx + dw))
+        ny2 = max(ny1 + 20, min(rh, y2 + dy + dh))
+        self.movement_path.set_room_bounding_box(self.selected_room_for_edit, (nx1, ny1, nx2, ny2))
+        self.boxes_modified = True
+        self.notification_msg = f"ROOM {self.selected_room_for_edit} BOX: [{nx1}, {ny1} -> {nx2}, {ny2}]"
+        self.notification_expiry = time.time() + 2.5
+
     def _on_mouse(self, event, x, y, flags, param):
-        """Handles interactive mouse hover and clicks on dashboard buttons."""
+        """Handles interactive mouse hover, button clicks, and box editing/dragging on map canvas."""
         bx, by, bw, bh = self.btn_refresh_rect
         is_refresh_inside = (bx <= x <= bx + bw and by <= y <= by + bh)
         self.btn_refresh_hover = is_refresh_inside
@@ -123,12 +170,52 @@ class PlayerTrackerVisualizer:
         is_green_inside = (gx <= x <= gx + gw and gy <= y <= gy + gh)
         self.btn_green_light_hover = is_green_inside
 
+        eb_x, eb_y, eb_w, eb_h = self.btn_edit_boxes_rect
+        is_edit_inside = (eb_x <= x <= eb_x + eb_w and eb_y <= y <= eb_y + eb_h)
+        self.btn_edit_boxes_hover = is_edit_inside
+
+        sb_x, sb_y, sb_w, sb_h = self.btn_save_boxes_rect
+        is_save_inside = (sb_x <= x <= sb_x + sb_w and sb_y <= y <= sb_y + sb_h)
+        self.btn_save_boxes_hover = is_save_inside
+
+        # Check map area coordinates
+        mo_x, mo_y, mw, mh = self.map_view_bounds
+        rw, rh = self.map_img_size
+        is_on_map = (mo_x <= x < mo_x + mw and mo_y <= y < mo_y + mh)
+
+        if is_on_map and mw > 0 and mh > 0:
+            map_x = int(np.clip((x - mo_x) / float(mw) * rw, 0, rw - 1))
+            map_y = int(np.clip((y - mo_y) / float(mh) * rh, 0, rh - 1))
+            self.cursor_map_pos = (map_x, map_y)
+        else:
+            self.cursor_map_pos = None
+
         if event == cv2.EVENT_LBUTTONDOWN:
+            if is_edit_inside:
+                self.edit_boxes_mode = not self.edit_boxes_mode
+                self.notification_msg = f"ROOM BOX EDITOR: {'ENABLED (Click & Drag to resize boxes)' if self.edit_boxes_mode else 'DISABLED'}"
+                self.notification_expiry = time.time() + 3.0
+                return
+
+            if is_save_inside:
+                self.save_room_boxes()
+                return
+
+            # Check room selection buttons
+            for r_i, (rx_b, ry_b, rw_b, rh_b) in self.btn_room_select_rects.items():
+                if rx_b <= x <= rx_b + rw_b and ry_b <= y <= ry_b + rh_b:
+                    self.selected_room_for_edit = r_i
+                    self.edit_boxes_mode = True
+                    self.notification_msg = f"SELECTED ROOM {r_i} FOR EDITING"
+                    self.notification_expiry = time.time() + 2.5
+                    return
+
             if is_green_inside and getattr(self.navigator, "waiting_for_green_light", False):
                 self.navigator.give_green_light()
                 self.notification_msg = "GREEN LIGHT GIVEN -> RESUMING ROUTE!"
                 self.notification_expiry = time.time() + 3.0
                 return
+
             if is_pink_inside:
                 new_pink = self.navigator.cycle_start_pink_dot(save_to_config=True)
                 if new_pink == 0:
@@ -139,8 +226,97 @@ class PlayerTrackerVisualizer:
                     self.notification_msg = f"TARGETING PINK DOT #{new_pink}{wp_str} (Next Pink #{new_pink})"
                 self.notification_expiry = time.time() + 3.5
                 return
+
             if is_refresh_inside:
                 self.reload_route()
+                return
+
+            # Map Canvas Click Interaction in Edit Mode
+            if is_on_map and self.edit_boxes_mode and self.cursor_map_pos:
+                mx, my = self.cursor_map_pos
+                cur_box = self.movement_path.get_room_bounding_box(self.selected_room_for_edit, margin=35.0)
+                handle_radius = 16  # map pixels
+
+                if cur_box:
+                    bx1, by1, bx2, by2 = cur_box
+                    # Check corner handles
+                    if abs(mx - bx1) <= handle_radius and abs(my - by1) <= handle_radius:
+                        self.drag_mode = "corner_tl"
+                    elif abs(mx - bx2) <= handle_radius and abs(my - by1) <= handle_radius:
+                        self.drag_mode = "corner_tr"
+                    elif abs(mx - bx1) <= handle_radius and abs(my - by2) <= handle_radius:
+                        self.drag_mode = "corner_bl"
+                    elif abs(mx - bx2) <= handle_radius and abs(my - by2) <= handle_radius:
+                        self.drag_mode = "corner_br"
+                    # Check edge handles
+                    elif abs(mx - bx1) <= handle_radius and by1 <= my <= by2:
+                        self.drag_mode = "edge_l"
+                    elif abs(mx - bx2) <= handle_radius and by1 <= my <= by2:
+                        self.drag_mode = "edge_r"
+                    elif abs(my - by1) <= handle_radius and bx1 <= mx <= bx2:
+                        self.drag_mode = "edge_t"
+                    elif abs(my - by2) <= handle_radius and bx1 <= mx <= bx2:
+                        self.drag_mode = "edge_b"
+                    elif bx1 <= mx <= bx2 and by1 <= my <= by2:
+                        self.drag_mode = "move"
+                    else:
+                        self.drag_mode = "create"
+                else:
+                    self.drag_mode = "create"
+
+                self.is_dragging_box = True
+                self.drag_start_map_pos = (mx, my)
+                self.drag_initial_box = cur_box or (mx, my, mx, my)
+
+        elif event == cv2.EVENT_MOUSEMOVE:
+            if self.is_dragging_box and self.edit_boxes_mode and self.cursor_map_pos and self.drag_initial_box:
+                mx, my = self.cursor_map_pos
+                ix1, iy1, ix2, iy2 = self.drag_initial_box
+                sx, sy = self.drag_start_map_pos or (mx, my)
+                dx, dy = mx - sx, my - sy
+
+                if self.drag_mode == "create":
+                    nx1 = min(sx, mx)
+                    ny1 = min(sy, my)
+                    nx2 = max(sx, mx)
+                    ny2 = max(sy, my)
+                elif self.drag_mode == "move":
+                    nx1 = max(0, min(rw - 1, ix1 + dx))
+                    ny1 = max(0, min(rh - 1, iy1 + dy))
+                    nx2 = max(0, min(rw - 1, ix2 + dx))
+                    ny2 = max(0, min(rh - 1, iy2 + dy))
+                elif self.drag_mode == "corner_tl":
+                    nx1, ny1, nx2, ny2 = min(mx, ix2 - 10), min(my, iy2 - 10), ix2, iy2
+                elif self.drag_mode == "corner_tr":
+                    nx1, ny1, nx2, ny2 = ix1, min(my, iy2 - 10), max(mx, ix1 + 10), iy2
+                elif self.drag_mode == "corner_bl":
+                    nx1, ny1, nx2, ny2 = min(mx, ix2 - 10), iy1, ix2, max(my, iy1 + 10)
+                elif self.drag_mode == "corner_br":
+                    nx1, ny1, nx2, ny2 = ix1, iy1, max(mx, ix1 + 10), max(my, iy1 + 10)
+                elif self.drag_mode == "edge_l":
+                    nx1, ny1, nx2, ny2 = min(mx, ix2 - 10), iy1, ix2, iy2
+                elif self.drag_mode == "edge_r":
+                    nx1, ny1, nx2, ny2 = ix1, iy1, max(mx, ix1 + 10), max(my, iy1 + 10)
+                elif self.drag_mode == "edge_t":
+                    nx1, ny1, nx2, ny2 = ix1, min(my, iy2 - 10), ix2, iy2
+                elif self.drag_mode == "edge_b":
+                    nx1, ny1, nx2, ny2 = ix1, iy1, ix2, max(my, iy1 + 10)
+                else:
+                    nx1, ny1, nx2, ny2 = ix1, iy1, ix2, iy2
+
+                self.movement_path.set_room_bounding_box(self.selected_room_for_edit, (nx1, ny1, nx2, ny2))
+                self.boxes_modified = True
+
+        elif event == cv2.EVENT_LBUTTONUP:
+            if self.is_dragging_box:
+                self.is_dragging_box = False
+                self.drag_mode = None
+                self.drag_start_map_pos = None
+                self.drag_initial_box = None
+                r_box = self.movement_path.get_room_bounding_box(self.selected_room_for_edit)
+                if r_box:
+                    self.notification_msg = f"ROOM {self.selected_room_for_edit} BOX: [{r_box[0]}, {r_box[1]} -> {r_box[2]}, {r_box[3]}] (Click [SAVE BOXES] or press 'S')"
+                    self.notification_expiry = time.time() + 4.0
 
     def get_or_create_capturer(self) -> ScreenCapturer:
         """Ensures an active ScreenCapturer on the current monitor index."""
@@ -310,8 +486,8 @@ class PlayerTrackerVisualizer:
         return self.localizer.ref_img
 
     def render_dashboard(self, minimap_crop: np.ndarray, result: Dict[str, Any]) -> np.ndarray:
-        """Renders the comprehensive visualizer comparison dashboard."""
-        canvas_w, canvas_h = 1080, 700
+        """Renders the enlarged visualizer comparison dashboard with interactive Room Bounding Box Editor."""
+        canvas_w, canvas_h = 1440, 860
         dashboard = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
         dashboard[:] = (20, 22, 26)  # Dark sleek background
 
@@ -368,8 +544,8 @@ class PlayerTrackerVisualizer:
         cv2.putText(dashboard, badge_txt, (badge_x + 10, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
 
         # Interactive Button: [R] REFRESH ROUTE
-        btn_w, btn_h = 175, 30
-        btn_x = badge_x - btn_w - 14
+        btn_w, btn_h = 165, 30
+        btn_x = badge_x - btn_w - 12
         btn_y = 12
         self.btn_refresh_rect = (btn_x, btn_y, btn_w, btn_h)
 
@@ -390,9 +566,9 @@ class PlayerTrackerVisualizer:
         cv2.putText(
             dashboard,
             "[R] REFRESH ROUTE",
-            (btn_x + 14, btn_y + 20),
+            (btn_x + 12, btn_y + 20),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.40,
+            0.38,
             (255, 255, 255) if (self.btn_refresh_hover or is_clicked) else (200, 230, 230),
             1,
             cv2.LINE_AA,
@@ -441,7 +617,6 @@ class PlayerTrackerVisualizer:
             gl_y = 12
             self.btn_green_light_rect = (gl_x, gl_y, gl_w, gl_h)
 
-            # Pulsing neon green border
             pulse = int(45 * np.sin(now * 6.0))
             g_val = min(255, max(160, 210 + pulse))
             if self.btn_green_light_hover:
@@ -453,7 +628,6 @@ class PlayerTrackerVisualizer:
 
             cv2.rectangle(dashboard, (gl_x, gl_y), (gl_x + gl_w, gl_y + gl_h), gl_bg, -1)
             cv2.rectangle(dashboard, (gl_x, gl_y), (gl_x + gl_w, gl_y + gl_h), gl_border, 2)
-            # Glowing traffic light dot
             cv2.circle(dashboard, (gl_x + 16, gl_y + 15), 6, (0, 255, 140), -1, cv2.LINE_AA)
             cv2.circle(dashboard, (gl_x + 16, gl_y + 15), 3, (255, 255, 255), -1, cv2.LINE_AA)
             cv2.putText(
@@ -471,7 +645,6 @@ class PlayerTrackerVisualizer:
 
         # High-Visibility Banner / Notification Bar
         if nav_res.get("waiting_for_green_light"):
-            # Graphic Indicator: WAITING FOR GREEN LIGHT (LOOT VERIFICATION)
             notif_w = 640
             notif_h = 36
             notif_x = (canvas_w - notif_w) // 2
@@ -481,7 +654,6 @@ class PlayerTrackerVisualizer:
             cv2.rectangle(dashboard, (notif_x, notif_y), (notif_x + notif_w, notif_y + notif_h), (12, 45, 25), -1)
             cv2.rectangle(dashboard, (notif_x, notif_y), (notif_x + notif_w, notif_y + notif_h), (0, g_b, 100), 2)
 
-            # Circular traffic lamp icon
             lamp_cx = notif_x + 22
             lamp_cy = notif_y + notif_h // 2
             cv2.circle(dashboard, (lamp_cx, lamp_cy), 11, (0, 100, 40), -1, cv2.LINE_AA)
@@ -509,7 +681,7 @@ class PlayerTrackerVisualizer:
                 cv2.LINE_AA,
             )
         elif now < self.notification_expiry and self.notification_msg:
-            notif_w = 460
+            notif_w = 560
             notif_h = 30
             notif_x = (canvas_w - notif_w) // 2
             notif_y = 58
@@ -520,7 +692,7 @@ class PlayerTrackerVisualizer:
                 self.notification_msg,
                 (notif_x + 14, notif_y + 20),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.40,
+                0.38,
                 (255, 255, 255),
                 1,
                 cv2.LINE_AA,
@@ -547,20 +719,20 @@ class PlayerTrackerVisualizer:
         # =========================================================================
         # 2. LEFT PANEL: WHAT GAME SHOWS (Minimap with Detected Orange X)
         # =========================================================================
-        panel_w, panel_h = 505, 490
-        left_x, left_y = 20, 70
+        left_x, left_y = 18, 66
+        left_w, left_h = 340, 670
 
-        cv2.rectangle(dashboard, (left_x, left_y), (left_x + panel_w, left_y + panel_h), (28, 32, 38), -1)
-        cv2.rectangle(dashboard, (left_x, left_y), (left_x + panel_w, left_y + panel_h), (48, 54, 64), 1)
+        cv2.rectangle(dashboard, (left_x, left_y), (left_x + left_w, left_y + left_h), (28, 32, 38), -1)
+        cv2.rectangle(dashboard, (left_x, left_y), (left_x + left_w, left_y + left_h), (48, 54, 64), 1)
 
-        cv2.rectangle(dashboard, (left_x, left_y), (left_x + panel_w, left_y + 34), (38, 43, 52), -1)
-        view_lbl = "EDGES & CYAN WALLS" if self.show_edges else "RAW MINIMAP CROP"
+        cv2.rectangle(dashboard, (left_x, left_y), (left_x + left_w, left_y + 34), (38, 43, 52), -1)
+        view_lbl = "EDGES" if self.show_edges else "RAW"
         cv2.putText(
             dashboard,
-            f"1. WHAT GAME SHOWS [{view_lbl}]",
-            (left_x + 12, left_y + 23),
+            f"1. MINIMAP [{view_lbl}]",
+            (left_x + 10, left_y + 23),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
+            0.42,
             (210, 220, 240),
             1,
             cv2.LINE_AA,
@@ -580,57 +752,56 @@ class PlayerTrackerVisualizer:
         icon_box = mm_player.get("box")
 
         reticle_color = (0, 255, 100) if icon_found else (0, 180, 255)
-        # Draw bounding box around detected icon
         if icon_box:
-            bx, by, bw, bh = icon_box
-            cv2.rectangle(view_crop_bgr, (bx - 2, by - 2), (bx + bw + 2, by + bh + 2), (0, 255, 255), 1)
+            ibx, iby, ibw, ibh = icon_box
+            cv2.rectangle(view_crop_bgr, (ibx - 2, iby - 2), (ibx + ibw + 2, iby + ibh + 2), (0, 255, 255), 1)
 
-        # Target reticle
         cv2.drawMarker(view_crop_bgr, (px, py), reticle_color, cv2.MARKER_CROSS, 24, 2, cv2.LINE_AA)
         cv2.circle(view_crop_bgr, (px, py), 12, reticle_color, 2, cv2.LINE_AA)
         cv2.circle(view_crop_bgr, (px, py), 3, (0, 0, 255), -1, cv2.LINE_AA)
 
         # Scale to fit left panel image area
         cw, ch = view_crop_bgr.shape[1], view_crop_bgr.shape[0]
-        img_box_w, img_box_h = panel_w - 24, panel_h - 85
+        l_img_box_w, l_img_box_h = left_w - 24, left_h - 75
         aspect = float(cw) / float(ch) if ch > 0 else 1.0
-        if img_box_w / float(img_box_h) > aspect:
-            disp_h = img_box_h
+        if l_img_box_w / float(l_img_box_h) > aspect:
+            disp_h = l_img_box_h
             disp_w = int(disp_h * aspect)
         else:
-            disp_w = img_box_w
+            disp_w = l_img_box_w
             disp_h = int(disp_w / aspect)
 
         resized_left = cv2.resize(view_crop_bgr, (disp_w, disp_h), interpolation=cv2.INTER_LINEAR)
-        offset_x = left_x + 12 + (img_box_w - disp_w) // 2
-        offset_y = left_y + 42 + (img_box_h - disp_h) // 2
+        offset_x = left_x + 12 + (l_img_box_w - disp_w) // 2
+        offset_y = left_y + 42 + (l_img_box_h - disp_h) // 2
         dashboard[offset_y : offset_y + disp_h, offset_x : offset_x + disp_w] = resized_left
         cv2.rectangle(dashboard, (offset_x, offset_y), (offset_x + disp_w, offset_y + disp_h), (75, 85, 100), 1)
 
         # Subtext on left
-        icon_status = f"Player Icon (Orange X): FOUND at ({px}, {py})" if icon_found else f"Player Center: ({px}, {py})"
+        icon_status = f"Orange X: ({px},{py})" if icon_found else f"Center: ({px},{py})"
         cv2.putText(
             dashboard,
-            f"{icon_status} | Size: {cw}x{ch}px",
-            (left_x + 12, left_y + panel_h - 14),
+            f"{icon_status} | {cw}x{ch}px",
+            (left_x + 12, left_y + left_h - 12),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.36,
+            0.34,
             (160, 220, 160) if icon_found else (160, 170, 180),
             1,
             cv2.LINE_AA,
         )
 
         # =========================================================================
-        # 3. RIGHT PANEL: WHAT BOT DETECTS (Room Template / World Map)
+        # 3. RIGHT PANEL: WHAT BOT DETECTS (Enlarged Master Map & Box Editor)
         # =========================================================================
-        right_x = left_x + panel_w + 14
+        right_x, right_y = 372, 66
+        right_w, right_h = 1050, 670
 
-        cv2.rectangle(dashboard, (right_x, left_y), (right_x + panel_w, left_y + panel_h), (28, 32, 38), -1)
-        cv2.rectangle(dashboard, (right_x, left_y), (right_x + panel_w, left_y + panel_h), (48, 54, 64), 1)
+        cv2.rectangle(dashboard, (right_x, right_y), (right_x + right_w, right_y + right_h), (28, 32, 38), -1)
+        cv2.rectangle(dashboard, (right_x, right_y), (right_x + right_w, right_y + right_h), (48, 54, 64), 1)
 
-        cv2.rectangle(dashboard, (right_x, left_y), (right_x + panel_w, left_y + 34), (38, 43, 52), -1)
+        # Right Panel Header Toolbar (y: right_y .. right_y + 36)
+        cv2.rectangle(dashboard, (right_x, right_y), (right_x + right_w, right_y + 36), (36, 42, 52), -1)
 
-        # Determine right panel view mode
         mode_names = {
             self.VIEW_ROOM_TEMPLATE: "ACTIVE ROOM TEMPLATE",
             self.VIEW_WORLD_MAP: "STITCHED WORLD MAP",
@@ -639,14 +810,95 @@ class PlayerTrackerVisualizer:
         mode_str = mode_names.get(self.view_mode, "ACTIVE ROOM TEMPLATE")
         cv2.putText(
             dashboard,
-            f"2. WHAT BOT DETECTS [{mode_str}]",
-            (right_x + 12, left_y + 23),
+            f"2. MASTER MAP [{mode_str}]",
+            (right_x + 12, right_y + 24),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
+            0.44,
             (210, 220, 240),
             1,
             cv2.LINE_AA,
         )
+
+        # --- Interactive Toolbar in Right Panel Header ---
+        # 1. [EDIT BOXES] button
+        eb_w, eb_h = 110, 26
+        eb_x = right_x + 245
+        eb_y = right_y + 5
+        self.btn_edit_boxes_rect = (eb_x, eb_y, eb_w, eb_h)
+        if self.edit_boxes_mode:
+            eb_bg = (0, 140, 200)
+            eb_border = (0, 255, 255)
+            eb_txt = "[B] EDITING"
+            eb_col = (255, 255, 255)
+        elif self.btn_edit_boxes_hover:
+            eb_bg = (55, 75, 95)
+            eb_border = (0, 200, 255)
+            eb_txt = "[B] EDIT BOXES"
+            eb_col = (220, 240, 255)
+        else:
+            eb_bg = (40, 48, 58)
+            eb_border = (90, 110, 130)
+            eb_txt = "[B] EDIT BOXES"
+            eb_col = (180, 195, 210)
+        cv2.rectangle(dashboard, (eb_x, eb_y), (eb_x + eb_w, eb_y + eb_h), eb_bg, -1)
+        cv2.rectangle(dashboard, (eb_x, eb_y), (eb_x + eb_w, eb_y + eb_h), eb_border, 1)
+        cv2.putText(dashboard, eb_txt, (eb_x + 8, eb_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.35, eb_col, 1, cv2.LINE_AA)
+
+        # 2. Room Select Tabs [R1] .. [R7]
+        self.btn_room_select_rects = {}
+        tab_start_x = eb_x + eb_w + 10
+        tab_w, tab_h = 38, 26
+        for r_i in range(1, 8):
+            t_x = tab_start_x + (r_i - 1) * (tab_w + 4)
+            self.btn_room_select_rects[r_i] = (t_x, eb_y, tab_w, tab_h)
+            is_selected = (r_i == self.selected_room_for_edit and self.edit_boxes_mode)
+            if is_selected:
+                t_bg = (0, 180, 230)
+                t_border = (180, 255, 255)
+                t_col = (10, 20, 30)
+            else:
+                t_bg = (42, 50, 62)
+                t_border = (80, 95, 115)
+                t_col = (190, 205, 220)
+            cv2.rectangle(dashboard, (t_x, eb_y), (t_x + tab_w, eb_y + tab_h), t_bg, -1)
+            cv2.rectangle(dashboard, (t_x, eb_y), (t_x + tab_w, eb_y + tab_h), t_border, 1)
+            cv2.putText(dashboard, f"R{r_i}", (t_x + 8, eb_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.36, t_col, 1, cv2.LINE_AA)
+
+        # 3. [SAVE BOXES] button
+        sb_w, sb_h = 110, 26
+        sb_x = tab_start_x + 7 * (tab_w + 4) + 10
+        self.btn_save_boxes_rect = (sb_x, eb_y, sb_w, sb_h)
+        if self.boxes_modified:
+            sb_bg = (0, 160, 60)
+            sb_border = (0, 255, 120)
+            sb_col = (255, 255, 255)
+            sb_txt = "[S] SAVE*"
+        elif self.btn_save_boxes_hover:
+            sb_bg = (45, 90, 65)
+            sb_border = (80, 230, 140)
+            sb_col = (220, 255, 230)
+            sb_txt = "[S] SAVE BOXES"
+        else:
+            sb_bg = (35, 55, 45)
+            sb_border = (60, 120, 80)
+            sb_col = (160, 200, 175)
+            sb_txt = "[S] SAVE BOXES"
+        cv2.rectangle(dashboard, (sb_x, eb_y), (sb_x + sb_w, eb_y + sb_h), sb_bg, -1)
+        cv2.rectangle(dashboard, (sb_x, eb_y), (sb_x + sb_w, eb_y + sb_h), sb_border, 1)
+        cv2.putText(dashboard, sb_txt, (sb_x + 8, eb_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.35, sb_col, 1, cv2.LINE_AA)
+
+        # 4. Box Dimension & Cursor Readout
+        cur_sel_box = self.movement_path.get_room_bounding_box(self.selected_room_for_edit, margin=35.0)
+        if cur_sel_box:
+            bx1, by1, bx2, by2 = cur_sel_box
+            b_w_px = bx2 - bx1
+            b_h_px = by2 - by1
+            info_str = f"R{self.selected_room_for_edit}: [{bx1},{by1}->{bx2},{by2}] ({b_w_px}x{b_h_px}px)"
+        else:
+            info_str = f"R{self.selected_room_for_edit}: (No Box)"
+        if self.cursor_map_pos:
+            info_str += f" | Cursor: ({self.cursor_map_pos[0]},{self.cursor_map_pos[1]})"
+        cv2.putText(dashboard, info_str, (sb_x + sb_w + 14, eb_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.33, (200, 220, 240), 1, cv2.LINE_AA)
 
         # Select right view image
         right_view_img: Optional[np.ndarray] = None
@@ -658,19 +910,18 @@ class PlayerTrackerVisualizer:
             if tmpl_img is not None:
                 right_view_img = tmpl_img.copy()
             else:
-                right_view_img = np.zeros((300, 300, 3), dtype=np.uint8)
+                right_view_img = np.zeros((581, 794, 3), dtype=np.uint8)
             player_map_pos = room_res.get("character_position") or loc_res.get("player_position")
             variant = room_res.get("matched_variant", "N/A")
             matched_info_txt = f"Room: {room_res.get('room_name')} ({variant}) | Conf: {room_res.get('confidence', 0):.0%}"
 
         elif self.view_mode == self.VIEW_WORLD_MAP:
-            # Stitched world map canvas
             if hasattr(self.world_map, "render_map_view"):
                 canvas = self.world_map.render_map_view()
             elif hasattr(self.world_map, "global_canvas"):
                 canvas = self.world_map.global_canvas.copy()
             else:
-                canvas = np.zeros((300, 300, 3), dtype=np.uint8)
+                canvas = np.zeros((581, 794, 3), dtype=np.uint8)
             right_view_img = canvas
             player_map_pos = map_res.get("global_position")
             matched_info_txt = f"Global Map | Stitched Tiles: {getattr(self.world_map, 'tile_count', 0)}"
@@ -683,52 +934,48 @@ class PlayerTrackerVisualizer:
                     rx1, rx2, ry1, ry2 = self.localizer.red_zone_bounds
                     cv2.rectangle(right_view_img, (rx1, ry1), (rx2, ry2), (0, 220, 0), 1)
             else:
-                right_view_img = np.zeros((300, 300, 3), dtype=np.uint8)
+                right_view_img = np.zeros((581, 794, 3), dtype=np.uint8)
             player_map_pos = loc_res.get("player_position")
             matched_info_txt = f"Ref Map: {self.localizer.ref_w}x{self.localizer.ref_h}px | Conf: {loc_res.get('confidence', 0):.0%}"
 
-        # Draw trajectory & player position on right view image
+        # Draw trajectory, waypoints & bounding boxes on right view image
         if right_view_img is not None:
             rw, rh = right_view_img.shape[1], right_view_img.shape[0]
+            self.map_img_size = (rw, rh)
 
             # 1. Planned Navigation Route & Waypoints
             if self.movement_path and self.movement_path.is_configured:
                 wps = self.movement_path.get_waypoints()
-                # Connect waypoints with green route line
                 for i in range(len(wps) - 1):
                     p1 = (int(wps[i]["x"]), int(wps[i]["y"]))
                     p2 = (int(wps[i + 1]["x"]), int(wps[i + 1]["y"]))
                     if 0 <= p1[0] < rw and 0 <= p1[1] < rh and 0 <= p2[0] < rw and 0 <= p2[1] < rh:
                         cv2.line(right_view_img, p1, p2, (0, 200, 60), 2, cv2.LINE_AA)
 
-                # Draw waypoint nodes
                 for wp in wps:
                     wx, wy = int(wp["x"]), int(wp["y"])
                     if 0 <= wx < rw and 0 <= wy < rh:
                         cv2.circle(right_view_img, (wx, wy), 2, (0, 255, 120), -1)
 
-                # Start Node (Blue)
-                s_wp = wps[0]
-                sx, sy = int(s_wp["x"]), int(s_wp["y"])
-                if 0 <= sx < rw and 0 <= sy < rh:
-                    cv2.circle(right_view_img, (sx, sy), 6, (255, 140, 0), -1, cv2.LINE_AA)
-                    cv2.putText(right_view_img, "START", (max(0, sx - 16), max(12, sy - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 200, 80), 1, cv2.LINE_AA)
+                if wps:
+                    s_wp = wps[0]
+                    sx, sy = int(s_wp["x"]), int(s_wp["y"])
+                    if 0 <= sx < rw and 0 <= sy < rh:
+                        cv2.circle(right_view_img, (sx, sy), 6, (255, 140, 0), -1, cv2.LINE_AA)
+                        cv2.putText(right_view_img, "START", (max(0, sx - 16), max(12, sy - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 200, 80), 1, cv2.LINE_AA)
 
-                # Finish Node (Red)
-                f_wp = wps[-1]
-                fx, fy = int(f_wp["x"]), int(f_wp["y"])
-                if 0 <= fx < rw and 0 <= fy < rh:
-                    cv2.circle(right_view_img, (fx, fy), 6, (0, 0, 255), -1, cv2.LINE_AA)
-                    cv2.putText(right_view_img, "FINISH", (max(0, fx - 16), max(12, fy - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (80, 100, 255), 1, cv2.LINE_AA)
+                    f_wp = wps[-1]
+                    fx, fy = int(f_wp["x"]), int(f_wp["y"])
+                    if 0 <= fx < rw and 0 <= fy < rh:
+                        cv2.circle(right_view_img, (fx, fy), 6, (0, 0, 255), -1, cv2.LINE_AA)
+                        cv2.putText(right_view_img, "FINISH", (max(0, fx - 16), max(12, fy - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (80, 100, 255), 1, cv2.LINE_AA)
 
-                # Highlight Current Target Waypoint (Yellow Ring)
                 curr_target = self.movement_path.get_current_target()
                 if curr_target:
                     tx, ty = int(curr_target["x"]), int(curr_target["y"])
                     if 0 <= tx < rw and 0 <= ty < rh:
                         cv2.circle(right_view_img, (tx, ty), 9, (0, 255, 255), 2, cv2.LINE_AA)
 
-                # Yellow Shape Orbit Zones & Perimeter Trails
                 orbit_zones = self.movement_path.get_orbit_zones()
                 for zone in orbit_zones:
                     zc = zone.get("center", [0, 0])
@@ -747,76 +994,70 @@ class PlayerTrackerVisualizer:
                             1,
                             cv2.LINE_AA,
                         )
-                    # Draw perimeter orbit path
                     pts = zone.get("perimeter_points", [])
                     if pts and len(pts) > 2:
                         np_pts = np.array(pts, dtype=np.int32).reshape((-1, 1, 2))
                         cv2.polylines(right_view_img, [np_pts], True, (60, 210, 255), 1, cv2.LINE_AA)
 
-                # Pink Encounter Markers (Numbered & Target-Sequenced)
                 pink_wps = self.movement_path.get_pink_waypoints() if hasattr(self.movement_path, "get_pink_waypoints") else []
                 interacted_pinks = set(nav_res.get("interacted_pink_dots", []))
                 active_target_pink = nav_res.get("start_at_pink_dot", 0)
 
                 for p_idx, (wp_i, p_wp) in enumerate(pink_wps, start=1):
                     pz_pos = p_wp.get("pink_pos") or [p_wp["x"], p_wp["y"]]
-                    px, py = int(pz_pos[0]), int(pz_pos[1])
-                    if not (0 <= px < rw and 0 <= py < rh):
+                    px_m, py_m = int(pz_pos[0]), int(pz_pos[1])
+                    if not (0 <= px_m < rw and 0 <= py_m < rh):
                         continue
 
                     is_completed = (wp_i in interacted_pinks)
                     is_target = (p_idx == active_target_pink) or (active_target_pink == 0 and p_idx == 1 and not is_completed)
 
                     if is_target:
-                        # Prominent pulsing target beacon for the selected next pink dot
                         pulse_r = int(12 + 4 * np.sin(now * 8.0))
-                        cv2.circle(right_view_img, (px, py), pulse_r, (255, 60, 230), 2, cv2.LINE_AA)
-                        cv2.circle(right_view_img, (px, py), 7, (255, 60, 230), -1, cv2.LINE_AA)
-                        cv2.circle(right_view_img, (px, py), 2, (255, 255, 255), -1, cv2.LINE_AA)
-                        cv2.drawMarker(right_view_img, (px, py), (255, 200, 255), cv2.MARKER_CROSS, 20, 1, cv2.LINE_AA)
+                        cv2.circle(right_view_img, (px_m, py_m), pulse_r, (255, 60, 230), 2, cv2.LINE_AA)
+                        cv2.circle(right_view_img, (px_m, py_m), 7, (255, 60, 230), -1, cv2.LINE_AA)
+                        cv2.circle(right_view_img, (px_m, py_m), 2, (255, 255, 255), -1, cv2.LINE_AA)
+                        cv2.drawMarker(right_view_img, (px_m, py_m), (255, 200, 255), cv2.MARKER_CROSS, 20, 1, cv2.LINE_AA)
 
                         badge_txt = f"NEXT: PINK #{p_idx}"
-                        cv2.putText(right_view_img, badge_txt, (max(4, px - 35), max(14, py - pulse_r - 4)),
+                        cv2.putText(right_view_img, badge_txt, (max(4, px_m - 35), max(14, py_m - pulse_r - 4)),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 255, 255), 2, cv2.LINE_AA)
-                        cv2.putText(right_view_img, badge_txt, (max(4, px - 35), max(14, py - pulse_r - 4)),
+                        cv2.putText(right_view_img, badge_txt, (max(4, px_m - 35), max(14, py_m - pulse_r - 4)),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 60, 230), 1, cv2.LINE_AA)
                     elif is_completed:
-                        cv2.circle(right_view_img, (px, py), 5, (90, 45, 90), -1, cv2.LINE_AA)
-                        cv2.circle(right_view_img, (px, py), 7, (130, 60, 130), 1, cv2.LINE_AA)
-                        cv2.putText(right_view_img, f"PINK #{p_idx} (DONE)", (max(0, px - 34), max(12, py - 9)),
+                        cv2.circle(right_view_img, (px_m, py_m), 5, (90, 45, 90), -1, cv2.LINE_AA)
+                        cv2.circle(right_view_img, (px_m, py_m), 7, (130, 60, 130), 1, cv2.LINE_AA)
+                        cv2.putText(right_view_img, f"PINK #{p_idx} (DONE)", (max(0, px_m - 34), max(12, py_m - 9)),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.30, (150, 110, 150), 1, cv2.LINE_AA)
                     else:
-                        cv2.circle(right_view_img, (px, py), 6, (203, 100, 255), -1, cv2.LINE_AA)
-                        cv2.circle(right_view_img, (px, py), 9, (255, 180, 255), 1, cv2.LINE_AA)
-                        cv2.putText(right_view_img, f"PINK #{p_idx}", (max(0, px - 20), max(12, py - 10)),
+                        cv2.circle(right_view_img, (px_m, py_m), 6, (203, 100, 255), -1, cv2.LINE_AA)
+                        cv2.circle(right_view_img, (px_m, py_m), 9, (255, 180, 255), 1, cv2.LINE_AA)
+                        cv2.putText(right_view_img, f"PINK #{p_idx}", (max(0, px_m - 20), max(12, py_m - 10)),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.32, (255, 180, 255), 1, cv2.LINE_AA)
 
-                    # Associated Cyan SIM Marker
                     sim_p = p_wp.get("sim_pos")
                     if sim_p:
-                        sx, sy = int(sim_p[0]), int(sim_p[1])
-                        if 0 <= sx < rw and 0 <= sy < rh:
-                            cv2.line(right_view_img, (px, py), (sx, sy), (200, 200, 0), 1, cv2.LINE_AA)
-                            cv2.circle(right_view_img, (sx, sy), 5, (255, 255, 0), -1, cv2.LINE_AA)
-                            cv2.circle(right_view_img, (sx, sy), 7, (200, 200, 0), 1, cv2.LINE_AA)
-                            cv2.putText(right_view_img, f"SIM #{p_idx}", (max(0, sx - 16), max(10, sy - 8)),
+                        sx_m, sy_m = int(sim_p[0]), int(sim_p[1])
+                        if 0 <= sx_m < rw and 0 <= sy_m < rh:
+                            cv2.line(right_view_img, (px_m, py_m), (sx_m, sy_m), (200, 200, 0), 1, cv2.LINE_AA)
+                            cv2.circle(right_view_img, (sx_m, sy_m), 5, (255, 255, 0), -1, cv2.LINE_AA)
+                            cv2.circle(right_view_img, (sx_m, sy_m), 7, (200, 200, 0), 1, cv2.LINE_AA)
+                            cv2.putText(right_view_img, f"SIM #{p_idx}", (max(0, sx_m - 16), max(10, sy_m - 8)),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.28, (255, 255, 0), 1, cv2.LINE_AA)
 
-                    # Associated White Loot Marker
                     loot_p = p_wp.get("loot_pos")
                     if loot_p:
-                        lx, ly = int(loot_p[0]), int(loot_p[1])
-                        if 0 <= lx < rw and 0 <= ly < rh:
-                            cv2.line(right_view_img, (px, py), (lx, ly), (180, 180, 180), 1, cv2.LINE_AA)
-                            cv2.circle(right_view_img, (lx, ly), 5, (255, 255, 255), -1, cv2.LINE_AA)
-                            cv2.circle(right_view_img, (lx, ly), 7, (200, 200, 200), 1, cv2.LINE_AA)
-                            cv2.putText(right_view_img, f"LOOT #{p_idx}", (max(0, lx - 18), max(10, ly - 8)),
+                        lx_m, ly_m = int(loot_p[0]), int(loot_p[1])
+                        if 0 <= lx_m < rw and 0 <= ly_m < rh:
+                            cv2.line(right_view_img, (px_m, py_m), (lx_m, ly_m), (180, 180, 180), 1, cv2.LINE_AA)
+                            cv2.circle(right_view_img, (lx_m, ly_m), 5, (255, 255, 255), -1, cv2.LINE_AA)
+                            cv2.circle(right_view_img, (lx_m, ly_m), 7, (200, 200, 200), 1, cv2.LINE_AA)
+                            cv2.putText(right_view_img, f"LOOT #{p_idx}", (max(0, lx_m - 18), max(10, ly_m - 8)),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.28, (255, 255, 255), 1, cv2.LINE_AA)
 
-            # 2. Room Bounding Boxes & Active Search ROI Overlay
-            if self.show_bounding_boxes and self.movement_path and self.movement_path.is_configured:
+            # 2. Room Bounding Boxes & Interactive Handles
+            if (self.show_bounding_boxes or self.edit_boxes_mode) and self.movement_path and self.movement_path.is_configured:
                 cur_room_idx = self.movement_path.get_current_room_index()
-                # Draw room bounding boxes for all 7 rooms
                 for r_i in range(1, 8):
                     r_box = self.movement_path.get_room_bounding_box(r_i, margin=35.0)
                     if r_box:
@@ -825,9 +1066,37 @@ class PlayerTrackerVisualizer:
                         by1 = max(0, min(rh - 1, by1))
                         bx2 = max(0, min(rw - 1, bx2))
                         by2 = max(0, min(rh - 1, by2))
+
+                        is_editing_this_room = (self.edit_boxes_mode and r_i == self.selected_room_for_edit)
                         is_active_room = (r_i == cur_room_idx)
-                        if is_active_room:
-                            # Highlighted active room box (cyan border)
+
+                        if is_editing_this_room:
+                            # Prominent glowing yellow/cyan box with handles
+                            cv2.rectangle(right_view_img, (bx1, by1), (bx2, by2), (0, 255, 255), 2, cv2.LINE_AA)
+                            cv2.rectangle(right_view_img, (bx1, by1), (bx1 + 120, by1 + 18), (0, 180, 200), -1)
+                            cv2.putText(
+                                right_view_img,
+                                f"EDITING: ROOM {r_i}",
+                                (bx1 + 4, by1 + 13),
+                                cv2.FONT_HERSHEY_SIMPLEX,
+                                0.32,
+                                (0, 0, 0),
+                                1,
+                                cv2.LINE_AA,
+                            )
+                            # 4 Corner Handles (Squares)
+                            h_sz = 6
+                            for hx, hy in [(bx1, by1), (bx2, by1), (bx1, by2), (bx2, by2)]:
+                                cv2.rectangle(right_view_img, (hx - h_sz, hy - h_sz), (hx + h_sz, hy + h_sz), (0, 255, 255), -1)
+                                cv2.rectangle(right_view_img, (hx - h_sz, hy - h_sz), (hx + h_sz, hy + h_sz), (0, 0, 0), 1)
+
+                            # 4 Edge Midpoint Handles
+                            mid_x, mid_y = (bx1 + bx2) // 2, (by1 + by2) // 2
+                            for hx, hy in [(mid_x, by1), (mid_x, by2), (bx1, mid_y), (bx2, mid_y)]:
+                                cv2.rectangle(right_view_img, (hx - h_sz + 1, hy - h_sz + 1), (hx + h_sz - 1, hy + h_sz - 1), (255, 200, 0), -1)
+                                cv2.rectangle(right_view_img, (hx - h_sz + 1, hy - h_sz + 1), (hx + h_sz - 1, hy + h_sz - 1), (0, 0, 0), 1)
+
+                        elif is_active_room and not self.edit_boxes_mode:
                             cv2.rectangle(right_view_img, (bx1, by1), (bx2, by2), (0, 230, 255), 2, cv2.LINE_AA)
                             cv2.rectangle(right_view_img, (bx1, by1), (bx1 + 95, by1 + 16), (0, 140, 160), -1)
                             cv2.putText(
@@ -841,8 +1110,9 @@ class PlayerTrackerVisualizer:
                                 cv2.LINE_AA,
                             )
                         else:
-                            # Inactive room box (slate blue)
-                            cv2.rectangle(right_view_img, (bx1, by1), (bx2, by2), (90, 80, 70), 1, cv2.LINE_AA)
+                            # Subtle outline for other rooms
+                            col = (0, 180, 220) if is_active_room else (90, 80, 70)
+                            cv2.rectangle(right_view_img, (bx1, by1), (bx2, by2), col, 1, cv2.LINE_AA)
                             cv2.putText(
                                 right_view_img,
                                 f"ROOM {r_i}",
@@ -861,7 +1131,7 @@ class PlayerTrackerVisualizer:
                 elif hasattr(self.movement_path, "get_search_roi_for_progress"):
                     active_roi = self.movement_path.get_search_roi_for_progress(margin=80.0)
 
-                if active_roi:
+                if active_roi and not self.edit_boxes_mode:
                     ax1, ay1, ax2, ay2 = active_roi
                     ax1, by_ay1 = max(0, min(rw - 1, ax1)), max(0, min(rh - 1, ay1))
                     ax2, by_ay2 = max(0, min(rw - 1, ax2)), max(0, min(rh - 1, ay2))
@@ -904,26 +1174,31 @@ class PlayerTrackerVisualizer:
                 )
 
             # Scale to fit right panel
+            r_img_box_w, r_img_box_h = right_w - 24, right_h - 75
             ref_aspect = float(rw) / float(rh) if rh > 0 else 1.0
-            if img_box_w / float(img_box_h) > ref_aspect:
-                disp_rh = img_box_h
+            if r_img_box_w / float(r_img_box_h) > ref_aspect:
+                disp_rh = r_img_box_h
                 disp_rw = int(disp_rh * ref_aspect)
             else:
-                disp_rw = img_box_w
+                disp_rw = r_img_box_w
                 disp_rh = int(disp_rw / ref_aspect)
 
             resized_right = cv2.resize(right_view_img, (disp_rw, disp_rh), interpolation=cv2.INTER_LINEAR)
-            r_offset_x = right_x + 12 + (img_box_w - disp_rw) // 2
-            r_offset_y = left_y + 42 + (img_box_h - disp_rh) // 2
+            r_offset_x = right_x + 12 + (r_img_box_w - disp_rw) // 2
+            r_offset_y = right_y + 44 + (r_img_box_h - disp_rh) // 2
             dashboard[r_offset_y : r_offset_y + disp_rh, r_offset_x : r_offset_x + disp_rw] = resized_right
             cv2.rectangle(dashboard, (r_offset_x, r_offset_y), (r_offset_x + disp_rw, r_offset_y + disp_rh), (75, 85, 100), 1)
 
+            # Store bounds for interactive mouse dragging & coordinate mapping
+            self.map_view_bounds = (r_offset_x, r_offset_y, disp_rw, disp_rh)
+
+        # Footer info on right panel
         cv2.putText(
             dashboard,
-            f"{matched_info_txt} | Press [V] to switch view",
-            (right_x + 12, left_y + panel_h - 14),
+            f"{matched_info_txt} | [V] Switch View  |  [B/Click] Edit Boxes  |  [1-7] Pick Room",
+            (right_x + 12, right_y + right_h - 12),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.36,
+            0.34,
             (160, 170, 180),
             1,
             cv2.LINE_AA,
@@ -932,55 +1207,65 @@ class PlayerTrackerVisualizer:
         # =========================================================================
         # 4. TELEMETRY & DIAGNOSTICS HUD
         # =========================================================================
-        telemetry_y = left_y + panel_h + 12
-        telemetry_h = 60
-        cv2.rectangle(dashboard, (left_x, telemetry_y), (canvas_w - 20, telemetry_y + telemetry_h), (30, 34, 42), -1)
-        cv2.rectangle(dashboard, (left_x, telemetry_y), (canvas_w - 20, telemetry_y + telemetry_h), (52, 58, 70), 1)
+        telemetry_y = left_y + left_h + 10
+        telemetry_h = 66
+        cv2.rectangle(dashboard, (left_x, telemetry_y), (canvas_w - 18, telemetry_y + telemetry_h), (30, 34, 42), -1)
+        cv2.rectangle(dashboard, (left_x, telemetry_y), (canvas_w - 18, telemetry_y + telemetry_h), (52, 58, 70), 1)
 
         # Col 1: Minimap Player Icon Coordinates
-        cv2.putText(dashboard, "MINIMAP ICON (ORANGE X)", (left_x + 14, telemetry_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
+        cv2.putText(dashboard, "MINIMAP ICON (ORANGE X)", (left_x + 14, telemetry_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
         icon_str = f"X: {px}  Y: {py}"
         icon_col = (0, 255, 120) if icon_found else (0, 200, 255)
-        cv2.putText(dashboard, icon_str, (left_x + 14, telemetry_y + 45), cv2.FONT_HERSHEY_DUPLEX, 0.65, icon_col, 1, cv2.LINE_AA)
+        cv2.putText(dashboard, icon_str, (left_x + 14, telemetry_y + 48), cv2.FONT_HERSHEY_DUPLEX, 0.65, icon_col, 1, cv2.LINE_AA)
 
         # Col 2: Room Position
-        rpos_x = left_x + 260
-        cv2.putText(dashboard, "ROOM POSITION", (rpos_x, telemetry_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
+        rpos_x = left_x + 290
+        cv2.putText(dashboard, "ROOM POSITION", (rpos_x, telemetry_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
         if player_map_pos:
             rpos_str = f"X: {player_map_pos[0]:.0f}  Y: {player_map_pos[1]:.0f}"
         else:
             rpos_str = "SEARCHING..."
-        cv2.putText(dashboard, rpos_str, (rpos_x, telemetry_y + 45), cv2.FONT_HERSHEY_DUPLEX, 0.65, (0, 255, 255), 1, cv2.LINE_AA)
+        cv2.putText(dashboard, rpos_str, (rpos_x, telemetry_y + 48), cv2.FONT_HERSHEY_DUPLEX, 0.65, (0, 255, 255), 1, cv2.LINE_AA)
 
         # Col 3: Active Room & Confidence
-        room_col_x = left_x + 510
-        cv2.putText(dashboard, "ACTIVE ROOM IDENTIFICATION", (room_col_x, telemetry_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
+        room_col_x = left_x + 560
+        cv2.putText(dashboard, "ACTIVE ROOM IDENTIFICATION", (room_col_x, telemetry_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
         room_disp = f"{room_name} ({room_conf:.0%})" if room_recognized else "Unknown Room"
-        cv2.putText(dashboard, room_disp, (room_col_x, telemetry_y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (230, 230, 235), 1, cv2.LINE_AA)
+        cv2.putText(dashboard, room_disp, (room_col_x, telemetry_y + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (230, 230, 235), 1, cv2.LINE_AA)
 
-        # Col 4: Monitor, Performance & Combat Attack State
-        perf_x = left_x + 800
-        cv2.putText(dashboard, "SYSTEM & COMBAT HUD", (perf_x, telemetry_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
+        # Col 4: Autopilot / Navigation Status
+        nav_col_x = left_x + 890
+        cv2.putText(dashboard, "AUTOPILOT / ROUTE PROGRESS", (nav_col_x, telemetry_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
+        wp_target = nav_res.get("target_index", 0)
+        total_wps = len(self.movement_path.waypoints) if self.movement_path else 0
+        nav_status_str = f"WP {wp_target}/{total_wps} | Keys: [{held_keys_str}]"
+        cv2.putText(dashboard, nav_status_str, (nav_col_x, telemetry_y + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (120, 220, 255), 1, cv2.LINE_AA)
+
+        # Col 5: Monitor, Performance & Combat Attack State
+        perf_x = left_x + 1170
+        cv2.putText(dashboard, "SYSTEM & COMBAT HUD", (perf_x, telemetry_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
         combat_on = nav_res.get("persistent_combat", False)
         c_action = nav_res.get("persistent_combat_action", "key")
         c_key = nav_res.get("persistent_combat_key", "t").upper()
         mode_label = f"Key '{c_key}'" if c_action == "key" else "R-Click"
-        combat_txt = f"[F3] Attack ({mode_label}): ON" if combat_on else f"[F3] Attack ({mode_label}): OFF"
+        combat_txt = f"[F3] Attack ({mode_label}): {'ON' if combat_on else 'OFF'}"
         combat_col = (0, 255, 120) if combat_on else (130, 140, 160)
-        perf_txt = f"Mon: {self.monitor_idx} | {self.fps:.1f} FPS | "
-        cv2.putText(dashboard, perf_txt, (perf_x, telemetry_y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180, 210, 240), 1, cv2.LINE_AA)
-        t_sz = cv2.getTextSize(perf_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)[0]
-        cv2.putText(dashboard, combat_txt, (perf_x + t_sz[0], telemetry_y + 44), cv2.FONT_HERSHEY_SIMPLEX, 0.40, combat_col, 1, cv2.LINE_AA)
+        perf_txt = f"Mon: {self.monitor_idx} | {self.fps:.1f} FPS"
+        cv2.putText(dashboard, perf_txt, (perf_x, telemetry_y + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (180, 210, 240), 1, cv2.LINE_AA)
+        cv2.putText(dashboard, combat_txt, (perf_x, telemetry_y + 54), cv2.FONT_HERSHEY_SIMPLEX, 0.36, combat_col, 1, cv2.LINE_AA)
 
         # =========================================================================
         # 5. FOOTER / KEY SHORTCUTS BAR
         # =========================================================================
-        footer_y = canvas_h - 20
-        if nav_res.get("waiting_for_green_light"):
-            shortcuts = "[G / CLICK] GREEN LIGHT (RESUME)  |  [F3 / X] Attack  |  [P] Pink Dot  |  [F4] Pause  |  [B] Boxes  |  [N] Skip WP  |  [R] Reload  |  [Q] Exit"
+        footer_y = canvas_h - 14
+        if self.edit_boxes_mode:
+            shortcuts = "[1-7] Select Room  |  [Drag / Arrows] Move Box  |  [+/-] Expand/Shrink  |  [S] Save Boxes  |  [B/E] Exit Editor  |  [Q] Exit"
+            shortcut_color = (0, 255, 255)
+        elif nav_res.get("waiting_for_green_light"):
+            shortcuts = "[G / CLICK] GREEN LIGHT (RESUME)  |  [F3 / X] Attack  |  [P] Pink Dot  |  [F4] Pause  |  [B] Edit Boxes  |  [N] Skip WP  |  [R] Reload  |  [Q] Exit"
             shortcut_color = (0, 255, 160)
         else:
-            shortcuts = "[A / G] Autopilot  |  [F3 / X] Attack  |  [P] Pink Dot  |  [F4] Pause/Resume  |  [B] Boxes  |  [N] Skip WP  |  [R] Reload  |  [V] View  |  [Q] Exit"
+            shortcuts = "[A / G] Autopilot  |  [B / E] Edit Boxes  |  [1-7] Select Room  |  [S] Save  |  [F3 / X] Attack  |  [P] Pink Dot  |  [F4] Pause  |  [V] View  |  [Q] Exit"
             shortcut_color = (140, 150, 165)
         cv2.putText(
             dashboard,
@@ -1024,17 +1309,18 @@ class PlayerTrackerVisualizer:
         print(f" Target Display:  Monitor {self.monitor_idx} (Path of Exile 2)")
         print(" Controls:")
         print("   [A / G] Toggle Autopilot Navigation (WASD along route)")
+        print("   [B / E] Toggle Room Bounding Box Editor (interactive drag/resize)")
+        print("   [1 .. 7] Select Room 1..7 for Bounding Box editing")
+        print("   [S]     Save Custom Room Bounding Boxes to disk")
         print("   [P]     Cycle Pink Dot Target (Pink #1, Pink #2, Pink #3, All)")
         print("   [F4]    Pause / Resume Autopilot (maintains route position)")
         print("   [N]     Skip current Waypoint (advance to next)")
         print("   [R]     Refresh / Reload Route from route.png (or click UI button)")
         print("   [V]     Cycle Map View: Active Room Template <-> World Map <-> Ref Map")
-        print("   [E]     Toggle Preprocessed Edges & Cyan Wall features")
         print("   [T]     Toggle Trajectory path trail")
         print("   [C]     Clear Trajectory history")
         print("   [Space] Pause / Resume live feed")
         print("   [M]     Switch target monitor (Monitor 1 <-> Monitor 2)")
-        print("   [S]     Save comparison snapshot image")
         print("   [Q/Esc] Quit visualizer")
         print("=" * 70)
 
@@ -1070,6 +1356,35 @@ class PlayerTrackerVisualizer:
                 if key in [ord("q"), ord("Q"), 27]:
                     print("\n[TRACKER VISUALIZER] Exit requested.")
                     break
+                elif key in [ord("1"), ord("2"), ord("3"), ord("4"), ord("5"), ord("6"), ord("7")]:
+                    r_selected = key - ord("0")
+                    self.selected_room_for_edit = r_selected
+                    self.edit_boxes_mode = True
+                    self.notification_msg = f"SELECTED ROOM {r_selected} FOR EDITING"
+                    self.notification_expiry = time.time() + 2.5
+                elif key in [ord("b"), ord("B"), ord("e"), ord("E")]:
+                    self.edit_boxes_mode = not self.edit_boxes_mode
+                    self.notification_msg = f"ROOM BOX EDITOR: {'ENABLED (Click & Drag to resize boxes)' if self.edit_boxes_mode else 'DISABLED'}"
+                    self.notification_expiry = time.time() + 3.0
+                    print(f"\n[TRACKER VISUALIZER] Room Bounding Box Editor: {'ENABLED' if self.edit_boxes_mode else 'DISABLED'}")
+                elif key in [ord("s"), ord("S")]:
+                    if self.edit_boxes_mode or self.boxes_modified:
+                        self.save_room_boxes()
+                    else:
+                        if last_captured_frame is not None:
+                            self.save_snapshot(dashboard)
+                elif key in [ord("+"), ord("=")]:
+                    self.nudge_active_room_box(0, 0, 5, 5)
+                elif key in [ord("-"), ord("_")]:
+                    self.nudge_active_room_box(0, 0, -5, -5)
+                elif key in [ord("i"), ord("I")]:
+                    self.nudge_active_room_box(0, -5, 0, 0)
+                elif key in [ord("k"), ord("K")]:
+                    self.nudge_active_room_box(0, 5, 0, 0)
+                elif key in [ord("j"), ord("J")]:
+                    self.nudge_active_room_box(-5, 0, 0, 0)
+                elif key in [ord("l"), ord("L")]:
+                    self.nudge_active_room_box(5, 0, 0, 0)
                 elif key in [ord("g"), ord("G")]:
                     if getattr(self.navigator, "waiting_for_green_light", False):
                         self.navigator.give_green_light()
@@ -1088,7 +1403,6 @@ class PlayerTrackerVisualizer:
                         self.notification_msg = "GREEN LIGHT GIVEN -> RESUMING ROUTE!"
                         self.notification_expiry = time.time() + 3.0
                 elif key in [ord("a"), ord("A")]:
-                    # Ignore simulated keypresses from the bot's own WASD walking
                     if self.navigator.is_simulating_key or "a" in self.navigator.held_keys or "A" in self.navigator.held_keys:
                         pass
                     elif (now - last_a_press_time) < 0.60:
@@ -1115,17 +1429,9 @@ class PlayerTrackerVisualizer:
                     self.view_mode = (self.view_mode + 1) % 3
                     mode_names = ["ACTIVE ROOM TEMPLATE", "STITCHED WORLD MAP", "FULL REFERENCE MAP"]
                     print(f"\n[TRACKER VISUALIZER] Switched View Mode: {mode_names[self.view_mode]}")
-                elif key in [ord("e"), ord("E")]:
-                    self.show_edges = not self.show_edges
-                    print(f"\n[TRACKER VISUALIZER] Preprocessed Edge View: {'ON' if self.show_edges else 'OFF'}")
                 elif key in [ord("t"), ord("T")]:
                     self.show_trajectory = not self.show_trajectory
                     print(f"\n[TRACKER VISUALIZER] Trajectory Trail: {'ON' if self.show_trajectory else 'OFF'}")
-                elif key in [ord("b"), ord("B")]:
-                    self.show_bounding_boxes = not self.show_bounding_boxes
-                    self.notification_msg = f"ROOM BOUNDING BOXES: {'VISIBLE' if self.show_bounding_boxes else 'HIDDEN'}"
-                    self.notification_expiry = time.time() + 2.5
-                    print(f"\n[TRACKER VISUALIZER] Room Bounding Boxes: {'ENABLED' if self.show_bounding_boxes else 'DISABLED'}")
                 elif key in [ord("c"), ord("C")]:
                     self.trajectory_history.clear()
                     print("\n[TRACKER VISUALIZER] Trajectory history cleared.")
@@ -1137,9 +1443,6 @@ class PlayerTrackerVisualizer:
                     active = self.navigator.toggle_persistent_right_click()
                     self.notification_msg = "COMBAT ATTACK: ACTIVE" if active else "COMBAT ATTACK: PAUSED"
                     self.notification_expiry = time.time() + 3.0
-                elif key in [ord("s"), ord("S")]:
-                    if last_captured_frame is not None:
-                        self.save_snapshot(dashboard)
                 elif key in [ord("r"), ord("R")]:
                     self.reload_route()
                 elif key in [ord("n"), ord("N")]:

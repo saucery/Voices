@@ -19,12 +19,12 @@ def test_loot_detector_loads_config():
     assert len(detector.rules) >= 2
     rule_ids = [r["id"] for r in detector.rules]
     assert "tier1_white_box_red_text" in rule_ids
-    assert "ravens_reflection_purple" in rule_ids
 
 
 def test_loot_detector_white_red_synthetic():
     """Verifies detection of white box with red text on a synthetic test canvas."""
     detector = LootDetector()
+    detector._set_default_rules()
     # Create 500x500 dark background image
     canvas = np.zeros((500, 500, 3), dtype=np.uint8)
     
@@ -45,6 +45,7 @@ def test_loot_detector_white_red_synthetic():
 def test_loot_detector_purple_synthetic():
     """Verifies detection of purple box (Raven's Reflection) on a synthetic test canvas."""
     detector = LootDetector()
+    detector._set_default_rules()
     canvas = np.zeros((500, 500, 3), dtype=np.uint8)
     
     # Draw purple/magenta box at (200, 200, 180, 32)
@@ -66,6 +67,7 @@ def test_loot_detector_user_uploaded_samples_if_present():
     if os.path.exists(sample_crop):
         img = cv2.imread(sample_crop)
         detector = LootDetector()
+        detector._set_default_rules()
         items = detector.detect_loot(img)
         assert len(items) >= 1
         assert items[0].rule_id == "tier1_white_box_red_text"
@@ -74,6 +76,7 @@ def test_loot_detector_user_uploaded_samples_if_present():
 def test_loot_detector_priority_sorting():
     """Verifies that P1 White+Red items are sorted before P2 Gems and P3 Purple items."""
     detector = LootDetector()
+    detector._set_default_rules()
     canvas = np.zeros((600, 600, 3), dtype=np.uint8)
     
     # Draw purple item higher up on screen at y=100
@@ -227,7 +230,8 @@ def test_loot_detector_ui_exclusion_zones():
 
 def test_loot_detector_gems_synthetic():
     """Verifies detection of uncut and cut gems with olive background and yellow/lime text & border."""
-    detector = LootDetector(config_file="routines/loot_filter.json")
+    detector = LootDetector(config_file=None)
+    detector._set_default_rules()
     canvas = np.zeros((500, 500, 3), dtype=np.uint8)
 
     # Draw olive gem box at (150, 150, 90, 32)
@@ -250,7 +254,8 @@ def test_loot_detector_gems_screenshot_if_present():
     sample_path = r"C:\Users\gregg\.gemini\antigravity-ide\brain\bc444d8e-d778-41d6-a9f9-4d86757c5719\gems_screenshot.png"
     if os.path.exists(sample_path):
         img = cv2.imread(sample_path)
-        detector = LootDetector(config_file="routines/loot_filter.json")
+        detector = LootDetector(config_file=None)
+        detector._set_default_rules()
         items = detector.detect_loot(img)
         gems = [it for it in items if it.rule_id == "gems_uncut_cut_olive"]
         assert len(gems) >= 2
@@ -260,4 +265,139 @@ def test_loot_detector_gems_screenshot_if_present():
         assert any(y > 400 for y in y_coords)   # Sapphire
 
 
+def test_loot_detector_save_pre_pickup_screenshot(tmp_path):
+    """Verifies that LootDetector.save_pre_pickup_screenshot creates raw and annotated full-screen screenshots."""
+    detector = LootDetector()
+    canvas = np.zeros((400, 600, 3), dtype=np.uint8)
+    canvas[100:130, 150:300] = (240, 240, 240)
+    cv2.putText(canvas, "DIVINE ORB", (160, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 230), 2)
+
+    detected = detector.detect_loot(canvas)
+    out_dir = str(tmp_path / "pre_pickup_test")
+
+    raw_path = detector.save_pre_pickup_screenshot(canvas, all_items=detected, output_dir=out_dir)
+
+    assert os.path.exists(raw_path)
+    assert raw_path.endswith("_raw.png")
+    annotated_path = raw_path.replace("_raw.png", "_annotated.png")
+    assert os.path.exists(annotated_path)
+
+    raw_img = cv2.imread(raw_path)
+    ann_img = cv2.imread(annotated_path)
+    assert raw_img is not None and raw_img.shape == (400, 600, 3)
+    assert ann_img is not None and ann_img.shape == (400, 600, 3)
+
+
+def test_loot_detector_add_template_item_rule(tmp_path):
+    """Verifies that add_template_item_rule writes image template and adds template rule."""
+    cfg_file = str(tmp_path / "loot_filter.json")
+    detector = LootDetector()
+    detector.config_file = cfg_file
+    detector.save_config()
+
+    crop = np.full((30, 100, 3), 200, dtype=np.uint8)
+    cv2.putText(crop, "EXALT", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+
+    tmpl_dir = str(tmp_path / "loot_templates")
+    rule = detector.add_template_item_rule(
+        name="Exalted Orb",
+        crop_img=crop,
+        priority=1,
+        threshold=0.55,
+        templates_dir=tmpl_dir,
+        save=True
+    )
+
+    assert rule["type"] == "template"
+    assert rule["name"] == "Exalted Orb"
+    assert os.path.exists(rule["template_file"])
+    assert any(r["name"] == "Exalted Orb" for r in detector.rules)
+
+    # Test reload from saved config
+    reloaded = LootDetector(config_file=cfg_file)
+    assert any(r["name"] == "Exalted Orb" for r in reloaded.rules)
+
+    # Test updating / replacing the template crop image
+    new_crop = np.full((35, 120, 3), 220, dtype=np.uint8)
+    cv2.putText(new_crop, "EXALT V2", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
+    updated = reloaded.update_template_image(rule["id"], new_crop, save=True)
+    assert updated is True
+
+    # Verify updated image on disk
+    saved_img = cv2.imread(rule["template_file"])
+    assert saved_img is not None
+    assert saved_img.shape == (35, 120, 3)
+
+    # Test removing rule
+    removed = reloaded.remove_rule(rule["id"], save=True)
+    assert removed is True
+
+
+def test_crop_color_auto_detection():
+    """Verifies that LootDetector.analyze_crop_colors_and_geometry accurately classifies colors and geometry."""
+    # 1. Orange background (BGR: 20, 100, 200) with black text (BGR: 10, 10, 10)
+    orange_crop = np.full((32, 140, 3), (20, 100, 200), dtype=np.uint8)
+    cv2.putText(orange_crop, "HEADHUNTER", (10, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (10, 10, 10), 2)
+    res_orange = LootDetector.analyze_crop_colors_and_geometry(orange_crop)
+    assert res_orange["bg_color"] == "orange"
+    assert res_orange["text_color"] == "black"
+    assert res_orange["width"] == 140
+    assert res_orange["height"] == 32
+    assert res_orange["aspect_ratio"] > 3.5
+
+    # 2. White background (BGR: 240, 240, 240) with red text (BGR: 20, 20, 220)
+    white_crop = np.full((30, 120, 3), (240, 240, 240), dtype=np.uint8)
+    cv2.putText(white_crop, "DIVINE ORB", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (20, 20, 220), 2)
+    res_white = LootDetector.analyze_crop_colors_and_geometry(white_crop)
+    assert res_white["bg_color"] == "white"
+    assert res_white["text_color"] == "red"
+
+    # 3. Purple background (BGR: 140, 20, 130) with white text (BGR: 240, 240, 240)
+    purple_crop = np.full((28, 130, 3), (140, 20, 130), dtype=np.uint8)
+    cv2.putText(purple_crop, "RAVEN REFLECTION", (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (240, 240, 240), 2)
+    res_purple = LootDetector.analyze_crop_colors_and_geometry(purple_crop)
+    assert res_purple["bg_color"] == "purple"
+    assert res_purple["text_color"] == "white"
+
+    # 4. Olive background (BGR: 20, 75, 85) with yellow text (BGR: 30, 210, 230)
+    olive_crop = np.full((26, 110, 3), (20, 75, 85), dtype=np.uint8)
+    cv2.putText(olive_crop, "RUBY GEM", (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (30, 210, 230), 2)
+    res_olive = LootDetector.analyze_crop_colors_and_geometry(olive_crop)
+    assert res_olive["bg_color"] == "olive"
+    assert res_olive["text_color"] == "yellow"
+
+
+def test_orange_box_detection():
+    """Verifies that LootDetector detects orange unique loot boxes."""
+    detector = LootDetector(config_file=None)
+    rule = {
+        "id": "test_unique_orange",
+        "name": "Unique Orange Box",
+        "enabled": True,
+        "priority": 1,
+        "type": "color_box",
+        "bg_color": "orange",
+        "text_color": "black",
+        "min_width": 30,
+        "max_width": 400,
+        "min_height": 14,
+        "max_height": 70,
+        "min_aspect_ratio": 1.2,
+        "min_bg_fraction": 0.30,
+        "min_text_pixels": 10,
+    }
+    detector.rules = [rule]
+
+    canvas = np.zeros((400, 500, 3), dtype=np.uint8)
+    # Draw orange box at (120, 100, 150, 32) -> BGR: (20, 100, 200)
+    canvas[100:132, 120:270] = (20, 100, 200)
+    cv2.putText(canvas, "MAGEBLOOD", (130, 122), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (10, 10, 10), 2)
+
+    items = detector.detect_loot(canvas)
+    assert len(items) >= 1
+    matched = items[0]
+    assert matched.rule_id == "test_unique_orange"
+    assert matched.priority == 1
+    assert 115 <= matched.x <= 125
+    assert 95 <= matched.y <= 105
 

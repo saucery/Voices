@@ -11,6 +11,7 @@ import os
 import time
 import threading
 from datetime import datetime
+from collections import deque
 from typing import Dict, Any, List, Optional, Tuple, Set
 
 import cv2
@@ -105,6 +106,9 @@ class RouteNavigator:
         self.stuck_step_limit: int = 6           # ~1.8s of no progress
         self.tracking_lost_timeout: float = 1.8   # seconds before declaring lost
         self.last_held_keys: List[str] = []
+        self.recent_movements: deque = deque(maxlen=25)
+        self.backtrack_attempts_at_wp: int = 0
+        self.max_backtrack_attempts_per_wp: int = 2
         self.latest_recovery_event: Optional[str] = None
         self.is_interacting: bool = False
         self._routine_did_orbit: bool = False
@@ -178,6 +182,7 @@ class RouteNavigator:
         self.wait_for_loot_confirmation: bool = True
         self.waiting_for_green_light: bool = False
         self.save_loot_debug_screenshots: bool = True
+        self.save_pre_loot_screenshot: bool = True
         self.loot_debug_dir: str = "loot_debug"
         self.zone_routines_file: str = "routines/zone_routines.json"
         self.zone_routines: Optional[Dict[str, Any]] = None
@@ -225,6 +230,7 @@ class RouteNavigator:
                 self.max_loot_pickups = int(ap_cfg.get("max_loot_pickups", self.max_loot_pickups))
                 self.wait_for_loot_confirmation = bool(ap_cfg.get("wait_for_loot_confirmation", self.wait_for_loot_confirmation))
                 self.save_loot_debug_screenshots = bool(ap_cfg.get("save_loot_debug_screenshots", self.save_loot_debug_screenshots))
+                self.save_pre_loot_screenshot = bool(ap_cfg.get("save_pre_loot_screenshot", ap_cfg.get("save_full_screen_before_pickup", self.save_pre_loot_screenshot)))
                 self.loot_debug_dir = str(ap_cfg.get("loot_debug_dir", self.loot_debug_dir))
                 self.zone_routines_file = ap_cfg.get("zone_routines_file", self.zone_routines_file)
                 self.loot_filter_file = ap_cfg.get("loot_filter_file", "routines/loot_filter.json")
@@ -242,6 +248,8 @@ class RouteNavigator:
         self._load_sim_templates()
         self._load_loot_template()
         self.loot_detector = LootDetector(getattr(self, "loot_filter_file", "routines/loot_filter.json"))
+        if hasattr(self.loot_detector, "save_pre_loot_screenshot"):
+            self.save_pre_loot_screenshot = bool(self.save_pre_loot_screenshot or self.loot_detector.save_pre_loot_screenshot)
         self.load_zone_routines()
 
         if self.start_at_pink_dot > 0 and self.movement_path.is_configured:
@@ -767,11 +775,12 @@ class RouteNavigator:
                     dist_moved = math.hypot(current_pos[0] - last_progress_pos[0], current_pos[1] - last_progress_pos[1])
                     if dist_moved < 4.0:
                         stuck_counter += 1
-                        if stuck_counter > 15:
-                            _log(f"    [{label}] Stuck detected ({stuck_counter} steps with <4px move). Releasing keys.")
-                            self.release_all_keys()
-                            time.sleep(0.1)
+                        if stuck_counter > 12:
+                            _log(f"    [{label}] Stuck detected ({stuck_counter} steps with <4px move). Executing unstick backtrack...")
+                            self._execute_inverse_movement_backtrack(pulses=1, reason=f"{label} Stuck")
                             stuck_counter = 0
+                            last_progress_pos = None
+                            last_progress_time = time.time()
                     else:
                         stuck_counter = 0
                         last_progress_pos = current_pos
@@ -1079,11 +1088,11 @@ class RouteNavigator:
                 if pink_pos:
                     _log(f"    [BANNER RETRY] Banner not detected on screen. Walking closer to pink dot at ({pink_pos[0]:.1f}, {pink_pos[1]:.1f}) and re-searching...")
                     self.status_message = f"[{zone_label}] Walking to Pink Dot Retry..."
-                    self._navigate_to_local_target(
+                    self._walk_to_coordinate(
                         (float(pink_pos[0]), float(pink_pos[1])),
+                        label="NAV→BANNER-RETRY",
                         timeout=5.0,
                         arrival_threshold=8.0,
-                        step_label="NAV→BANNER-RETRY",
                     )
                     time.sleep(0.4)
                     for retry_attempt in range(1, search_attempts + 1):
@@ -2201,6 +2210,22 @@ class RouteNavigator:
                         _log(f"  [LOOT] Finished picking up {picked_count} loot item(s). None remaining.")
                     break
 
+                # Save clean full-screen screenshot before picking up any loot item if enabled
+                if picked_count == 0 and (self.save_pre_loot_screenshot or getattr(self.loot_detector, "save_pre_loot_screenshot", False)):
+                    try:
+                        capt = self._get_capturer()
+                        pre_screen = capt.capture()
+                        if pre_screen is not None and pre_screen.size > 0 and hasattr(self, "loot_detector") and self.loot_detector:
+                            detected_items = self.loot_detector.detect_loot(pre_screen)
+                            out_p = self.loot_detector.save_pre_pickup_screenshot(
+                                pre_screen,
+                                all_items=detected_items,
+                                output_dir=self.loot_debug_dir or getattr(self.loot_detector, "debug_dir", "loot_debug"),
+                            )
+                            _log(f"  [LOOT SCREENSHOT] Captured full-screen image before pickup: {out_p}")
+                    except Exception as e:
+                        _log(f"  [LOOT SCREENSHOT] Warning: Failed to save pre-pickup screenshot: {e}")
+
                 lx, ly = self.move_mouse_inside_game(loot_pos[0], loot_pos[1])
                 picked_count += 1
                 clicked_positions.append((lx, ly))
@@ -2359,11 +2384,11 @@ class RouteNavigator:
                     if pink_pos:
                         _log(f"  [BANNER RETRY] Banner not detected on screen. Walking closer to pink dot at ({pink_pos[0]:.1f}, {pink_pos[1]:.1f}) and re-searching...")
                         self.status_message = "[YELLOW ZONE] Walking to Pink Dot Retry..."
-                        self._navigate_to_local_target(
+                        self._walk_to_coordinate(
                             (float(pink_pos[0]), float(pink_pos[1])),
+                            label="NAV→BANNER-RETRY",
                             timeout=5.0,
                             arrival_threshold=8.0,
-                            step_label="NAV→BANNER-RETRY",
                         )
                         time.sleep(0.4)
                         for retry_attempt in range(1, self.banner_search_attempts + 1):
@@ -2708,52 +2733,80 @@ class RouteNavigator:
             _log(f"\n[NAVIGATOR] Skipped final waypoint. Destination reached.")
             return None
 
+    def _execute_inverse_movement_backtrack(self, pulses: int = 2, reason: str = "Stuck") -> List[str]:
+        """
+        Executes an inverse movement sequence to back out of obstacles or retrace steps:
+        - Inverts recent movement keys (w <-> s, a <-> d).
+        - Sends reverse pulses with optional space roll.
+        - Pauses briefly so minimap/camera can stabilize and re-localize.
+        """
+        self.release_all_keys()
+        opp = {"w": "s", "s": "w", "a": "d", "d": "a", "space": "space"}
+
+        # 1. Inspect recent movements to find keys to invert
+        backtrack_keys = []
+        if self.recent_movements:
+            for keys, _, _, _ in reversed(list(self.recent_movements)):
+                inv_for_step = [opp[k] for k in keys if k in opp]
+                if inv_for_step:
+                    backtrack_keys = inv_for_step
+                    break
+
+        if not backtrack_keys and self.last_held_keys:
+            backtrack_keys = [opp[k] for k in self.last_held_keys if k in opp]
+
+        if not backtrack_keys and self.latest_pos and self.last_known_pos:
+            dist_to_last = math.hypot(self.last_known_pos[0] - self.latest_pos[0], self.last_known_pos[1] - self.latest_pos[1])
+            if dist_to_last > 4.0:
+                backtrack_keys = self.compute_wasd_keys(self.latest_pos, self.last_known_pos)
+
+        if not backtrack_keys:
+            backtrack_keys = ["s"]
+
+        _log(f"[AUTOPILOT RECOVERY] Executing inverse movement backtrack (keys: {backtrack_keys}, pulses: {pulses}) for {reason}...")
+
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+        self.is_simulating_key = True
+        self.held_keys = set(backtrack_keys)
+        try:
+            for p_i in range(pulses):
+                if not self.is_active or stop_handler.is_stopped():
+                    break
+                if pydirectinput:
+                    for k in backtrack_keys:
+                        try:
+                            pydirectinput.keyDown(k)
+                        except Exception:
+                            pass
+                    time.sleep(self.step_duration)
+                    for k in backtrack_keys:
+                        try:
+                            pydirectinput.keyUp(k)
+                        except Exception:
+                            pass
+                    time.sleep(0.06)
+                else:
+                    time.sleep(self.step_duration)
+        finally:
+            self.is_simulating_key = False
+            self.held_keys.clear()
+            time.sleep(0.20)  # Camera/minimap settle pause
+
+        return backtrack_keys
+
     def _execute_stuck_recovery(self, reason: str = "Stuck"):
         """
         Executes stuck / lost-location recovery maneuver:
         1. Releases current movement keys.
-        2. Backtracks towards previously known location.
+        2. Backtracks in reverse direction of recent movement.
         3. If orbiting yellow zone: switches to next perimeter point in yellow zone.
-           If traveling on green route: skips the waypoint where the character got stuck or lost tracking.
-        4. Resumes navigation towards the next waypoint / perimeter point ahead.
+           If traveling on green route: retries waypoint with backtrack before advancing/skipping.
+        4. Resumes navigation towards the active target.
         """
         if self.is_orbiting:
             _log(f"\n[AUTOPILOT RECOVERY] {reason} during Yellow Zone Orbit.")
             _log(f"[AUTOPILOT RECOVERY] Unsticking from geometry inside yellow area...")
-            self.release_all_keys()
-
-            backtrack_keys = []
-            if self.last_held_keys:
-                opp = {"w": "s", "s": "w", "a": "d", "d": "a"}
-                backtrack_keys = [opp[k] for k in self.last_held_keys if k in opp]
-            if not backtrack_keys:
-                backtrack_keys = ["s"]
-
-            window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
-            self.is_simulating_key = True
-            self.held_keys = set(backtrack_keys)
-            try:
-                for _ in range(1):
-                    if not self.is_active or stop_handler.is_stopped():
-                        break
-                    if pydirectinput:
-                        for k in backtrack_keys:
-                            try:
-                                pydirectinput.keyDown(k)
-                            except Exception:
-                                pass
-                        time.sleep(self.step_duration)
-                        for k in backtrack_keys:
-                            try:
-                                pydirectinput.keyUp(k)
-                            except Exception:
-                                pass
-                        time.sleep(0.05)
-                    else:
-                        time.sleep(self.step_duration)
-            finally:
-                self.is_simulating_key = False
-                self.held_keys.clear()
+            self._execute_inverse_movement_backtrack(pulses=1, reason="Orbit Stuck")
 
             if self.orbit_perimeter_pts:
                 self.orbit_point_idx = (self.orbit_point_idx + 1) % len(self.orbit_perimeter_pts)
@@ -2778,62 +2831,11 @@ class RouteNavigator:
         curr_name = curr_wp.get("name", f"WP #{curr_idx}") if curr_wp else f"WP #{curr_idx}"
 
         _log(f"\n[AUTOPILOT RECOVERY] {reason} at {curr_name} (WP #{curr_idx}).")
-        _log(f"[AUTOPILOT RECOVERY] Moving back to previously known location...")
 
-        # 1. Release current movement keys
-        self.release_all_keys()
+        # 1. Execute inverse movement backtrack
+        self._execute_inverse_movement_backtrack(pulses=2, reason=f"Stuck at WP #{curr_idx}")
 
-        # 2. Determine reverse/backtrack keys
-        backtrack_keys = []
-        if self.latest_pos is not None and self.last_known_pos is not None:
-            dist_to_last = math.hypot(self.last_known_pos[0] - self.latest_pos[0], self.last_known_pos[1] - self.latest_pos[1])
-            if dist_to_last > 4.0:
-                backtrack_keys = self.compute_wasd_keys(self.latest_pos, self.last_known_pos)
-
-        if not backtrack_keys and self.last_held_keys:
-            opp = {"w": "s", "s": "w", "a": "d", "d": "a"}
-            backtrack_keys = [opp[k] for k in self.last_held_keys if k in opp]
-
-        if not backtrack_keys and curr_wp and self.latest_pos:
-            target_pos = (curr_wp["x"], curr_wp["y"])
-            dx = -(target_pos[0] - self.latest_pos[0])
-            dy = -(target_pos[1] - self.latest_pos[1])
-            virtual_back = (self.latest_pos[0] + dx, self.latest_pos[1] + dy)
-            backtrack_keys = self.compute_wasd_keys(self.latest_pos, virtual_back)
-
-        if not backtrack_keys:
-            backtrack_keys = ["s"]
-
-        # Ensure window focused
-        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
-
-        # Send 2 backstep pulses to unstick from geometry
-        self.is_simulating_key = True
-        self.held_keys = set(backtrack_keys)
-        try:
-            for _ in range(2):
-                if not self.is_active or stop_handler.is_stopped():
-                    break
-                if pydirectinput:
-                    for k in backtrack_keys:
-                        try:
-                            pydirectinput.keyDown(k)
-                        except Exception:
-                            pass
-                    time.sleep(self.step_duration)
-                    for k in backtrack_keys:
-                        try:
-                            pydirectinput.keyUp(k)
-                        except Exception:
-                            pass
-                    time.sleep(0.05)
-                else:
-                    time.sleep(self.step_duration)
-        finally:
-            self.is_simulating_key = False
-            self.held_keys.clear()
-
-        # 3. Skip the waypoint where we got stuck / lost (or trigger encounter if at pink dot)
+        # 2. Skip the waypoint where we got stuck / lost (or trigger encounter if at pink dot)
         if curr_wp and curr_wp.get("action") == "pink_encounter" and curr_idx not in self.interacted_pink_dots:
             _log(f"[AUTOPILOT RECOVERY] Character arrived near Pink Encounter (WP #{curr_idx}). Triggering encounter routine instead of skipping.")
             self.interacted_pink_dots.add(curr_idx)
@@ -3112,6 +3114,7 @@ class RouteNavigator:
                     self.last_target = target
                     # Reset stuck counters on normal waypoint arrival
                     self.stuck_counter = 0
+                    self.backtrack_attempts_at_wp = 0
                     self.last_progress_pos = current_pos
                     self.last_progress_time = now
 
@@ -3147,6 +3150,7 @@ class RouteNavigator:
                 continue
 
             self.last_held_keys = list(needed_keys)
+            self.recent_movements.append((list(needed_keys), time.time(), self.step_duration, current_pos))
 
             # Ensure game window is focused
             window_focuser.ensure_focused(monitor_idx=self.monitor_idx)

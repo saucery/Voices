@@ -551,6 +551,8 @@ def test_anti_stuck_disabled_during_pink_dot_interaction(tmp_path):
         config_path=str(cfg_file),
     )
     navigator.is_active = True
+    navigator.banner_approach_wait_seconds = 0.0
+    navigator.wait_for_approach_movement_settling = MagicMock(return_value=True)
     navigator.latest_pos = (134.0, 371.0)
     navigator.last_progress_pos = (134.0, 371.0)
     navigator.last_progress_time = time.time() - 10.0  # Would trigger stuck if not interacting!
@@ -561,6 +563,7 @@ def test_anti_stuck_disabled_during_pink_dot_interaction(tmp_path):
     navigator.locate_encounter_banner = MagicMock(return_value=(200, 200))
     navigator.move_mouse_inside_game = MagicMock(return_value=(200, 200))
     navigator._execute_stuck_recovery = MagicMock()
+
 
     was_interacting_states = []
 
@@ -1337,22 +1340,32 @@ def test_detect_and_click_sims_strict_order_sim1_sim3_sim2():
     def mock_click():
         pass
 
-    nav.locate_sim_template = MagicMock(side_effect=mock_locate)
-    nav.move_mouse_inside_game = MagicMock(side_effect=lambda x, y: (x, y))
+    def on_move_mouse(x, y):
+        # Determine which sim was targeted by y coordinate:
+        # sim3 detected at y=300
+        # sim2 detected at y=500
+        if abs(y - (300 + nav.sim_click_y_offset_px)) <= 15 or abs(y - 300) <= 15:
+            click_order.append("sim3")
+            sim_state["sim3"] = False
+        elif abs(y - (500 + nav.sim_click_y_offset_px)) <= 15 or abs(y - 500) <= 15:
+            click_order.append("sim2")
+            sim_state["sim2"] = False
+        return (x, y)
 
-    def on_click_record(sim_key):
-        click_order.append(sim_key)
-        sim_state[sim_key] = False  # SIM disappears after click
+    nav.locate_sim_template = MagicMock(side_effect=mock_locate)
+    nav.move_mouse_inside_game = MagicMock(side_effect=on_move_mouse)
 
     with patch("src.route_navigator.pydirectinput.click", side_effect=mock_click), \
          patch("src.route_navigator.pydirectinput.mouseUp"), \
          patch("time.sleep", return_value=None):
 
-        # Hook into _click_sim_at by wrapping move_mouse_inside_game or checking sims_clicked
         clicked = nav._detect_and_click_sims()
 
     # SIM1 was missing, so SIM3 was clicked first, then SIM2
     assert clicked == ["sim3", "sim2"]
+    assert click_order == ["sim3", "sim2"]
+
+
 
 
 

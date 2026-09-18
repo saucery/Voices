@@ -65,8 +65,14 @@ class RoomClassifier:
         self.jump_rejections_total: int = 0
         self.is_locked: bool = False
         self.lost_frame_count: int = 0
-        self.outlier_frame_count: int = 0
         self.max_lost_frames: int = 8  # ~0.3s persistence buffer against transient frame drops
+
+        # Diagnostics & Automated Loss Recorder
+        self.debug_log_dir: str = "debug_logs/tracker_lost"
+        self.last_debug_dump_time: float = 0.0
+        self.debug_dump_count: int = 0
+        self.max_debug_dumps: int = 60
+        self.min_debug_dump_interval: float = 1.5
 
         # Zone Auto-Discovery state (when no template images exist)
         self.auto_zones: Dict[str, Tuple[float, float]] = {}  # zone_id -> (center_x, center_y)
@@ -409,6 +415,7 @@ class RoomClassifier:
         # Position smoothing with velocity jump gating & temporal consensus
         final_char_pos = None
         jump_rejected = False
+        jump_anomaly = False
 
         if recognized and best_char_pos is not None:
             self.lost_frame_count = 0
@@ -417,58 +424,88 @@ class RoomClassifier:
             self.last_variant = best_variant
 
             if self.last_known_pos is not None and self.last_room_id == best_room_id:
-                dx = best_char_pos[0] - self.last_known_pos[0]
-                dy = best_char_pos[1] - self.last_known_pos[1]
-                dist_moved = (dx * dx + dy * dy) ** 0.5
+                # If last_known_pos was outside the active search_roi/expected_pos while best_char_pos is inside, snap immediately
+                last_pos_invalid = False
+                if search_roi is not None:
+                    sx1, sy1, sx2, sy2 = search_roi
+                    if not (sx1 - 35 <= self.last_known_pos[0] <= sx2 + 35 and sy1 - 35 <= self.last_known_pos[1] <= sy2 + 35):
+                        last_pos_invalid = True
+                elif expected_pos is not None:
+                    if math.hypot(self.last_known_pos[0] - expected_pos[0], self.last_known_pos[1] - expected_pos[1]) > 180.0:
+                        last_pos_invalid = True
 
-                if dist_moved < self.still_threshold:
-                    final_char_pos = self.last_known_pos
+                if last_pos_invalid:
                     self.pending_jump_pos = None
                     self.pending_jump_count = 0
-                elif dist_moved > self.jump_threshold:
-                    # Potential wild jump / teleport anomaly
-                    if self.pending_jump_pos is not None:
-                        cluster_dist = math.hypot(
-                            best_char_pos[0] - self.pending_jump_pos[0],
-                            best_char_pos[1] - self.pending_jump_pos[1],
-                        )
-                        if cluster_dist <= 30.0:
-                            self.pending_jump_count += 1
-                            if self.pending_jump_count >= self.jump_consensus_frames or best_inliers >= 10:
-                                # Confirmed legitimate teleport/leap after consensus frames
-                                self.pending_jump_pos = None
-                                self.pending_jump_count = 0
-                                self.last_known_pos = best_char_pos
-                                final_char_pos = best_char_pos
+                    self.last_known_pos = best_char_pos
+                    final_char_pos = best_char_pos
+                else:
+                    dx = best_char_pos[0] - self.last_known_pos[0]
+                    dy = best_char_pos[1] - self.last_known_pos[1]
+                    dist_moved = (dx * dx + dy * dy) ** 0.5
+
+                    if dist_moved < self.still_threshold:
+                        final_char_pos = self.last_known_pos
+                        self.pending_jump_pos = None
+                        self.pending_jump_count = 0
+                    elif dist_moved > self.jump_threshold:
+                        # Potential wild jump / teleport anomaly
+                        jump_anomaly = True
+                        if self.pending_jump_pos is not None:
+                            cluster_dist = math.hypot(
+                                best_char_pos[0] - self.pending_jump_pos[0],
+                                best_char_pos[1] - self.pending_jump_pos[1],
+                            )
+                            if cluster_dist <= 30.0:
+                                self.pending_jump_count += 1
+                                if self.pending_jump_count >= self.jump_consensus_frames or best_inliers >= 10:
+                                    # Confirmed legitimate teleport/leap after consensus frames
+                                    self.pending_jump_pos = None
+                                    self.pending_jump_count = 0
+                                    self.last_known_pos = best_char_pos
+                                    final_char_pos = best_char_pos
+                                    jump_anomaly = False
+                                else:
+                                    # Awaiting confirmation: hold last known position
+                                    final_char_pos = self.last_known_pos
+                                    self.jump_rejections_total += 1
+                                    jump_rejected = True
                             else:
-                                # Awaiting confirmation: hold last known position
+                                # Inconsistent jump targets (spurious noise)
+                                self.pending_jump_pos = best_char_pos
+                                self.pending_jump_count = 1
                                 final_char_pos = self.last_known_pos
                                 self.jump_rejections_total += 1
                                 jump_rejected = True
                         else:
-                            # Inconsistent jump targets (spurious noise)
+                            # First anomalous jump frame: hold position and start consensus counter
                             self.pending_jump_pos = best_char_pos
                             self.pending_jump_count = 1
                             final_char_pos = self.last_known_pos
                             self.jump_rejections_total += 1
                             jump_rejected = True
+                        
+                        # Log jump anomaly diagnostics
+                        self._dump_tracker_loss_diagnostics(
+                            minimap_crop=minimap_crop,
+                            raw_char_pos=best_char_pos,
+                            score=highest_score,
+                            inliers=best_inliers,
+                            search_roi=search_roi,
+                            expected_pos=expected_pos,
+                            reason=f"jump_dist_{int(dist_moved)}px",
+                            all_scores=all_scores,
+                        )
                     else:
-                        # First anomalous jump frame: hold position and start consensus counter
-                        self.pending_jump_pos = best_char_pos
-                        self.pending_jump_count = 1
-                        final_char_pos = self.last_known_pos
-                        self.jump_rejections_total += 1
-                        jump_rejected = True
-                else:
-                    # Genuine smooth movement (<= jump_threshold)
-                    self.pending_jump_pos = None
-                    self.pending_jump_count = 0
-                    self.outlier_frame_count = 0
-                    alpha = 0.65
-                    sm_x = round(alpha * best_char_pos[0] + (1.0 - alpha) * self.last_known_pos[0], 1)
-                    sm_y = round(alpha * best_char_pos[1] + (1.0 - alpha) * self.last_known_pos[1], 1)
-                    final_char_pos = (sm_x, sm_y)
-                    self.last_known_pos = final_char_pos
+                        # Genuine smooth movement (<= jump_threshold)
+                        self.pending_jump_pos = None
+                        self.pending_jump_count = 0
+                        self.outlier_frame_count = 0
+                        alpha = 0.65
+                        sm_x = round(alpha * best_char_pos[0] + (1.0 - alpha) * self.last_known_pos[0], 1)
+                        sm_y = round(alpha * best_char_pos[1] + (1.0 - alpha) * self.last_known_pos[1], 1)
+                        final_char_pos = (sm_x, sm_y)
+                        self.last_known_pos = final_char_pos
             else:
                 self.pending_jump_pos = None
                 self.pending_jump_count = 0
@@ -487,6 +524,7 @@ class RoomClassifier:
                 best_variant = self.last_variant
                 highest_score = max(highest_score, best_threshold)
             else:
+                was_locked = self.is_locked
                 self.is_locked = False
                 self.last_known_pos = None
                 self.last_room_id = None
@@ -495,6 +533,19 @@ class RoomClassifier:
                 self.lost_frame_count = 0
                 self.pending_jump_pos = None
                 self.pending_jump_count = 0
+
+                # Dump diagnostic capture only when tracker genuinely lost an active lock
+                if was_locked:
+                    self._dump_tracker_loss_diagnostics(
+                        minimap_crop=minimap_crop,
+                        raw_char_pos=best_char_pos,
+                        score=highest_score,
+                        inliers=best_inliers,
+                        search_roi=search_roi,
+                        expected_pos=expected_pos,
+                        reason="lock_lost_low_confidence",
+                        all_scores=all_scores,
+                    )
 
         return {
             "recognized": recognized,
@@ -507,4 +558,57 @@ class RoomClassifier:
             "minimap_roi_shape": minimap_crop.shape,
             "jump_rejected": jump_rejected,
             "jump_rejections_total": self.jump_rejections_total,
+            "jump_anomaly": jump_anomaly,
         }
+
+    def _dump_tracker_loss_diagnostics(
+        self,
+        minimap_crop: np.ndarray,
+        raw_char_pos: Optional[Tuple[float, float]],
+        score: float,
+        inliers: int,
+        search_roi: Optional[Tuple[int, int, int, int]],
+        expected_pos: Optional[Tuple[float, float]],
+        reason: str = "position_lost",
+        all_scores: Optional[Dict[str, Any]] = None,
+    ):
+        """Saves timestamped minimap crop and JSON telemetry to debug_logs/tracker_lost/."""
+        import time
+        now = time.time()
+        if (now - self.last_debug_dump_time) < self.min_debug_dump_interval:
+            return
+        if self.debug_dump_count >= self.max_debug_dumps:
+            return
+
+        self.last_debug_dump_time = now
+        self.debug_dump_count += 1
+
+        try:
+            os.makedirs(self.debug_log_dir, exist_ok=True)
+            import datetime
+            ts_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:19]
+            base_name = f"loss_{ts_str}_score{max(0.0, score):.2f}_{reason}"
+            img_path = os.path.join(self.debug_log_dir, f"{base_name}.png")
+            json_path = os.path.join(self.debug_log_dir, f"{base_name}.json")
+
+            if minimap_crop is not None and isinstance(minimap_crop, np.ndarray) and minimap_crop.size > 0:
+                cv2.imwrite(img_path, minimap_crop)
+
+            meta = {
+                "timestamp": ts_str,
+                "reason": reason,
+                "confidence_score": round(score, 4),
+                "inliers": inliers,
+                "raw_char_pos": raw_char_pos,
+                "last_known_pos": self.last_known_pos,
+                "last_room_name": self.last_room_name,
+                "search_roi": search_roi,
+                "expected_pos": expected_pos,
+                "all_scores": all_scores,
+            }
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2)
+
+            print(f"[TRACKER DIAGNOSTIC] Dumped loss telemetry to {json_path} (Reason: {reason}, Score: {score:.2f})")
+        except Exception:
+            pass

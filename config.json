@@ -1,6 +1,6 @@
 {
   "game_window_title": "Path of Exile 2",
-  "map_layout_file": "templates/room_1_entry.png",
+  "map_layout_file": "templates/map_with_pois_clean.png",
   "movement_file": "paths/movement_route.json",
   "minimap_roi": {
     "top_pct": 0.0,
@@ -58,6 +58,7 @@
     "persistent_combat_interval_seconds": 0.65,
     "suppress_combat_during_approach": true,
     "save_loot_debug_screenshots": true,
+    "save_pre_loot_screenshot": true,
     "loot_debug_dir": "loot_debug",
     "zone_routines_file": "routines/zone_routines.json",
     "loot_filter_file": "routines/loot_filter.json"

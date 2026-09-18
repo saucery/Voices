@@ -183,5 +183,27 @@ def test_cyan_and_white_dot_extraction_and_linking(tmp_path):
     assert abs(r_wp["sim_pos"][0] - 115) <= 2
     assert abs(r_wp["loot_pos"][0] - 120) <= 2
 
+def test_room6_and_corridor_search_roi():
+    """Verifies that waypoints in Room 6 and the transition corridor (WP 53..68) are not clamped to Room 7."""
+    path_mgr = MovementPath(movement_file_path="paths/movement_route.json")
+    if not path_mgr.is_configured:
+        return
 
+    # Check Room 6 (WP 53)
+    path_mgr.current_idx = 53
+    r6_bounds = path_mgr.get_active_room_bounds(margin=60.0)
+    assert r6_bounds is not None
+    # Room 6 bounds must contain Room 6 coordinates (e.g., SIM at 465, 386)
+    rx1, ry1, rx2, ry2 = r6_bounds
+    assert rx1 <= 465 <= rx2
+    assert ry1 <= 386 <= ry2
+
+    # Check Corridor (WP 58)
+    path_mgr.current_idx = 58
+    corr_roi = path_mgr.get_search_roi_for_progress(margin=80.0)
+    assert corr_roi is not None
+    cx1, cy1, cx2, cy2 = corr_roi
+    # Corridor waypoint 58 is around (380, 290), must NOT be clamped to (0, 0, 280, 280)
+    assert cx2 > 350
+    assert cy2 > 280
 

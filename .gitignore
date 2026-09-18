@@ -11,7 +11,9 @@ htmlcov/
 # Debug and monitor capture dumps
 debug_output/
 debug_monitors/
+debug_logs/
 loot_debug/*.png
+scratch/
 
 # Environments
 .env

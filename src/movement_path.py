@@ -38,6 +38,7 @@ class MovementPath:
         self.pink_zones: List[Dict[str, Any]] = []
         self.cyan_zones: List[Dict[str, Any]] = []
         self.loot_zones: List[Dict[str, Any]] = []
+        self.custom_room_boxes: Dict[int, Tuple[int, int, int, int]] = {}
         self.orbit_duration_seconds: float = 10.0
         self.orbit_margin_px: float = 8.0
         self.orbit_mode: str = "inside"
@@ -143,10 +144,29 @@ class MovementPath:
 
             self.current_idx = 0
             self.is_loaded = len(self.waypoints) > 0
+
+            # Load custom user-defined room bounding boxes if present
+            self.custom_room_boxes = {}
+            if "room_boxes" in data and isinstance(data["room_boxes"], dict):
+                for k, v in data["room_boxes"].items():
+                    try:
+                        self.custom_room_boxes[int(k)] = (int(v[0]), int(v[1]), int(v[2]), int(v[3]))
+                    except Exception:
+                        pass
+            elif os.path.exists("paths/room_bounding_boxes.json"):
+                try:
+                    with open("paths/room_bounding_boxes.json", "r", encoding="utf-8") as rf:
+                        rdata = json.load(rf)
+                        for k, v in rdata.items():
+                            self.custom_room_boxes[int(k)] = (int(v[0]), int(v[1]), int(v[2]), int(v[3]))
+                except Exception:
+                    pass
+
             if self.is_loaded:
+                boxes_str = f" | {len(self.custom_room_boxes)} custom room box(es)" if self.custom_room_boxes else ""
                 zones_str = f" | {len(self.orbit_zones)} yellow orbit zone(s)" if self.orbit_zones else ""
                 pink_str = f" | {len(self.pink_zones)} pink marker(s)" if self.pink_zones else ""
-                print(f"[MOVEMENT] Successfully loaded '{self.route_name}' with {len(self.waypoints)} waypoints{zones_str}{pink_str} from '{file_path}'.")
+                print(f"[MOVEMENT] Successfully loaded '{self.route_name}' with {len(self.waypoints)} waypoints{zones_str}{pink_str}{boxes_str} from '{file_path}'.")
             else:
                 print(f"[MOVEMENT] Movement file '{file_path}' contains 0 waypoints (pending implementation).")
             return self.is_loaded
@@ -884,9 +904,12 @@ class MovementPath:
         self, room_idx: int, margin: float = 60.0
     ) -> Optional[Tuple[int, int, int, int]]:
         """
-        Calculates the bounding box (min_x, min_y, max_x, max_y) for a specific room (1..7)
-        including all waypoints and markers within that room plus a margin.
+        Calculates the bounding box (min_x, min_y, max_x, max_y) for a specific room (1..7).
+        Uses user-defined custom room box if set, otherwise computes from waypoints.
         """
+        if int(room_idx) in self.custom_room_boxes:
+            return self.custom_room_boxes[int(room_idx)]
+
         if not self.waypoints or room_idx < 1:
             return None
 
@@ -923,27 +946,88 @@ class MovementPath:
             int(max(ys) + margin),
         )
 
+    def set_room_bounding_box(self, room_idx: int, box: Tuple[int, int, int, int]):
+        """Sets a user-defined bounding box (min_x, min_y, max_x, max_y) for room room_idx (1..7)."""
+        self.custom_room_boxes[int(room_idx)] = (
+            max(0, int(min(box[0], box[2]))),
+            max(0, int(min(box[1], box[3]))),
+            int(max(box[0], box[2])),
+            int(max(box[1], box[3])),
+        )
+
+    def get_all_room_bounding_boxes(self, default_margin: float = 40.0) -> Dict[int, Tuple[int, int, int, int]]:
+        """Returns bounding boxes for all 7 rooms (custom user-set or computed defaults)."""
+        boxes = {}
+        for r_i in range(1, 8):
+            b = self.get_room_bounding_box(r_i, margin=default_margin)
+            if b:
+                boxes[r_i] = b
+        return boxes
+
+    def save_room_bounding_boxes(self, save_path: str = "paths/room_bounding_boxes.json") -> bool:
+        """Saves current custom room bounding boxes to JSON file and syncs movement_route.json."""
+        try:
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            out_dict = {str(k): list(v) for k, v in self.custom_room_boxes.items()}
+            with open(save_path, "w", encoding="utf-8") as f:
+                json.dump(out_dict, f, indent=2)
+
+            # Sync with movement_route.json if it exists
+            if os.path.exists("paths/movement_route.json"):
+                try:
+                    with open("paths/movement_route.json", "r", encoding="utf-8") as mf:
+                        m_data = json.load(mf)
+                    m_data["room_boxes"] = out_dict
+                    with open("paths/movement_route.json", "w", encoding="utf-8") as mf:
+                        json.dump(m_data, mf, indent=2)
+                except Exception:
+                    pass
+
+            print(f"[MOVEMENT] Saved {len(self.custom_room_boxes)} custom room bounding box(es) to '{save_path}'")
+            return True
+        except Exception as e:
+            print(f"[MOVEMENT] Failed to save room bounding boxes: {e}")
+            return False
+
     def get_active_room_bounds(self, margin: float = 60.0) -> Optional[Tuple[int, int, int, int]]:
         """
         Returns the (min_x, min_y, max_x, max_y) bounding box of the active room/zone
-        based on current waypoint progress. For Room 7 (Zone 7 / finish area), returns
-        a hard-clamped top-left quadrant [0, 0, 280, 280] to prevent false jumps to Room 3/4.
+        combined with the active waypoint neighborhood to ensure corridors and transition
+        paths between rooms are always tracked seamlessly without being clamped out.
         """
         if not self.waypoints:
             return None
 
-        # Check current room index
         cur_room = self.get_current_room_index()
-        if cur_room == 7 or self.current_idx >= 65:
+        if cur_room == 7 and self.current_idx >= 69:
+            if 7 in self.custom_room_boxes:
+                return self.custom_room_boxes[7]
             return (0, 0, 280, 280)
 
         # Retrieve room bounding box for current room
-        room_box = self.get_room_bounding_box(cur_room, margin=margin)
-        if room_box is not None:
-            return room_box
+        room_box = None
+        if cur_room in self.custom_room_boxes:
+            room_box = self.custom_room_boxes[cur_room]
+        else:
+            room_box = self.get_room_bounding_box(cur_room, margin=margin)
 
-        # Fallback to local progress ROI
-        return self.get_search_roi_for_progress(margin=margin, lookahead=10, lookbehind=4)
+        # Retrieve local progress ROI around current waypoint to cover transition corridors
+        wp_roi = self.get_search_roi_for_progress(margin=margin, lookahead=12, lookbehind=6)
+
+        if room_box is not None and wp_roi is not None:
+            # Union of room bounding box and active waypoint corridor
+            rx1, ry1, rx2, ry2 = room_box
+            wx1, wy1, wx2, wy2 = wp_roi
+            return (
+                max(0, min(rx1, wx1)),
+                max(0, min(ry1, wy1)),
+                max(rx2, wx2),
+                max(ry2, wy2),
+            )
+        elif room_box is not None:
+            return room_box
+        else:
+            return wp_roi
 
     def get_search_roi_for_progress(
         self, margin: float = 80.0, lookahead: int = 14, lookbehind: int = 6
@@ -956,8 +1040,9 @@ class MovementPath:
         if not self.waypoints:
             return None
 
-        cur_room = self.get_current_room_index()
-        if cur_room == 7 or self.current_idx >= 65:
+        if self.current_idx >= 69:
+            if 7 in self.custom_room_boxes:
+                return self.custom_room_boxes[7]
             return (0, 0, 280, 280)
 
         s_idx = max(0, self.current_idx - lookbehind)

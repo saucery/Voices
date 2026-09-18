@@ -82,3 +82,42 @@ def test_map_localizer_guided_search_and_jump_filter():
     res = localizer.localize_player(synthetic_crop, fast_track=True, search_roi=search_roi, expected_pos=(500.0, 300.0))
     assert "located" in res
     assert hasattr(localizer, "pending_jump_pos")
+
+
+def test_room_classifier_diagnostics_dump_and_jump_flag(tmp_path):
+    classifier = RoomClassifier()
+    classifier.debug_log_dir = str(tmp_path / "tracker_lost")
+    classifier.min_debug_dump_interval = 0.0
+
+    synthetic_crop = np.zeros((150, 150, 3), dtype=np.uint8)
+    classifier._dump_tracker_loss_diagnostics(
+        minimap_crop=synthetic_crop,
+        raw_char_pos=(100.0, 100.0),
+        score=0.20,
+        inliers=2,
+        search_roi=(50, 50, 150, 150),
+        expected_pos=(100.0, 100.0),
+        reason="test_loss",
+    )
+
+    # Verify diagnostic files were generated
+    dumped_files = list(tmp_path.glob("tracker_lost/*"))
+    assert len(dumped_files) >= 2
+    json_files = [f for f in dumped_files if f.suffix == ".json"]
+    png_files = [f for f in dumped_files if f.suffix == ".png"]
+    assert len(json_files) == 1
+    assert len(png_files) == 1
+
+
+def test_route_navigator_inverse_movement_backtrack():
+    from src.route_navigator import RouteNavigator
+    nav = RouteNavigator()
+
+    # Simulate recent movement history of moving North-West (keys: ['w', 'a'])
+    nav.recent_movements.append((["w", "a"], 100.0, 0.22, (200.0, 200.0)))
+    nav.recent_movements.append((["w", "a"], 100.25, 0.22, (190.0, 190.0)))
+
+    backtrack_keys = nav._execute_inverse_movement_backtrack(pulses=1, reason="Test Recovery")
+    # Inverse of ['w', 'a'] should be ['s', 'd']
+    assert set(backtrack_keys) == {"s", "d"}
+

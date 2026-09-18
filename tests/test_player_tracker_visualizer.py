@@ -39,7 +39,7 @@ def test_visualizer_update_frame_synthetic():
     dashboard, loc_res = visualizer.update_frame(test_crop)
 
     assert dashboard is not None
-    assert dashboard.shape == (700, 1080, 3)
+    assert dashboard.shape == (860, 1440, 3)
     assert isinstance(loc_res, dict)
     assert "minimap_player" in loc_res
     assert "reference_map" in loc_res
@@ -60,7 +60,7 @@ def test_visualizer_toggles_and_snapshot(tmp_path):
     test_crop = np.zeros((280, 288, 3), dtype=np.uint8)
     dashboard, _ = visualizer.update_frame(test_crop)
 
-    assert dashboard.shape == (700, 1080, 3)
+    assert dashboard.shape == (860, 1440, 3)
 
     out_file = visualizer.save_snapshot(dashboard)
     assert os.path.exists(out_file)
@@ -79,8 +79,39 @@ def test_visualizer_all_view_modes():
         visualizer.view_mode = mode
         dashboard, result = visualizer.update_frame(test_crop)
         assert dashboard is not None
-        assert dashboard.shape == (700, 1080, 3)
+        assert dashboard.shape == (860, 1440, 3)
         assert "room" in result
         assert "reference_map" in result
         assert "world_map" in result
+
+
+def test_visualizer_room_box_editor(tmp_path):
+    """Test interactive bounding box editor manipulation and save functionality."""
+    visualizer = PlayerTrackerVisualizer(monitor_idx=1)
+    test_crop = np.zeros((280, 288, 3), dtype=np.uint8)
+
+    # Enable edit mode on room 5
+    visualizer.edit_boxes_mode = True
+    visualizer.selected_room_for_edit = 5
+
+    # Nudge box
+    visualizer.nudge_active_room_box(dx=5, dy=-5, dw=10, dh=10)
+    assert visualizer.boxes_modified is True
+
+    # Check updated box
+    box_5 = visualizer.movement_path.get_room_bounding_box(5, margin=35.0)
+    assert box_5 is not None
+
+    # Render dashboard in edit mode
+    dashboard, _ = visualizer.update_frame(test_crop)
+    assert dashboard.shape == (860, 1440, 3)
+
+    # Save room boxes to temp path
+    test_boxes_file = str(tmp_path / "test_room_boxes.json")
+    saved = visualizer.movement_path.save_room_bounding_boxes(test_boxes_file)
+    assert saved is True
+    assert os.path.exists(test_boxes_file)
+
+
+
 

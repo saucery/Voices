@@ -225,7 +225,18 @@ class MapLocalizer:
             return {"located": False, "confidence": 0.0, "player_position": None}
 
         # Tier 1: Fast Local ROI search around last known position (~2ms)
-        if fast_track and self.last_player_pos is not None and self.locked_counter >= 1:
+        is_tier1_compatible = True
+        if self.last_player_pos is not None:
+            lx_check, ly_check = self.last_player_pos
+            if search_roi is not None:
+                sx1, sy1, sx2, sy2 = search_roi
+                if not (sx1 - 40 <= lx_check <= sx2 + 40 and sy1 - 40 <= ly_check <= sy2 + 40):
+                    is_tier1_compatible = False
+            elif expected_pos is not None:
+                if math.hypot(lx_check - expected_pos[0], ly_check - expected_pos[1]) > 160.0:
+                    is_tier1_compatible = False
+
+        if fast_track and self.last_player_pos is not None and self.locked_counter >= 1 and is_tier1_compatible:
             lx, ly = self.last_player_pos
             roi_margin = 100
             rx1 = max(0, int(lx - roi_margin))
@@ -260,37 +271,45 @@ class MapLocalizer:
                 player_x = int(roi_best_loc[0] + tw // 2)
                 player_y = int(roi_best_loc[1] + th // 2)
 
-                step_dist = ((player_x - lx) ** 2 + (player_y - ly) ** 2) ** 0.5
-                if step_dist < 20.0:
-                    player_x = int(round(0.65 * player_x + 0.35 * lx))
-                    player_y = int(round(0.65 * player_y + 0.35 * ly))
+                # Validate candidate player_x, player_y is within search_roi
+                match_in_roi = True
+                if search_roi is not None:
+                    sx1, sy1, sx2, sy2 = search_roi
+                    if not (sx1 - 40 <= player_x <= sx2 + 40 and sy1 - 40 <= player_y <= sy2 + 40):
+                        match_in_roi = False
 
-                self.pending_jump_pos = None
-                self.pending_jump_count = 0
-                self.last_player_pos = (player_x, player_y)
-                self.last_confidence = roi_best_score
-                self.last_scale = roi_best_scale
-                self.locked_counter = min(10, self.locked_counter + 1)
-                bounding_box = (
-                    max(0, roi_best_loc[0]),
-                    max(0, roi_best_loc[1]),
-                    min(self.ref_w, roi_best_loc[0] + tw),
-                    min(self.ref_h, roi_best_loc[1] + th),
-                )
-                return {
-                    "located": True,
-                    "confidence": round(roi_best_score, 4),
-                    "player_position": (player_x, player_y),
-                    "player_x": player_x,
-                    "player_y": player_y,
-                    "bounding_box": bounding_box,
-                    "matched_scale": round(roi_best_scale, 4),
-                    "target_size": (tw, th),
-                    "map_width": self.ref_w,
-                    "map_height": self.ref_h,
-                    "red_zone_bounds": self.red_zone_bounds,
-                    "minimap_crop": minimap_crop,
-                }
+                if match_in_roi:
+                    step_dist = ((player_x - lx) ** 2 + (player_y - ly) ** 2) ** 0.5
+                    if step_dist < 20.0:
+                        player_x = int(round(0.65 * player_x + 0.35 * lx))
+                        player_y = int(round(0.65 * player_y + 0.35 * ly))
+
+                    self.pending_jump_pos = None
+                    self.pending_jump_count = 0
+                    self.last_player_pos = (player_x, player_y)
+                    self.last_confidence = roi_best_score
+                    self.last_scale = roi_best_scale
+                    self.locked_counter = min(10, self.locked_counter + 1)
+                    bounding_box = (
+                        max(0, roi_best_loc[0]),
+                        max(0, roi_best_loc[1]),
+                        min(self.ref_w, roi_best_loc[0] + tw),
+                        min(self.ref_h, roi_best_loc[1] + th),
+                    )
+                    return {
+                        "located": True,
+                        "confidence": round(roi_best_score, 4),
+                        "player_position": (player_x, player_y),
+                        "player_x": player_x,
+                        "player_y": player_y,
+                        "bounding_box": bounding_box,
+                        "matched_scale": round(roi_best_scale, 4),
+                        "target_size": (tw, th),
+                        "map_width": self.ref_w,
+                        "map_height": self.ref_h,
+                        "red_zone_bounds": self.red_zone_bounds,
+                        "minimap_crop": minimap_crop,
+                    }
 
         # Tier 2: Guided Route Search ROI (~3ms)
         # If Tier 1 failed or wasn't locked, search specifically in the expected room / progress zone

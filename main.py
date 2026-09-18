@@ -146,8 +146,23 @@ def main():
         default=None,
         help="Start route navigation targeting a specific Pink Dot index (1-indexed: 1 = Pink #1, 2 = Pink #2, 3 = Pink #3).",
     )
+    parser.add_argument(
+        "--loot-ui",
+        "--loot-builder",
+        action="store_true",
+        help="Launch interactive Loot Item Selector & Filter Builder UI to crop/name loot items from screenshots.",
+    )
 
     args = parser.parse_args()
+
+    # 0. Loot Item Selector UI Mode
+    if args.loot_ui:
+        import tkinter as tk
+        from tools.loot_item_selector_ui import LootItemSelectorUI
+        root = tk.Tk()
+        app = LootItemSelectorUI(root, initial_image=args.input)
+        root.mainloop()
+        return
 
     # 1. List Monitors Mode
     if args.list_monitors:

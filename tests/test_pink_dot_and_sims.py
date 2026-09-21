@@ -85,8 +85,7 @@ def test_pink_dot_extraction_from_image(synthetic_route_with_pink_dot, tmp_path)
 def test_pink_dot_sim_priority_clicks(tmp_path):
     """
     Tests the sim selection sequence when sims are detected:
-    Character stops -> checks sim1 -> clicks -> waits 2s -> checks sim3 -> clicks -> waits 2s -> checks sim2 -> clicks.
-    Encounter banner fallback should NOT be triggered.
+    Character stops -> checks sim1 -> clicks -> waits 2s -> checks sim3 -> clicks -> waits 2s -> checks sim2 -> clicks -> clicks encounter banner.
     """
     cfg_file = tmp_path / "config.json"
     cfg_file.write_text(json.dumps({
@@ -120,8 +119,16 @@ def test_pink_dot_sim_priority_clicks(tmp_path):
     def mock_click():
         click_log.append("left_click")
 
+    banner_calls = 0
+    def mock_locate_banner():
+        nonlocal banner_calls
+        banner_calls += 1
+        if banner_calls == 1:
+            return (500, 500)
+        return None  # Disappears after clicking
+
     navigator.locate_sim_template = MagicMock(side_effect=mock_locate_sim)
-    navigator.locate_encounter_banner = MagicMock(return_value=(500, 500))
+    navigator.locate_encounter_banner = MagicMock(side_effect=mock_locate_banner)
     navigator.collect_loot = MagicMock(return_value=0)
     navigator.move_mouse_inside_game = MagicMock(side_effect=lambda x=None, y=None: (x or 100, y or 100))
 
@@ -137,13 +144,11 @@ def test_pink_dot_sim_priority_clicks(tmp_path):
     sim_calls = [c[0][0] for c in navigator.locate_sim_template.call_args_list if c[0][0] in ["sim1", "sim3", "sim2"]]
     assert sim_calls == ["sim1", "sim1", "sim3", "sim3", "sim2", "sim2"]
 
-    # 3 clicks performed (one for each sim, verified confirmed)
-    assert len(click_log) == 3
+    # 4 clicks performed: 3 for sims + 1 for encounter banner
+    assert len(click_log) == 4
 
-    # Fallback should NOT be triggered
-    navigator.locate_encounter_banner.assert_not_called()
-    mock_rclick.assert_not_called()
-    mock_mdown.assert_not_called()
+    # Encounter banner MUST be located and clicked after sims
+    navigator.locate_encounter_banner.assert_called()
 
 
 def test_pink_dot_sim_double_check_when_still_visible(tmp_path):
@@ -187,6 +192,7 @@ def test_pink_dot_sim_double_check_when_still_visible(tmp_path):
         return None
 
     navigator.locate_sim_template = MagicMock(side_effect=mock_locate)
+    navigator.locate_encounter_banner = MagicMock(return_value=None)
     navigator.collect_loot = MagicMock(return_value=0)
     navigator.move_mouse_inside_game = MagicMock(side_effect=lambda x=None, y=None: (x or 100, y or 100))
 
@@ -225,6 +231,7 @@ def test_pink_dot_no_sims_fallback_to_banner_and_middle_click(tmp_path):
         config_path=str(cfg_file),
     )
     navigator.is_active = True
+    navigator.zone_routines = {}
 
     navigator.locate_sim_template = MagicMock(return_value=None)  # No sims available
     navigator.locate_encounter_banner = MagicMock(return_value=(600, 300))
@@ -263,9 +270,9 @@ def test_pink_dot_no_sims_fallback_to_banner_and_middle_click(tmp_path):
 
     # Verify execution order: banner_click -> down_t -> down_q -> up_q
     banner_i = actions.index("banner_click")
-    t_i = actions.index("down_t")
-    qdown_i = actions.index("down_q")
-    qup_i = actions.index("up_q")
+    t_i = actions.index("down_t", banner_i)
+    qdown_i = actions.index("down_q", t_i)
+    qup_i = actions.index("up_q", qdown_i)
     assert banner_i < t_i < qdown_i < qup_i
 
 
@@ -296,6 +303,7 @@ def test_pink_dot_fallback_banner_double_check_when_still_present(tmp_path):
         config_path=str(cfg_file),
     )
     navigator.is_active = True
+    navigator.zone_routines = {}
 
     click_count = 0
     def mock_click():
@@ -397,6 +405,7 @@ def test_pink_dot_fallback_initiates_yellow_orbit(tmp_path):
         config_path=str(cfg_file),
     )
     navigator.is_active = True
+    navigator.zone_routines = {}
     navigator.latest_pos = (150.0, 100.0)
 
     navigator.locate_sim_template = MagicMock(return_value=None)
@@ -686,8 +695,8 @@ def test_yellow_zone_checks_sims_first():
 
     assert res is True
     assert "sims_selected" in clicked_actions
-    # Banner check should NOT be called if Sims were detected and handled
-    navigator.locate_encounter_banner.assert_not_called()
+    # Encounter banner MUST be searched and clicked even if Sims were detected and handled
+    navigator.locate_encounter_banner.assert_called()
 
 
 def test_yellow_zone_orbit_not_duplicated_after_pink_dot():
@@ -972,6 +981,7 @@ def test_banner_approach_wait_before_right_and_middle_click(tmp_path):
 
     nav = RouteNavigator(movement_path=mock_movement_path, config_path=str(cfg_file))
     nav.is_active = True
+    nav.zone_routines = {}
     nav.wait_for_loot_confirmation = False
 
     nav.locate_sim_template = MagicMock(return_value=None)
@@ -1009,9 +1019,9 @@ def test_banner_approach_wait_before_right_and_middle_click(tmp_path):
 
     # Check strict sequence: banner_click -> approach_wait_2.5 -> down_t -> down_q
     idx_click = event_order.index("banner_click")
-    idx_wait = event_order.index("approach_wait_2.5")
-    idx_t = event_order.index("down_t")
-    idx_q = event_order.index("down_q")
+    idx_wait = event_order.index("approach_wait_2.5", idx_click)
+    idx_t = event_order.index("down_t", idx_wait)
+    idx_q = event_order.index("down_q", idx_t)
 
     assert idx_click < idx_wait < idx_t < idx_q
 

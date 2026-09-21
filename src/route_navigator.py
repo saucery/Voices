@@ -517,7 +517,7 @@ class RouteNavigator:
         """
         combat_desc = f"Key '{self.persistent_combat_key.upper()}'" if self.persistent_combat_action == "key" else "Mouse Click"
         _log(f"[COMBAT THREAD] Persistent combat engine started ({combat_desc} @ interval={self.persistent_combat_interval:.2f}s).")
-        while not stop_handler.is_stopped() and (self.persistent_combat_active or self.persistent_right_click_active):
+        while not stop_handler.is_stopped() and self.is_active and (self.persistent_combat_active or self.persistent_right_click_active):
             self._trigger_persistent_combat_if_due()
             time.sleep(0.04)
         _log("[COMBAT THREAD] Persistent combat engine stopped.")
@@ -531,6 +531,38 @@ class RouteNavigator:
             return None
 
         pink_num: Optional[int] = None
+        import re
+
+        # 1. Check direct target name or metadata (e.g. "Pink Marker (pink_5)", "pink_5", etc.)
+        if target and isinstance(target, dict):
+            name = str(target.get("name", ""))
+            m = re.search(r'pink[_\s]*(\d+)', name, re.IGNORECASE)
+            if m:
+                try:
+                    pink_num = int(m.group(1))
+                except Exception:
+                    pass
+
+            if pink_num is None:
+                orbit_zone = target.get("orbit_zone")
+                if isinstance(orbit_zone, dict):
+                    assoc = str(orbit_zone.get("associated_pink", "")) or str(orbit_zone.get("id", ""))
+                    m_oz = re.search(r'(?:pink|zone)[_\s]*(\d+)', assoc, re.IGNORECASE)
+                    if m_oz:
+                        try:
+                            pink_num = int(m_oz.group(1))
+                        except Exception:
+                            pass
+
+            if pink_num is None and target.get("pink_id"):
+                m_pid = re.search(r'(\d+)', str(target.get("pink_id")))
+                if m_pid:
+                    try:
+                        pink_num = int(m_pid.group(1))
+                    except Exception:
+                        pass
+
+        # 2. Check sequential pink encounter waypoints
         pink_wps = []
         if hasattr(self.movement_path, "get_pink_waypoints") and callable(self.movement_path.get_pink_waypoints):
             try:
@@ -538,7 +570,7 @@ class RouteNavigator:
             except Exception:
                 pass
 
-        if target and isinstance(target, dict):
+        if pink_num is None and target and isinstance(target, dict):
             t_idx = target.get("index")
             for p_i, item in enumerate(pink_wps):
                 w_idx = item[0] if isinstance(item, (list, tuple)) else getattr(item, "index", None)
@@ -547,12 +579,43 @@ class RouteNavigator:
                     pink_num = p_i + 1
                     break
 
+        # 3. Check nearest pink_zone by coordinates
+        if pink_num is None and hasattr(self, "movement_path") and getattr(self.movement_path, "pink_zones", None):
+            ref_pos = None
+            if target and isinstance(target, dict):
+                if target.get("pink_pos"):
+                    ref_pos = target["pink_pos"]
+                elif "x" in target and "y" in target:
+                    ref_pos = (target["x"], target["y"])
+            if ref_pos is None and self.latest_pos is not None:
+                ref_pos = self.latest_pos
+
+            if ref_pos:
+                best_pz_idx = None
+                best_pz_dist = float("inf")
+                for pz_i, pz in enumerate(self.movement_path.pink_zones):
+                    pz_x, pz_y = pz.get("x", 0), pz.get("y", 0)
+                    d = math.hypot(pz_x - ref_pos[0], pz_y - ref_pos[1])
+                    if d < best_pz_dist:
+                        best_pz_dist = d
+                        best_pz_idx = pz_i + 1
+                if best_pz_idx is not None and best_pz_dist <= 250.0:
+                    pink_num = best_pz_idx
+
+        # 4. Check current room ID from room classifier
+        if pink_num is None and getattr(self, "current_room_id", None):
+            try:
+                pink_num = int(self.current_room_id)
+            except Exception:
+                pass
+
+        # 5. Check start_at_pink_dot
         if pink_num is None and getattr(self, "start_at_pink_dot", 0) > 0:
             pink_num = self.start_at_pink_dot
 
         candidate_keys = []
         if pink_num is not None:
-            candidate_keys.extend([f"pink_{pink_num}", str(pink_num), f"pink{pink_num}"])
+            candidate_keys.extend([f"pink_{pink_num}", str(pink_num), f"pink{pink_num}", f"zone_{pink_num}"])
         if target and isinstance(target, dict):
             if "index" in target:
                 candidate_keys.extend([f"wp_{target['index']}", str(target['index'])])
@@ -2594,9 +2657,7 @@ class RouteNavigator:
             # 0. Check for Sims first! (Fallback safety in case dynamic resync landed on yellow zone directly)
             sims = self._detect_and_click_sims(prefix="[YELLOW ZONE]")
             if sims:
-                _log(f"  [YELLOW ZONE] Sims selected ({', '.join(sims)}). Encounter activated via Sim!")
-                self.hide_loot_labels()
-                return True
+                _log(f"  [YELLOW ZONE] Sims selected ({', '.join(sims)}). Proceeding to locate Encounter Banner...")
 
             # 1. Locate and click banner if enabled
             if self.click_banner_enabled:
@@ -2612,7 +2673,9 @@ class RouteNavigator:
 
                 # Retry: If banner not found, walk closer to pink dot again and re-check
                 if banner_pos is None and not stop_handler.is_stopped() and self.is_active:
-                    pink_pos = waypoint.get("pink_pos") or (waypoint.get("x"), waypoint.get("y"))
+                    pink_pos = None
+                    if orbit_zone and isinstance(orbit_zone, dict):
+                        pink_pos = orbit_zone.get("pink_pos") or orbit_zone.get("center")
                     if pink_pos:
                         _log(f"  [BANNER RETRY] Banner not detected on screen. Walking closer to pink dot at ({pink_pos[0]:.1f}, {pink_pos[1]:.1f}) and re-searching...")
                         self.status_message = "[YELLOW ZONE] Walking to Pink Dot Retry..."
@@ -2770,15 +2833,29 @@ class RouteNavigator:
 
         # 2. Attempt to detect and click Sims: sim1 -> wait 2s -> sim3 -> wait 2s -> sim2
         sims_clicked = self._detect_and_click_sims(prefix="[PINK DOT]")
-        if sims_clicked:
-            self.hide_loot_labels()
 
         if stop_handler.is_stopped() or not self.is_active:
             return False
 
-        # 3. Fallback: If no sims are available, click encounter_banner, right-click, middle-click for 4s
-        if not sims_clicked:
-            _log("  [PINK DOT] No sims available. Falling back to Encounter Banner sequence...")
+        pink_pos = None
+        if target and isinstance(target, dict):
+            pink_pos = target.get("pink_pos") or (target.get("x"), target.get("y"))
+
+        # If character moved or sims were clicked, walk back to the pink dot location to ensure banner is in range
+        if sims_clicked and pink_pos:
+            self._walk_to_coordinate(
+                (float(pink_pos[0]), float(pink_pos[1])),
+                label="NAV→BANNER",
+                timeout=5.0,
+                arrival_threshold=15.0,
+            )
+            time.sleep(0.3)
+
+        if stop_handler.is_stopped() or not self.is_active:
+            return False
+
+        # 3. Locate and click Encounter Banner
+        if self.click_banner_enabled:
             self.status_message = "[PINK DOT] Finding Encounter Banner..."
             banner_pos = None
             for attempt in range(1, self.banner_search_attempts + 1):
@@ -2788,6 +2865,27 @@ class RouteNavigator:
                 if banner_pos is not None:
                     break
                 time.sleep(0.25)
+
+            # Retry: If banner not found, walk closer to pink dot again and re-check
+            if banner_pos is None and not stop_handler.is_stopped() and self.is_active:
+                if pink_pos:
+                    _log(f"  [BANNER RETRY] Banner not detected on screen. Walking closer to pink dot at ({pink_pos[0]:.1f}, {pink_pos[1]:.1f}) and re-searching...")
+                    self.status_message = "[PINK DOT] Walking to Pink Dot Retry..."
+                    self._walk_to_coordinate(
+                        (float(pink_pos[0]), float(pink_pos[1])),
+                        label="NAV→BANNER-RETRY",
+                        timeout=5.0,
+                        arrival_threshold=8.0,
+                    )
+                    time.sleep(0.4)
+                    for retry_attempt in range(1, self.banner_search_attempts + 1):
+                        if stop_handler.is_stopped() or not self.is_active:
+                            return False
+                        banner_pos = self.locate_encounter_banner()
+                        if banner_pos is not None:
+                            _log(f"  [BANNER RETRY SUCCESS] Encounter banner detected on retry at ({banner_pos[0]}, {banner_pos[1]})!")
+                            break
+                        time.sleep(0.25)
 
             if banner_pos is not None:
                 bx, by = self.move_mouse_inside_game(banner_pos[0], banner_pos[1])
@@ -2837,48 +2935,55 @@ class RouteNavigator:
                             pydirectinput.mouseUp(button="left")
                         time.sleep(0.15)
             else:
-                _log(f"  [WARNING] Encounter banner not detected on screen. Positioning cursor inside game.")
+                _log(f"  [WARNING] Encounter banner not detected on screen after {self.banner_search_attempts} attempts. Positioning cursor inside game.")
                 self.move_mouse_inside_game()
+        else:
+            _log("  [CONFIG] Banner clicking disabled (click_banner_enabled=false). Skipping...")
+            self.move_mouse_inside_game()
 
-            # Hide loot labels after banner interaction before combat/orbit
-            self.hide_loot_labels()
+        # Hide loot labels after sims/banner interaction before combat/orbit
+        self.hide_loot_labels()
 
-            if stop_handler.is_stopped() or not self.is_active:
-                return False
+        if stop_handler.is_stopped() or not self.is_active:
+            return False
 
-            # Press 'T' key skill once
-            _log("  [ACTION 2/3] Pressing 'T' key skill once...")
-            self.status_message = "[PINK DOT] Pressing 'T' Skill..."
-            if pydirectinput:
-                pydirectinput.keyDown("t")
-                time.sleep(0.04)
-                pydirectinput.keyUp("t")
-            time.sleep(0.15)
-
-            if stop_handler.is_stopped() or not self.is_active:
-                return False
-
-            # Press and hold 'Q' key for configured seconds
-            hold_sec = self.middle_click_hold_seconds
-            _log(f"  [ACTION 3/3] Pressing and holding 'Q' key for {hold_sec:.1f}s...")
-            try:
+        # Initial skills & hold actions (run once on first encounter)
+        if not self.has_executed_initial_hold:
+            # Press 'T' key skill once if enabled
+            if getattr(self, "right_click_after_banner_enabled", True):
+                _log("  [ACTION 2/3] Pressing 'T' key skill once...")
+                self.status_message = "[PINK DOT] Pressing 'T' Skill..."
                 if pydirectinput:
-                    pydirectinput.keyDown("q")
-                hold_start = time.time()
-                while (time.time() - hold_start) < hold_sec:
-                    if stop_handler.is_stopped() or not self.is_active:
-                        break
-                    rem_h = max(0.0, hold_sec - (time.time() - hold_start))
-                    self.status_message = f"[PINK DOT] Holding [Q] ({rem_h:.1f}s)..."
-                    time.sleep(0.05)
-            finally:
-                if pydirectinput:
-                    pydirectinput.keyUp("q")
-                _log("  [ACTION 3/3] 'Q' key released.")
-            time.sleep(0.1)
+                    pydirectinput.keyDown("t")
+                    time.sleep(0.04)
+                    pydirectinput.keyUp("t")
+                time.sleep(0.15)
 
             if stop_handler.is_stopped() or not self.is_active:
                 return False
+
+            # Press and hold 'Q' key for configured seconds if enabled
+            if getattr(self, "middle_click_hold_enabled", True):
+                hold_sec = self.middle_click_hold_seconds
+                _log(f"  [ACTION 3/3] Pressing and holding 'Q' key for {hold_sec:.1f}s...")
+                try:
+                    if pydirectinput:
+                        pydirectinput.keyDown("q")
+                    hold_start = time.time()
+                    while (time.time() - hold_start) < hold_sec:
+                        if stop_handler.is_stopped() or not self.is_active:
+                            break
+                        rem_h = max(0.0, hold_sec - (time.time() - hold_start))
+                        self.status_message = f"[PINK DOT] Holding [Q] ({rem_h:.1f}s)..."
+                        time.sleep(0.05)
+                finally:
+                    if pydirectinput:
+                        pydirectinput.keyUp("q")
+                    _log("  [ACTION 3/3] 'Q' key released.")
+                time.sleep(0.1)
+
+            self.has_executed_initial_hold = True
+            self.enable_persistent_combat()
 
         # 4. Start orbiting inside yellow marker for defined duration (e.g. 50s)
         orbit_zones = self.movement_path.get_orbit_zones()

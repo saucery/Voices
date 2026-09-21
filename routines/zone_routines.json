@@ -23,7 +23,7 @@
             "sim3",
             "sim2"
           ],
-          "click_y_offset": 35,
+          "click_y_offset": 100,
           "click_x_offset": 0,
           "approach_wait": 2.0,
           "description": "Attempt to detect and select sim banners with approach wait"
@@ -104,7 +104,7 @@
             "sim3",
             "sim2"
           ],
-          "click_y_offset": 35,
+          "click_y_offset": 100,
           "click_x_offset": 0,
           "approach_wait": 2.0,
           "description": "Attempt to detect and select sim banners"
@@ -185,7 +185,7 @@
             "sim3",
             "sim2"
           ],
-          "click_y_offset": 35,
+          "click_y_offset": 100,
           "click_x_offset": 0,
           "approach_wait": 2.0,
           "description": "Attempt to detect and select sim banners"
@@ -266,7 +266,7 @@
             "sim3",
             "sim2"
           ],
-          "click_y_offset": 35,
+          "click_y_offset": 100,
           "click_x_offset": 0,
           "approach_wait": 2.0,
           "description": "Attempt to detect and select sim banners"
@@ -347,7 +347,7 @@
             "sim3",
             "sim2"
           ],
-          "click_y_offset": 35,
+          "click_y_offset": 100,
           "click_x_offset": 0,
           "approach_wait": 2.0,
           "description": "Attempt to detect and select sim banners"
@@ -428,7 +428,7 @@
             "sim3",
             "sim2"
           ],
-          "click_y_offset": 35,
+          "click_y_offset": 100,
           "click_x_offset": 0,
           "approach_wait": 2.0,
           "description": "Attempt to detect and select sim banners"
@@ -509,7 +509,7 @@
             "sim3",
             "sim2"
           ],
-          "click_y_offset": 35,
+          "click_y_offset": 100,
           "click_x_offset": 0,
           "approach_wait": 2.0,
           "description": "Attempt to detect and select sim banners"

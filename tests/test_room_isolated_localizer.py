@@ -42,10 +42,13 @@ def test_room_7_active_bounds_clamping(movement_path):
     movement_path.current_idx = 72
     bounds = movement_path.get_active_room_bounds()
     assert bounds is not None
-    assert bounds[0] == 0  # min_x
-    assert bounds[1] == 0  # min_y
+    assert bounds[0] >= 0  # min_x
+    assert bounds[1] >= 0  # min_y
     assert bounds[2] <= 280  # max_x
     assert bounds[3] <= 280  # max_y
+    # Verify tightened bounds
+    assert bounds[0] >= 30 and bounds[1] >= 20
+    assert bounds[2] <= 220 and bounds[3] <= 220
 
     roi = movement_path.get_search_roi_for_progress()
     assert roi is not None

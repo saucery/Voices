@@ -77,6 +77,18 @@ class RoomClassifier:
         # Zone Auto-Discovery state (when no template images exist)
         self.auto_zones: Dict[str, Tuple[float, float]] = {}  # zone_id -> (center_x, center_y)
 
+        # Room-specific threshold lookup table from config
+        self.room_thresholds: Dict[str, float] = {
+            r.get("id"): float(r.get("threshold", 0.45))
+            for r in self.config.get("rooms", []) if isinstance(r, dict)
+        }
+        self.r7_template_ready: bool = False
+        self.orb_r7 = None
+        self.r7_kp = None
+        self.r7_des = None
+        self.bf_r7 = None
+        self.r7_threshold: float = self.room_thresholds.get("room_7", 0.25)
+
         # 1. Single Master Map Layout Mode (Loads EXACTLY ONE map file)
         single_map_file = map_layout_path or self.config.get("map_layout_file")
         if single_map_file:
@@ -91,6 +103,7 @@ class RoomClassifier:
                     template_paths=[full_map_path],
                     threshold=self.matching_cfg.get("match_threshold", 0.45),
                 )
+                self._init_room_7_specialized_template(full_map_path)
                 print(f"[MAP LOADER] Loaded single map layout: {single_map_file}")
                 return
             else:
@@ -168,6 +181,61 @@ class RoomClassifier:
                 return
 
         self.rooms.append(room_entry)
+
+    def _init_room_7_specialized_template(self, map_path: str):
+        """Initializes dedicated high-resolution Canny structural edge template for Room 7."""
+        try:
+            full_map = cv2.imread(map_path)
+            if full_map is None:
+                return
+            # Room 7 bounding region on master layout [0:220, 0:220]
+            r7_crop = full_map[0:220, 0:220]
+            edges_r7 = cv2.Canny(cv2.cvtColor(r7_crop, cv2.COLOR_BGR2GRAY), 50, 150)
+            self.orb_r7 = cv2.ORB_create(nfeatures=1000)
+            self.r7_kp, self.r7_des = self.orb_r7.detectAndCompute(edges_r7, None)
+            self.bf_r7 = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+            self.r7_threshold = self.room_thresholds.get("room_7", 0.25)
+            self.r7_template_ready = (self.r7_des is not None and len(self.r7_kp) >= 10)
+            if self.r7_template_ready:
+                print(f"[ROOM 7 ENGINE] Initialized specialized Room 7 Canny template ({len(self.r7_kp)} features, thresh={self.r7_threshold})")
+        except Exception as e:
+            print(f"[ROOM CLASSIFIER] Warning initializing Room 7 template: {e}")
+
+    def _match_room_7_orb(self, minimap_crop: np.ndarray) -> Tuple[float, Optional[Tuple[float, float]], int]:
+        """Specialized ORB matcher for Room 7 thin purple walls using Canny edges and cross-check."""
+        if not self.r7_template_ready or self.r7_des is None:
+            return 0.0, None, 0
+        try:
+            edges_mini = cv2.Canny(cv2.cvtColor(minimap_crop, cv2.COLOR_BGR2GRAY), 50, 150)
+            kp_mini, des_mini = self.orb_r7.detectAndCompute(edges_mini, None)
+            if des_mini is None or len(kp_mini) < 3:
+                return 0.0, None, 0
+            matches = self.bf_r7.match(self.r7_des, des_mini)
+            good = [m for m in sorted(matches, key=lambda x: x.distance) if m.distance < 65]
+            if len(good) < 3:
+                return 0.0, None, len(good)
+            src_pts = np.float32([self.r7_kp[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+            dst_pts = np.float32([kp_mini[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+            M, mask = cv2.estimateAffinePartial2D(src_pts, dst_pts, method=cv2.RANSAC, ransacReprojThreshold=3.5)
+            if M is None or mask is None:
+                return 0.0, None, len(good)
+            inliers = int(np.sum(mask))
+            min_inliers_required = 4 if self.is_locked else 5
+            if inliers < min_inliers_required:
+                return 0.0, None, inliers
+            theta = math.atan2(M[1, 0], M[0, 0])
+            scale = math.hypot(M[0, 0], M[0, 1])
+            if abs(theta) > math.radians(14) or abs(scale - 1.0) > 0.22:
+                return 0.0, None, inliers
+            m_h, m_w = minimap_crop.shape[:2]
+            center_pt = np.array([[[m_w / 2.0, m_h / 2.0]]], dtype=np.float32)
+            M_inv = cv2.invertAffineTransform(M)
+            transformed = cv2.transform(center_pt, M_inv)
+            char_pos = (round(float(transformed[0][0][0]), 1), round(float(transformed[0][0][1]), 1))
+            score = min(1.0, float(inliers) / 7.0)
+            return score, char_pos, inliers
+        except Exception:
+            return 0.0, None, 0
 
     def _match_template_multiscale(
         self, target_img: np.ndarray, template_img: np.ndarray
@@ -267,7 +335,8 @@ class RoomClassifier:
         scale_est = math.hypot(M_affine[0, 0], M_affine[0, 1])
         if abs(theta) > math.radians(12) or abs(scale_est - 1.0) > 0.20:
             # False correlation caused by background floor noise/particles
-            return corr_score, default_pos, inliers
+            err_pos = None if (t_w > 400 or t_h > 400) else default_pos
+            return corr_score, err_pos, inliers
 
         center_pt = np.array([[[m_w / 2.0, m_h / 2.0]]], dtype=np.float32)
 
@@ -323,11 +392,44 @@ class RoomClassifier:
         highest_score = -1.0
         best_threshold = 0.45
         best_inliers = 0
+        recognized = False
+
+        # Check if active search context indicates Room 7
+        is_room_7 = False
+        if search_roi is not None:
+            rx1, ry1, rx2, ry2 = search_roi
+            if rx2 <= 240 and ry2 <= 240:
+                is_room_7 = True
+        elif expected_pos is not None:
+            if expected_pos[0] <= 210 and expected_pos[1] <= 210:
+                is_room_7 = True
+
+        # Fast specialized match for Room 7 purple walls
+        if is_room_7 and self.r7_template_ready:
+            r7_score, r7_pos, r7_inliers = self._match_room_7_orb(minimap_crop)
+            if r7_score >= self.r7_threshold and r7_pos is not None:
+                best_room_id = "room_7"
+                best_room_name = "Room 7"
+                best_variant = "room_7_canny"
+                best_char_pos = r7_pos
+                highest_score = r7_score
+                best_threshold = self.r7_threshold
+                best_inliers = r7_inliers
+                all_scores["room_7"] = {
+                    "name": "Room 7",
+                    "score": round(r7_score, 4),
+                    "best_variant": best_variant,
+                    "character_position": r7_pos,
+                    "inliers": r7_inliers,
+                    "threshold": self.r7_threshold,
+                    "status": "matched",
+                }
+                recognized = True
 
         # Check if any room templates have valid image files
         has_active_templates = any(len(r["templates"]) > 0 for r in self.rooms)
 
-        if has_active_templates:
+        if not recognized and has_active_templates:
             for r in self.rooms:
                 r_id = r["id"]
                 r_name = r["name"]
@@ -402,7 +504,7 @@ class RoomClassifier:
                     best_inliers = room_best_inliers
 
             recognized = highest_score >= best_threshold and best_room_id is not None
-        else:
+        elif not has_active_templates and not recognized:
             # Automatic Zone Discovery mode (no template images required)
             recognized = True
             best_room_id = "AutoMap"

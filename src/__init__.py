@@ -9,6 +9,7 @@ from .world_map import WorldMapTracker
 from .event_engine import GameEventManager
 from .task_runner import TaskExecutor
 from .encounter_detector import EncounterDetector
+from .enemy_detector import EnemyDetector
 
 __all__ = [
     "MinimapExtractor",
@@ -19,4 +20,5 @@ __all__ = [
     "GameEventManager",
     "TaskExecutor",
     "EncounterDetector",
+    "EnemyDetector",
 ]

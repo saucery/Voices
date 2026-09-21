@@ -371,6 +371,16 @@
       "description": "Visual template matcher for tabletUnique"
     },
     {
+      "id": "template_heavybeltraremb_hh_8890",
+      "name": "HeavyBeltRareMB/HH",
+      "enabled": true,
+      "priority": 1,
+      "type": "template",
+      "template_file": "ui/loot_templates/heavybeltraremb_hh.png",
+      "threshold": 0.624031007751938,
+      "description": "Visual template matcher for HeavyBeltRareMB/HH"
+    },
+    {
       "id": "gems_uncut_cut_olive",
       "name": "Gems (Ruby / Sapphire / Diamond / Emerald / Topaz)",
       "enabled": false,

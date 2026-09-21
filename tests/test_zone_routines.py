@@ -754,6 +754,7 @@ def test_hold_mouse_and_click_mouse_only_once_on_first_pink_dot():
     """Verifies that hold_mouse and click_mouse only run ONCE on first pink encounter and are skipped on subsequent ones."""
     nav = RouteNavigator(movement_path=MovementPath())
     nav.is_active = True
+    nav.hold_q_enemy_reactive_enabled = False
     assert nav.has_executed_initial_hold is False
 
     step_hold = {"action": "hold_mouse", "button": "middle", "duration": 0.05, "combat_interval": 0.65, "combat_action": "key", "combat_key": "t"}

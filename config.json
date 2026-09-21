@@ -30,6 +30,11 @@
     "right_click_after_banner_enabled": true,
     "middle_click_hold_enabled": true,
     "middle_click_hold_seconds": 5.0,
+    "hold_q_enemy_reactive_enabled": true,
+    "enemy_detect_wait_timeout": 15.0,
+    "enemy_near_distance_px": 200.0,
+    "enemy_hold_min_seconds": 2.0,
+    "enemy_hold_max_seconds": 6.0,
     "banner_approach_wait_seconds": 1.0,
     "banner_verify_click_enabled": true,
     "banner_verify_delay_seconds": 1.0,
@@ -101,7 +106,7 @@
     {
       "id": "room_7",
       "name": "Room 7",
-      "threshold": 0.5
+      "threshold": 0.25
     }
   ]
 }

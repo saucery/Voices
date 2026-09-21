@@ -247,6 +247,7 @@ def test_execute_yellow_zone_interaction_sequence(tmp_path, monkeypatch):
     nav.is_active = True
     nav.zone_routines = None
     nav.middle_click_hold_seconds = 0.1
+    nav.hold_q_enemy_reactive_enabled = False
     nav.banner_search_attempts = 1
     # Mock banner location and prevent desktop sim matching
     nav.locate_sim_template = MagicMock(return_value=None)

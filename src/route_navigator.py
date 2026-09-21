@@ -35,6 +35,7 @@ from .stop_handler import stop_handler
 from .window_focus import window_focuser
 from .loot_detector import LootDetector, LootItem
 from .minimap_extractor import MinimapExtractor
+from .enemy_detector import EnemyDetector
 
 
 
@@ -134,6 +135,12 @@ class RouteNavigator:
         self.right_click_after_banner_enabled: bool = True
         self.middle_click_hold_enabled: bool = True
         self.middle_click_hold_seconds: float = 3.0
+        self.hold_q_enemy_reactive_enabled: bool = False
+        self.enemy_detect_wait_timeout: float = 5.0
+        self.enemy_near_distance_px: float = 200.0
+        self.enemy_hold_min_seconds: float = 2.0
+        self.enemy_hold_max_seconds: float = 6.0
+        self.enemy_detector: Optional[EnemyDetector] = None
         self.encounter_banner_file: str = "ui/encounter_banner.png"
         self.encounter_match_threshold: float = 0.45
         self.banner_search_attempts: int = 5
@@ -209,6 +216,11 @@ class RouteNavigator:
                 self.right_click_after_banner_enabled = bool(ap_cfg.get("right_click_after_banner_enabled", self.right_click_after_banner_enabled))
                 self.middle_click_hold_enabled = bool(ap_cfg.get("middle_click_hold_enabled", self.middle_click_hold_enabled))
                 self.middle_click_hold_seconds = float(ap_cfg.get("middle_click_hold_seconds", self.middle_click_hold_seconds))
+                self.hold_q_enemy_reactive_enabled = bool(ap_cfg.get("hold_q_enemy_reactive_enabled", self.hold_q_enemy_reactive_enabled))
+                self.enemy_detect_wait_timeout = float(ap_cfg.get("enemy_detect_wait_timeout", self.enemy_detect_wait_timeout))
+                self.enemy_near_distance_px = float(ap_cfg.get("enemy_near_distance_px", self.enemy_near_distance_px))
+                self.enemy_hold_min_seconds = float(ap_cfg.get("enemy_hold_min_seconds", self.enemy_hold_min_seconds))
+                self.enemy_hold_max_seconds = float(ap_cfg.get("enemy_hold_max_seconds", self.enemy_hold_max_seconds))
                 self.encounter_banner_file = ap_cfg.get("encounter_banner_file", self.encounter_banner_file)
                 self.encounter_match_threshold = float(ap_cfg.get("encounter_match_threshold", self.encounter_match_threshold))
                 self.banner_approach_wait_seconds = float(ap_cfg.get("banner_approach_wait_seconds", self.banner_approach_wait_seconds))
@@ -754,9 +766,18 @@ class RouteNavigator:
                         early_exit_confirmations = 0
 
                 current_pos = self.latest_pos
+                if current_pos is not None and best_zone is not None:
+                    # Spatial boundary check during orbit: reject wild jumps outside zone
+                    zc = best_zone.get("center")
+                    zr = float(best_zone.get("radius", 60.0))
+                    if zc and len(zc) >= 2:
+                        dist_zc = math.hypot(current_pos[0] - zc[0], current_pos[1] - zc[1])
+                        if dist_zc > max(95.0, zr * 1.6):
+                            current_pos = None
+
                 if current_pos is None:
                     # If tracking dropped momentarily during combat, keep heading towards target with last known pos
-                    if self.last_known_pos is not None and (now - self.last_known_time) < 2.0:
+                    if self.last_known_pos is not None and (now - self.last_known_time) < 3.0:
                         current_pos = self.last_known_pos
                     else:
                         self.status_message = f"[{zone_label}] Orbiting - Tracking Lost ({rem:.1f}s left)"
@@ -792,7 +813,19 @@ class RouteNavigator:
                     if dist_moved < 4.5:
                         stuck_counter += 1
                         if stuck_counter >= self.orbit_stuck_step_limit or (now - last_progress_time) > self.orbit_stuck_timeout_sec:
-                            self._execute_stuck_recovery(reason=f"Stuck at ({current_pos[0]:.0f}, {current_pos[1]:.0f}) - no movement for {stuck_counter} steps during Yellow Orbit")
+                            # Verify current_pos is actually near the orbit zone before triggering physical stuck recovery
+                            zc = best_zone.get("center") if best_zone else None
+                            is_in_orbit_area = True
+                            if zc and len(zc) >= 2:
+                                zr = float(best_zone.get("radius", 60.0))
+                                if math.hypot(current_pos[0] - zc[0], current_pos[1] - zc[1]) > (zr * 1.5):
+                                    is_in_orbit_area = False
+
+                            if is_in_orbit_area:
+                                self._execute_stuck_recovery(reason=f"Stuck at ({current_pos[0]:.0f}, {current_pos[1]:.0f}) - no movement for {stuck_counter} steps during Yellow Orbit")
+                            else:
+                                self.orbit_point_idx = (self.orbit_point_idx + 1) % max(1, len(self.orbit_perimeter_pts))
+
                             orbit_grace_until = time.time() + 4.0
                             stuck_counter = 0
                             last_progress_pos = current_pos
@@ -1070,24 +1103,27 @@ class RouteNavigator:
                 return True
 
             duration = float(step.get("duration", self.middle_click_hold_seconds))
-            window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
-            _log(f"    [ACTION] Holding '{hold_k.upper()}' key for {duration:.1f}s (ONCE on first encounter)...")
-            self.is_holding_mouse = True
-            try:
-                if pydirectinput:
-                    pydirectinput.keyDown(hold_k)
-                h_start = time.time()
-                while (time.time() - h_start) < duration:
-                    if stop_handler.is_stopped() or not self.is_active:
-                        break
-                    rem_h = max(0.0, duration - (time.time() - h_start))
-                    self.status_message = f"[{zone_label}] Holding [{hold_k.upper()}] ({rem_h:.1f}s)..."
-                    time.sleep(0.05)
-            finally:
-                self.is_holding_mouse = False
-                if pydirectinput:
-                    pydirectinput.keyUp(hold_k)
-                _log(f"    [ACTION] Key '{hold_k.upper()}' released.")
+            if hold_k == "q":
+                self.execute_hold_q(zone_label, duration, step=step)
+            else:
+                window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+                _log(f"    [ACTION] Holding '{hold_k.upper()}' key for {duration:.1f}s (ONCE on first encounter)...")
+                self.is_holding_mouse = True
+                try:
+                    if pydirectinput:
+                        pydirectinput.keyDown(hold_k)
+                    h_start = time.time()
+                    while (time.time() - h_start) < duration:
+                        if stop_handler.is_stopped() or not self.is_active:
+                            break
+                        rem_h = max(0.0, duration - (time.time() - h_start))
+                        self.status_message = f"[{zone_label}] Holding [{hold_k.upper()}] ({rem_h:.1f}s)..."
+                        time.sleep(0.05)
+                finally:
+                    self.is_holding_mouse = False
+                    if pydirectinput:
+                        pydirectinput.keyUp(hold_k)
+                    _log(f"    [ACTION] Key '{hold_k.upper()}' released.")
 
             # Mark initial hold as completed so subsequent pink dots never hold again in this run
             self.has_executed_initial_hold = True
@@ -1833,6 +1869,163 @@ class RouteNavigator:
         if self.capturer is None:
             self.capturer = ScreenCapturer(monitor_idx=self.monitor_idx)
         return self.capturer
+
+    def _get_enemy_detector(self) -> EnemyDetector:
+        """Returns or lazily creates an EnemyDetector instance."""
+        if self.enemy_detector is None:
+            self.enemy_detector = EnemyDetector()
+        return self.enemy_detector
+
+    def _get_screen_char_center(self, screen: np.ndarray, capt: Any) -> Tuple[float, float]:
+        """Calculates (x, y) coordinates of the character relative to the captured screen."""
+        sh, sw = screen.shape[:2]
+        char_center = (float(sw // 2), float(sh // 2))
+        try:
+            bounds = window_focuser.get_game_window_bounds()
+            if bounds and isinstance(bounds, (list, tuple)) and len(bounds) == 4:
+                gw_l, gw_t, gw_r, gw_b = bounds
+                mon_left = 0
+                mon_top = 0
+                if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+                    monitors = capt._sct.monitors
+                    if 0 <= self.monitor_idx < len(monitors):
+                        mon_left = monitors[self.monitor_idx].get("left", 0)
+                        mon_top = monitors[self.monitor_idx].get("top", 0)
+                rcx = ((gw_l + gw_r) // 2) - mon_left
+                rcy = ((gw_t + gw_b) // 2) - mon_top
+                if 0 <= rcx < sw and 0 <= rcy < sh:
+                    char_center = (float(rcx), float(rcy))
+        except Exception:
+            pass
+        return char_center
+
+    def execute_hold_q(
+        self,
+        zone_label: str = "ENCOUNTER",
+        duration: float = 3.5,
+        step: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Executes holding and releasing of 'Q' key with either:
+        1. Configurable fixed-duration hold (legacy mode).
+        2. Enemy-reactive mode: presses 'Q' ONLY when enemies appear on screen,
+           and holds 'Q' until an enemy is near the character or safety timeout expires.
+        """
+        is_reactive = getattr(self, "hold_q_enemy_reactive_enabled", True)
+        if step and "enemy_reactive" in step:
+            is_reactive = bool(step.get("enemy_reactive"))
+
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+
+        # Legacy fixed-duration mode
+        if not is_reactive:
+            _log(f"    [ACTION] Holding 'Q' key for {duration:.1f}s (fixed duration mode)...")
+            self.is_holding_mouse = True
+            try:
+                if pydirectinput:
+                    pydirectinput.keyDown("q")
+                h_start = time.time()
+                while (time.time() - h_start) < duration:
+                    if stop_handler.is_stopped() or (getattr(self, "is_navigating", False) and not self.is_active):
+                        break
+                    rem_h = max(0.0, duration - (time.time() - h_start))
+                    self.status_message = f"[{zone_label}] Holding [Q] ({rem_h:.1f}s)..."
+                    time.sleep(0.05)
+            finally:
+                self.is_holding_mouse = False
+                if pydirectinput:
+                    pydirectinput.keyUp("q")
+                _log("    [ACTION] Key 'Q' released.")
+            time.sleep(0.1)
+            return True
+
+        # Enemy-reactive mode
+        wait_timeout = float(step.get("detect_timeout", self.enemy_detect_wait_timeout)) if step else self.enemy_detect_wait_timeout
+        near_thresh = float(step.get("near_distance", self.enemy_near_distance_px)) if step else self.enemy_near_distance_px
+        min_hold = float(step.get("min_hold_seconds", self.enemy_hold_min_seconds)) if step else self.enemy_hold_min_seconds
+        max_hold = float(step.get("max_hold_seconds", step.get("duration", self.enemy_hold_max_seconds))) if step else self.enemy_hold_max_seconds
+
+        detector = self._get_enemy_detector()
+        capt = self._get_capturer()
+
+        _log(f"    [ENEMY DETECT] Monitoring screen for enemies before pressing 'Q' (timeout={wait_timeout:.1f}s, near_thresh={near_thresh:.0f}px, min_hold={min_hold:.1f}s)...")
+        self.status_message = f"[{zone_label}] Waiting for enemies..."
+
+        detect_start = time.time()
+        enemies_detected = False
+        first_det_result: Optional[Dict[str, Any]] = None
+
+        while (time.time() - detect_start) < wait_timeout:
+            if stop_handler.is_stopped() or (getattr(self, "is_navigating", False) and not self.is_active):
+                return False
+
+            try:
+                screen = capt.capture()
+            except Exception as e:
+                _log(f"    [WARNING] Screen capture failed during enemy detection: {e}")
+                screen = None
+
+            if screen is not None and screen.size > 0:
+                char_center = self._get_screen_char_center(screen, capt)
+                det = detector.detect(screen, character_center=char_center, near_threshold_px=near_thresh)
+                if det["detected"]:
+                    enemies_detected = True
+                    first_det_result = det
+                    break
+
+            time.sleep(0.05)
+
+        if not enemies_detected:
+            _log(f"    [ENEMY DETECT] No enemies detected within {wait_timeout:.1f}s. Skipping 'Q' hold.")
+            return True
+
+        # Enemies detected! Press and hold Q
+        e_count = first_det_result["count"] if first_det_result else 1
+        min_d = first_det_result["nearest_distance"] if first_det_result else 999.0
+        _log(f"    [ACTION] Enemies detected ({e_count} health bar(s), nearest={min_d:.1f}px). Pressing and holding 'Q' key (min={min_hold:.1f}s, max={max_hold:.1f}s)...")
+        self.is_holding_mouse = True
+
+        try:
+            if pydirectinput:
+                pydirectinput.keyDown("q")
+
+            hold_start = time.time()
+            while (time.time() - hold_start) < max_hold:
+                if stop_handler.is_stopped() or (getattr(self, "is_navigating", False) and not self.is_active):
+                    break
+
+                elapsed_hold = time.time() - hold_start
+                try:
+                    screen = capt.capture()
+                except Exception as e:
+                    screen = None
+
+                if screen is not None and screen.size > 0:
+                    char_center = self._get_screen_char_center(screen, capt)
+                    det = detector.detect(screen, character_center=char_center, near_threshold_px=near_thresh)
+                    curr_min_d = det["nearest_distance"]
+                    if det["detected"] and det["has_enemy_near"]:
+                        if elapsed_hold >= min_hold:
+                            _log(f"    [ENEMY REACTIVE] Enemy near character ({curr_min_d:.1f}px <= {near_thresh:.1f}px) & min hold satisfied ({elapsed_hold:.2f}s >= {min_hold:.1f}s). Releasing 'Q'!")
+                            break
+                        rem_min = max(0.0, min_hold - elapsed_hold)
+                        self.status_message = f"[{zone_label}] Holding [Q] (Enemy near! Min hold: {rem_min:.1f}s)..."
+                    else:
+                        self.status_message = f"[{zone_label}] Holding [Q] (Nearest enemy: {curr_min_d:.0f}px, target: <={near_thresh:.0f}px)..."
+                else:
+                    self.status_message = f"[{zone_label}] Holding [Q]..."
+
+                time.sleep(0.05)
+            else:
+                _log(f"    [ENEMY REACTIVE] Max hold duration ({max_hold:.1f}s) reached without enemy in near range. Releasing 'Q'.")
+        finally:
+            self.is_holding_mouse = False
+            if pydirectinput:
+                pydirectinput.keyUp("q")
+            _log("    [ACTION] Key 'Q' released.")
+
+        time.sleep(0.1)
+        return True
 
     def locate_encounter_banner(self) -> Optional[Tuple[int, int]]:
         """
@@ -2748,25 +2941,10 @@ class RouteNavigator:
             if stop_handler.is_stopped() or not self.is_active:
                 return False
 
-            # 3. Press and hold 'Q' key for configured duration if enabled
+            # 3. Press and hold 'Q' key for configured duration or enemy proximity if enabled
             if self.middle_click_hold_enabled:
                 hold_sec = self.middle_click_hold_seconds
-                _log(f"  [ACTION 3/3] Pressing and holding 'Q' key for {hold_sec:.1f}s...")
-                try:
-                    if pydirectinput:
-                        pydirectinput.keyDown("q")
-                    hold_start = time.time()
-                    while (time.time() - hold_start) < hold_sec:
-                        if stop_handler.is_stopped() or not self.is_active:
-                            break
-                        rem_h = max(0.0, hold_sec - (time.time() - hold_start))
-                        self.status_message = f"[YELLOW ZONE] Holding [Q] ({rem_h:.1f}s)..."
-                        time.sleep(0.05)
-                finally:
-                    if pydirectinput:
-                        pydirectinput.keyUp("q")
-                    _log("  [ACTION 3/3] 'Q' key released.")
-                time.sleep(0.1)
+                self.execute_hold_q("YELLOW ZONE", hold_sec)
             else:
                 _log("  [CONFIG] Q key hold disabled (middle_click_hold_enabled=false). Skipping...")
 
@@ -2962,25 +3140,10 @@ class RouteNavigator:
             if stop_handler.is_stopped() or not self.is_active:
                 return False
 
-            # Press and hold 'Q' key for configured seconds if enabled
+            # Press and hold 'Q' key for configured seconds or enemy proximity if enabled
             if getattr(self, "middle_click_hold_enabled", True):
                 hold_sec = self.middle_click_hold_seconds
-                _log(f"  [ACTION 3/3] Pressing and holding 'Q' key for {hold_sec:.1f}s...")
-                try:
-                    if pydirectinput:
-                        pydirectinput.keyDown("q")
-                    hold_start = time.time()
-                    while (time.time() - hold_start) < hold_sec:
-                        if stop_handler.is_stopped() or not self.is_active:
-                            break
-                        rem_h = max(0.0, hold_sec - (time.time() - hold_start))
-                        self.status_message = f"[PINK DOT] Holding [Q] ({rem_h:.1f}s)..."
-                        time.sleep(0.05)
-                finally:
-                    if pydirectinput:
-                        pydirectinput.keyUp("q")
-                    _log("  [ACTION 3/3] 'Q' key released.")
-                time.sleep(0.1)
+                self.execute_hold_q("PINK DOT", hold_sec)
 
             self.has_executed_initial_hold = True
             self.enable_persistent_combat()

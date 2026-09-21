@@ -1002,7 +1002,9 @@ class MovementPath:
         if cur_room == 7 and self.current_idx >= 69:
             if 7 in self.custom_room_boxes:
                 return self.custom_room_boxes[7]
-            return (0, 0, 280, 280)
+            if self.current_idx >= 74:
+                return (40, 30, 195, 190)
+            return (40, 30, 210, 205)
 
         # Retrieve room bounding box for current room
         room_box = None
@@ -1043,7 +1045,9 @@ class MovementPath:
         if self.current_idx >= 69:
             if 7 in self.custom_room_boxes:
                 return self.custom_room_boxes[7]
-            return (0, 0, 280, 280)
+            if self.current_idx >= 74:
+                return (40, 30, 195, 190)
+            return (40, 30, 210, 205)
 
         s_idx = max(0, self.current_idx - lookbehind)
         e_idx = min(len(self.waypoints) - 1, self.current_idx + lookahead)

@@ -15,13 +15,13 @@
       "type": "color_box",
       "bg_color": "white",
       "text_color": "red",
-      "min_width": 109,
+      "min_width": 113,
       "max_width": 500,
-      "min_height": 14,
-      "max_height": 75,
-      "min_aspect_ratio": 1.2,
-      "min_bg_fraction": 0.35,
-      "min_text_pixels": 12,
+      "min_height": 18,
+      "max_height": 65,
+      "min_aspect_ratio": 1.5,
+      "min_bg_fraction": 0.32,
+      "min_text_pixels": 20,
       "description": "Matches all Divine Orbs, Mirror of Kalandra, Orbs of Annulment, Liquid Isolation, and any loot item styled with white background and red text.",
       "threshold": 0.745
     },
@@ -251,76 +251,6 @@
       "description": "Custom color rule (orange/white) for LiquidSuffer (Concentrated Liquid Suffering)"
     },
     {
-      "id": "template_liquidenvy_4777",
-      "name": "LiquidEnvy",
-      "enabled": true,
-      "priority": 1,
-      "type": "template",
-      "template_file": "ui/loot_templates/liquidenvy.png",
-      "threshold": 0.5,
-      "description": "Visual template matcher for LiquidEnvy"
-    },
-    {
-      "id": "template_liquidparanoia_4777",
-      "name": "LiquidParanoia",
-      "enabled": true,
-      "priority": 1,
-      "type": "template",
-      "template_file": "ui/loot_templates/liquidparanoia.png",
-      "threshold": 0.5,
-      "description": "Visual template matcher for LiquidParanoia"
-    },
-    {
-      "id": "template_exaltedorb_4777",
-      "name": "ExaltedOrb",
-      "enabled": true,
-      "priority": 1,
-      "type": "template",
-      "template_file": "ui/loot_templates/exaltedorb.png",
-      "threshold": 0.5,
-      "description": "Visual template matcher for ExaltedOrb"
-    },
-    {
-      "id": "template_potentliquidmelancholy_4777",
-      "name": "PotentLiquidMelancholy",
-      "enabled": true,
-      "priority": 1,
-      "type": "template",
-      "template_file": "ui/loot_templates/potentliquidmelancholy.png",
-      "threshold": 0.5,
-      "description": "Visual template matcher for PotentLiquidMelancholy"
-    },
-    {
-      "id": "template_chaosorb_4814",
-      "name": "ChaosOrb",
-      "enabled": true,
-      "priority": 1,
-      "type": "template",
-      "template_file": "ui/loot_templates/chaosorb.png",
-      "threshold": 0.5,
-      "description": "Visual template matcher for ChaosOrb"
-    },
-    {
-      "id": "template_vaalorb_4814",
-      "name": "VaalOrb",
-      "enabled": true,
-      "priority": 1,
-      "type": "template",
-      "template_file": "ui/loot_templates/vaalorb.png",
-      "threshold": 0.665,
-      "description": "Visual template matcher for VaalOrb"
-    },
-    {
-      "id": "template_liquiddespair_4974",
-      "name": "LiquidDespair",
-      "enabled": true,
-      "priority": 1,
-      "type": "template",
-      "template_file": "ui/loot_templates/liquiddespair.png",
-      "threshold": 0.5,
-      "description": "Visual template matcher for LiquidDespair"
-    },
-    {
       "id": "template_ravensreflection_4974",
       "name": "RavensReflection",
       "enabled": true,
@@ -347,28 +277,8 @@
       "priority": 1,
       "type": "template",
       "template_file": "ui/loot_templates/exceptionalgreen.png",
-      "threshold": 0.5,
+      "threshold": 0.572,
       "description": "Visual template matcher for ExceptionalGreen"
-    },
-    {
-      "id": "template_tabletpurple_8743",
-      "name": "tabletpurple",
-      "enabled": true,
-      "priority": 1,
-      "type": "template",
-      "template_file": "ui/loot_templates/tabletpurple.png",
-      "threshold": 0.663,
-      "description": "Visual template matcher for tabletpurple"
-    },
-    {
-      "id": "template_tabletunique_8743",
-      "name": "tabletUnique",
-      "enabled": true,
-      "priority": 1,
-      "type": "template",
-      "template_file": "ui/loot_templates/tabletunique.png",
-      "threshold": 0.6457364341085272,
-      "description": "Visual template matcher for tabletUnique"
     },
     {
       "id": "template_heavybeltraremb_hh_8890",
@@ -379,6 +289,136 @@
       "template_file": "ui/loot_templates/heavybeltraremb_hh.png",
       "threshold": 0.624031007751938,
       "description": "Visual template matcher for HeavyBeltRareMB/HH"
+    },
+    {
+      "id": "template_heavybeltwhite_5315",
+      "name": "HeavyBeltWhite",
+      "enabled": true,
+      "priority": 1,
+      "type": "template",
+      "template_file": "ui/loot_templates/heavybeltwhite.png",
+      "threshold": 0.5945736434108527,
+      "description": "Visual template matcher for HeavyBeltWhite"
+    },
+    {
+      "id": "template_orbofannylment_7430",
+      "name": "OrbofAnnylment",
+      "enabled": true,
+      "priority": 1,
+      "type": "template",
+      "template_file": "ui/loot_templates/orbofannylment.png",
+      "threshold": 0.5945736434108527,
+      "description": "Visual template matcher for OrbofAnnylment"
+    },
+    {
+      "id": "template_exceptionalrare_9626",
+      "name": "ExceptionalRare",
+      "enabled": true,
+      "priority": 1,
+      "type": "template",
+      "template_file": "ui/loot_templates/exceptionalrare.png",
+      "threshold": 0.6581395348837209,
+      "description": "Visual template matcher for ExceptionalRare"
+    },
+    {
+      "id": "template_tabletunique_8743",
+      "name": "tabletUnique",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/tabletunique.png",
+      "threshold": 0.646,
+      "description": "Visual template matcher for tabletUnique"
+    },
+    {
+      "id": "template_chaosorb_4814",
+      "name": "ChaosOrb",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/chaosorb.png",
+      "threshold": 0.5,
+      "description": "Visual template matcher for ChaosOrb"
+    },
+    {
+      "id": "template_potentliquidmelancholy_4777",
+      "name": "PotentLiquidMelancholy",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/potentliquidmelancholy.png",
+      "threshold": 0.5,
+      "description": "Visual template matcher for PotentLiquidMelancholy"
+    },
+    {
+      "id": "template_liquiddespair_4974",
+      "name": "LiquidDespair",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/liquiddespair.png",
+      "threshold": 0.5,
+      "description": "Visual template matcher for LiquidDespair"
+    },
+    {
+      "id": "template_exaltedorb_4777",
+      "name": "ExaltedOrb",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/exaltedorb.png",
+      "threshold": 0.5,
+      "description": "Visual template matcher for ExaltedOrb"
+    },
+    {
+      "id": "template_tabletpurple_8743",
+      "name": "tabletpurple",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/tabletpurple.png",
+      "threshold": 0.663,
+      "description": "Visual template matcher for tabletpurple"
+    },
+    {
+      "id": "template_liquidparanoia_4777",
+      "name": "LiquidParanoia",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/liquidparanoia.png",
+      "threshold": 0.5,
+      "description": "Visual template matcher for LiquidParanoia"
+    },
+    {
+      "id": "template_liquidenvy_4777",
+      "name": "LiquidEnvy",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/liquidenvy.png",
+      "threshold": 0.5,
+      "description": "Visual template matcher for LiquidEnvy"
+    },
+    {
+      "id": "template_solaramulet_5315",
+      "name": "SolarAmulet",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/solaramulet.png",
+      "threshold": 0.692,
+      "description": "Visual template matcher for SolarAmulet"
+    },
+    {
+      "id": "template_sapphire_5315",
+      "name": "Sapphire",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/sapphire.png",
+      "threshold": 0.692,
+      "description": "Visual template matcher for Sapphire"
     },
     {
       "id": "gems_uncut_cut_olive",
@@ -397,6 +437,16 @@
       "min_text_pixels": 25,
       "description": "Matches uncut and cut gems (Ruby, Sapphire, Diamond, Emerald, Topaz, Time-Lost gems) with dark olive background and yellow/lime text.",
       "threshold": 0.464
+    },
+    {
+      "id": "template_vaalorb_4814",
+      "name": "VaalOrb",
+      "enabled": true,
+      "priority": 3,
+      "type": "template",
+      "template_file": "ui/loot_templates/vaalorb.png",
+      "threshold": 0.665,
+      "description": "Visual template matcher for VaalOrb"
     }
   ]
 }

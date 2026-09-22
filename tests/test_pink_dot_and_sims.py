@@ -1369,13 +1369,126 @@ def test_detect_and_click_sims_strict_order_sim1_sim3_sim2():
     assert click_order == ["sim3", "sim2"]
 
 
+def test_detect_and_click_sims_single_selection_early_exit():
+    """
+    Verifies that when max_sim_clicks=1 (routine default), finding and clicking
+    the highest priority available sim breaks immediately without searching
+    lower-priority sims or incurring search delays.
+    """
+    mp = MovementPath()
+    nav = RouteNavigator(movement_path=mp)
+    nav.is_active = True
+
+    queried_sims = []
+    def mock_locate(key, threshold=None):
+        queried_sims.append(key)
+        if key == "sim1":
+            return (500, 300)
+        return None
+
+    nav.locate_sim_template = MagicMock(side_effect=mock_locate)
+    nav.move_mouse_inside_game = MagicMock(return_value=(500, 335))
+
+    with patch("src.route_navigator.pydirectinput.click"), \
+         patch("src.route_navigator.pydirectinput.mouseUp"), \
+         patch("time.sleep", return_value=None):
+
+        clicked = nav._detect_and_click_sims(
+            prefix="[TEST]",
+            sim_order=["sim1", "sim3", "sim2"],
+            search_attempts=2,
+            max_sim_clicks=1,
+            verify_click=False,
+        )
+
+    assert clicked == ["sim1"]
+    # Verify sim3 and sim2 were never queried at all!
+    assert "sim3" not in queried_sims
+    assert "sim2" not in queried_sims
+    assert queried_sims == ["sim1"]
 
 
+def test_routine_step_detect_and_click_sims_fast_subsequent_checks():
+    """
+    Verifies that routine step 'detect_and_click_sims' checks sim1, and if sim3 and sim2
+    are not visible, checks them with exactly 1 attempt each (no wasted multi-attempt loops).
+    """
+    mp = MovementPath()
+    nav = RouteNavigator(movement_path=mp)
+    nav.is_active = True
+
+    calls = []
+    def mock_locate(key, threshold=None):
+        calls.append(key)
+        if key == "sim1":
+            return (400, 200)
+        return None
+
+    nav.locate_sim_template = MagicMock(side_effect=mock_locate)
+    nav.move_mouse_inside_game = MagicMock(return_value=(400, 235))
+
+    step = {
+        "action": "detect_and_click_sims",
+        "priority": ["sim1", "sim3", "sim2"],
+        "approach_wait": 0.0,
+        "verify_click": False,
+    }
+    context = {}
+
+    with patch("src.route_navigator.pydirectinput.click"), \
+         patch("src.route_navigator.pydirectinput.mouseUp"), \
+         patch("time.sleep", return_value=None):
+
+        success = nav._execute_zone_routine_step(step, context, zone_label="ROOM_1")
+
+    assert success is True
+    assert context.get("sims_clicked") is True
+    # sim1 was clicked, then sim3 was checked once, then sim2 was checked once
+    assert calls == ["sim1", "sim3", "sim2"]
 
 
+def test_routine_step_detect_and_click_sims_clicks_subsequent_when_still_visible():
+    """
+    Verifies that if sim1 is clicked and sim3 is STILL visible (the ~20% chance scenario),
+    sim3 is also clicked!
+    """
+    mp = MovementPath()
+    nav = RouteNavigator(movement_path=mp)
+    nav.is_active = True
 
+    clicked_positions = []
+    def mock_move(x, y):
+        clicked_positions.append((x, y))
+        return (x, y)
 
+    nav.move_mouse_inside_game = MagicMock(side_effect=mock_move)
 
+    seen = set()
+    def mock_locate(key, threshold=None):
+        # Both sim1 and sim3 are visible on screen!
+        if key in ["sim1", "sim3"] and key not in seen:
+            seen.add(key)
+            return (500, 300 if key == "sim1" else 400)
+        return None
 
+    nav.locate_sim_template = MagicMock(side_effect=mock_locate)
 
+    step = {
+        "action": "detect_and_click_sims",
+        "priority": ["sim1", "sim3", "sim2"],
+        "approach_wait": 0.0,
+        "verify_click": False,
+    }
+    context = {}
+
+    with patch("src.route_navigator.pydirectinput.click"), \
+         patch("src.route_navigator.pydirectinput.mouseUp"), \
+         patch("time.sleep", return_value=None):
+
+        success = nav._execute_zone_routine_step(step, context, zone_label="ROOM_1")
+
+    assert success is True
+    assert context.get("sims_clicked") is True
+    # Both sim1 and sim3 were detected and clicked!
+    assert len(clicked_positions) == 2
 

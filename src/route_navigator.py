@@ -175,6 +175,7 @@ class RouteNavigator:
         self.sim_match_threshold: float = 0.50
         self.sim_click_y_offset_px: int = 35
         self.sim_click_x_offset_px: int = 0
+        self.sim_max_clicks: Optional[int] = None
         self.start_at_pink_dot: int = 0
         self.target_pink_wp_idx: Optional[int] = None
         self.target_pink_name: Optional[str] = None
@@ -239,6 +240,7 @@ class RouteNavigator:
                 self.sim_match_threshold = float(ap_cfg.get("sim_match_threshold", self.sim_match_threshold))
                 self.sim_click_y_offset_px = int(ap_cfg.get("sim_click_y_offset_px", self.sim_click_y_offset_px))
                 self.sim_click_x_offset_px = int(ap_cfg.get("sim_click_x_offset_px", self.sim_click_x_offset_px))
+                self.sim_max_clicks = int(ap_cfg["sim_max_clicks"]) if "sim_max_clicks" in ap_cfg and ap_cfg["sim_max_clicks"] is not None else None
                 self.start_at_pink_dot = int(ap_cfg.get("start_at_pink_dot", self.start_at_pink_dot))
                 self.persistent_combat_action = str(ap_cfg.get("persistent_combat_action", self.persistent_combat_action)).lower().strip()
                 self.persistent_combat_key = str(ap_cfg.get("persistent_combat_key", self.persistent_combat_key)).lower().strip()
@@ -1206,12 +1208,14 @@ class RouteNavigator:
             y_offset = int(step.get("click_y_offset", self.sim_click_y_offset_px))
             x_offset = int(step.get("click_x_offset", self.sim_click_x_offset_px))
             app_wait = float(step.get("approach_wait", self.sim_approach_wait_seconds))
-            settle_wait = float(step.get("settle_wait", 0.5))
-            attempts = int(step.get("search_attempts", 4))
+            settle_wait = float(step.get("settle_wait", 0.15))
+            attempts = int(step.get("search_attempts", 2))
+            subsequent_attempts = int(step.get("subsequent_search_attempts", 1))
             threshold = float(step["confidence"]) if "confidence" in step else (float(step["threshold"]) if "threshold" in step else None)
             verify_delay = float(step.get("verify_delay", self.sim_verify_delay_seconds))
             max_attempts = int(step.get("max_click_attempts", step.get("max_attempts", self.sim_max_click_attempts)))
             verify_enabled = bool(step.get("verify_click", step.get("verify", self.sim_verify_click_enabled)))
+            max_sim_clicks = int(step.get("max_sim_clicks", 3))
             clicked = self._detect_and_click_sims(
                 prefix=f"[{zone_label}]",
                 sim_order=priority,
@@ -1220,10 +1224,12 @@ class RouteNavigator:
                 approach_wait=app_wait,
                 settle_wait=settle_wait,
                 search_attempts=attempts,
+                subsequent_search_attempts=subsequent_attempts,
                 threshold=threshold,
                 verify_click=verify_enabled,
                 verify_delay=verify_delay,
                 max_click_attempts=max_attempts,
+                max_sim_clicks=max_sim_clicks,
             )
             context["sims_clicked"] = len(clicked) > 0
             return True
@@ -2144,7 +2150,8 @@ class RouteNavigator:
         th, tw = g_tmpl.shape[:2]
         sh, sw = g_screen.shape[:2]
 
-        scales = [1.0, 0.95, 1.05, 0.90, 1.10, 0.85, 1.15, 0.80, 1.20, 0.75, 1.25, 0.70, 1.30]
+        primary_scales = [1.0, 0.95, 1.05]
+        secondary_scales = [0.90, 1.10, 0.85, 1.15, 0.80, 1.20, 0.75, 1.25, 0.70, 1.30]
 
         temp_screen = g_screen.copy()
         overall_best_val = -1.0
@@ -2156,7 +2163,8 @@ class RouteNavigator:
             best_loc = None
             best_scale = 1.0
 
-            for scale in scales:
+            # Stage 1: Fast search on primary native scales
+            for scale in primary_scales:
                 sc_w = int(tw * scale)
                 sc_h = int(th * scale)
                 if sc_w > sw or sc_h > sh or sc_w < 15 or sc_h < 15:
@@ -2168,6 +2176,25 @@ class RouteNavigator:
                     best_val = float(max_val)
                     best_loc = max_loc
                     best_scale = scale
+                if best_val >= 0.82:
+                    break
+
+            # If confident match found, early-exit.
+            # If best_val is very low (< 0.28), template is completely absent from screen -> skip remaining scales!
+            if best_val < 0.82 and best_val >= 0.28:
+                # Stage 2: Ambiguous candidate -> evaluate secondary scales
+                for scale in secondary_scales:
+                    sc_w = int(tw * scale)
+                    sc_h = int(th * scale)
+                    if sc_w > sw or sc_h > sh or sc_w < 15 or sc_h < 15:
+                        continue
+                    resized = cv2.resize(g_tmpl, (sc_w, sc_h), interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR)
+                    res = cv2.matchTemplate(temp_screen, resized, cv2.TM_CCOEFF_NORMED)
+                    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                    if max_val > best_val:
+                        best_val = float(max_val)
+                        best_loc = max_loc
+                        best_scale = scale
 
             if best_val > overall_best_val:
                 overall_best_val = best_val
@@ -2242,6 +2269,8 @@ class RouteNavigator:
         verify_click: Optional[bool] = None,
         verify_delay: Optional[float] = None,
         max_click_attempts: Optional[int] = None,
+        max_sim_clicks: Optional[int] = None,
+        subsequent_search_attempts: int = 1,
     ) -> List[str]:
         """
         Detects and selects Sims according to strict priority order:
@@ -2257,6 +2286,7 @@ class RouteNavigator:
         eff_verify = verify_click if verify_click is not None else getattr(self, "sim_verify_click_enabled", True)
         eff_verify_delay = verify_delay if verify_delay is not None else getattr(self, "sim_verify_delay_seconds", 1.0)
         eff_max_attempts = max_click_attempts if max_click_attempts is not None else getattr(self, "sim_max_click_attempts", 2)
+        eff_max_clicks = max_sim_clicks if max_sim_clicks is not None else getattr(self, "sim_max_clicks", None)
         effective_order = sim_order if (sim_order is not None and len(sim_order) > 0) else ["sim1", "sim3", "sim2"]
 
         self.ensure_loot_labels_visible()
@@ -2324,24 +2354,30 @@ class RouteNavigator:
         for sim_key in effective_order:
             if stop_handler.is_stopped() or not self.is_active:
                 return sims_clicked
+            if eff_max_clicks is not None and len(sims_clicked) >= eff_max_clicks:
+                break
             sim_label = f"Sim {sim_key.replace('sim', '')}"
             self.status_message = f"{prefix} Checking for {sim_label}..."
             sim_pos = None
             best_conf = 0.0
-            for attempt in range(1, max(1, search_attempts) + 1):
+            curr_attempts = search_attempts if not sims_clicked else subsequent_search_attempts
+            for attempt in range(1, max(1, curr_attempts) + 1):
                 if stop_handler.is_stopped() or not self.is_active:
                     return sims_clicked
                 sim_pos = self.locate_sim_template(sim_key) if threshold is None else self.locate_sim_template(sim_key, threshold)
                 best_conf = max(best_conf, getattr(self, "_last_sim_best_conf", 0.0))
                 if sim_pos is not None:
                     break
-                if attempt < search_attempts:
-                    time.sleep(0.20)
+                if attempt < curr_attempts:
+                    time.sleep(0.08)
 
             if sim_pos is not None:
                 _click_sim_at(sim_key, sim_label, sim_pos)
+                if eff_max_clicks is not None and len(sims_clicked) >= eff_max_clicks:
+                    _log(f"  {prefix} Desired sim selection completed ({len(sims_clicked)}/{eff_max_clicks}). Proceeding without delay...")
+                    break
                 w_start = time.time()
-                while (time.time() - w_start) < 1.5:
+                while (time.time() - w_start) < 0.25:
                     if stop_handler.is_stopped() or not self.is_active:
                         return sims_clicked
                     time.sleep(0.05)

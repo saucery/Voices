@@ -77,7 +77,7 @@ class SequenceExecutor:
         key_lower = key.lower()
         is_movement = key_lower in ["w", "a", "s", "d", "up", "down", "left", "right"]
 
-        print(f"  [ACTION] Executing key '{key}' ({'movement hold' if is_movement else 'skill activation'}) for {duration:.1f}s (Press F1 to STOP)...")
+        print(f"  [ACTION] Executing key '{key}' ({'movement hold' if is_movement else 'skill activation'}) for {duration:.1f}s (Press {stop_handler.stop_key.upper()} to STOP)...")
         start_time = time.time()
 
         if pydirectinput:
@@ -87,7 +87,7 @@ class SequenceExecutor:
                 try:
                     while (time.time() - start_time) < duration:
                         if stop_handler.is_stopped():
-                            print("  [STOP] F1 key pressed - aborting movement key!")
+                            print(f"  [STOP] {stop_handler.stop_key.upper()} key pressed - aborting movement key!")
                             break
                         time.sleep(0.05)
                 finally:
@@ -96,7 +96,7 @@ class SequenceExecutor:
                 # Skill/action key: send clean DirectInput key presses continuously over duration
                 while (time.time() - start_time) < duration:
                     if stop_handler.is_stopped():
-                        print("  [STOP] F1 key pressed - aborting skill key!")
+                        print(f"  [STOP] {stop_handler.stop_key.upper()} key pressed - aborting skill key!")
                         break
                     pydirectinput.press(key_lower)
                     time.sleep(0.25)
@@ -197,12 +197,12 @@ class SequenceExecutor:
         :param poll_interval: Polling frequency in seconds.
         :return: True if detected, False if timed out or stopped.
         """
-        print(f"  [VISUAL GATE] Waiting for visual detection: '{target_name}' (Timeout: {timeout}s | Press F1 to STOP)...")
+        print(f"  [VISUAL GATE] Waiting for visual detection: '{target_name}' (Timeout: {timeout}s | Press {stop_handler.stop_key.upper()} to STOP)...")
         start_time = time.time()
 
         while (time.time() - start_time) < timeout:
             if stop_handler.is_stopped():
-                print("  [ABORTED] F1 pressed during visual gate.")
+                print(f"  [ABORTED] {stop_handler.stop_key.upper()} pressed during visual gate.")
                 return False
 
             screenshot = self.capturer.capture()
@@ -229,7 +229,7 @@ class SequenceExecutor:
         if stop_handler.is_stopped():
             return
 
-        print(f"  [ACTION] Running around room for {duration:.1f}s (Radius: {radius}px | Press F1 to STOP)...")
+        print(f"  [ACTION] Running around room for {duration:.1f}s (Radius: {radius}px | Press {stop_handler.stop_key.upper()} to STOP)...")
         
         monitors = self.capturer.list_monitors()
         target_mon = next((m for m in monitors if m["index"] == self.monitor_idx), monitors[0])
@@ -241,7 +241,7 @@ class SequenceExecutor:
 
         while (time.time() - start_time) < duration:
             if stop_handler.is_stopped():
-                print("  [STOP] F1 key pressed - aborting room movement!")
+                print(f"  [STOP] {stop_handler.stop_key.upper()} key pressed - aborting room movement!")
                 break
 
             angle = (2.0 * math.pi / num_points) * (step_idx % num_points)
@@ -267,14 +267,14 @@ class SequenceExecutor:
             return
 
         key_list = keys or ["s", "d", "w", "a"]
-        print(f"  [ACTION] Running key loop {key_list} ({key_duration:.1f}s each) for total {total_duration:.1f}s (Press F1 to STOP)...")
+        print(f"  [ACTION] Running key loop {key_list} ({key_duration:.1f}s each) for total {total_duration:.1f}s (Press {stop_handler.stop_key.upper()} to STOP)...")
 
         start_time = time.time()
         key_idx = 0
 
         while (time.time() - start_time) < total_duration:
             if stop_handler.is_stopped():
-                print("  [STOP] F1 key pressed - aborting key loop!")
+                print(f"  [STOP] {stop_handler.stop_key.upper()} key pressed - aborting key loop!")
                 break
 
             current_key = key_list[key_idx % len(key_list)]
@@ -309,7 +309,7 @@ class SequenceExecutor:
             localizer = MapLocalizer()
 
         current_direction = direction.lower()
-        print(f"  [EDGE NAVIGATOR] Sweeping map perimeter keeping {target_distance:.0f}px edge distance ({current_direction}) for {duration:.1f}s (Press F1 to STOP)...")
+        print(f"  [EDGE NAVIGATOR] Sweeping map perimeter keeping {target_distance:.0f}px edge distance ({current_direction}) for {duration:.1f}s (Press {stop_handler.stop_key.upper()} to STOP)...")
 
         start_time = time.time()
         step_count = 0
@@ -326,7 +326,7 @@ class SequenceExecutor:
 
         while (time.time() - start_time) < duration:
             if stop_handler.is_stopped():
-                print("  [STOP] F1 key pressed - aborting edge navigation!")
+                print(f"  [STOP] {stop_handler.stop_key.upper()} key pressed - aborting edge navigation!")
                 break
 
             screenshot = self.capturer.capture()
@@ -531,7 +531,7 @@ class SequenceExecutor:
         print(f" Target Display:  Monitor {self.monitor_idx} (Path of Exile 2)")
         print(f" Arrival Radius:  {arrival_threshold:.0f} px")
         print(f" Step Duration:   {step_duration:.2f} s")
-        print(" [SAFETY] Press 'F1' anytime to immediately STOP.")
+        print(f" [SAFETY] Press '{stop_handler.stop_key.upper()}' anytime to immediately STOP.")
         print("=" * 70)
         print(f"Starting in 2.0s... Click into Path of Exile 2 window on Monitor {self.monitor_idx} now!\n")
         time.sleep(2.0)
@@ -541,7 +541,7 @@ class SequenceExecutor:
 
         while (time.time() - start_time) < max_duration:
             if stop_handler.is_stopped():
-                print("\n[STOP] F1 key pressed - aborting route navigation!")
+                print(f"\n[STOP] {stop_handler.stop_key.upper()} key pressed - aborting route navigation!")
                 stop_handler.release_all_keys()
                 return False
 
@@ -693,19 +693,19 @@ class SequenceExecutor:
 
         print("=" * 70)
         print(f" EXECUTING ROUTINE: {title} ({len(steps)} steps)")
-        print(" [SAFETY] Press 'F1' anytime to immediately STOP and regain full control.")
+        print(f" [SAFETY] Press '{stop_handler.stop_key.upper()}' anytime to immediately STOP and regain full control.")
         print("=" * 70)
 
         for idx, step in enumerate(steps, 1):
             if stop_handler.is_stopped():
-                print("\n[STOP] Routine halted by user (F1). Control returned.")
+                print(f"\n[STOP] Routine halted by user ({stop_handler.stop_key.upper()}). Control returned.")
                 return False
 
             print(f"\n[{idx}/{len(steps)}]", end=" ")
             success = self.execute_step(step)
 
             if stop_handler.is_stopped():
-                print("\n[STOP] Routine halted by user (F1). Control returned.")
+                print(f"\n[STOP] Routine halted by user ({stop_handler.stop_key.upper()}). Control returned.")
                 return False
 
             if not success and step.get("fail_on_timeout", False):

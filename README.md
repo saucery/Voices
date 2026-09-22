@@ -24,7 +24,7 @@ Voices is a real-time computer vision and autopilot navigation system for Path o
 
 | Key / UI Control | Action |
 | :--- | :--- |
-| **`F1`** | **Global Emergency Stop**: Immediately releases all pressed keys/mouse buttons and halts execution. |
+| **`F2`** | **Global Emergency Stop**: Immediately releases all pressed keys/mouse buttons and halts execution. |
 | **`F4`** | **Pause / Resume Autopilot**: Pauses movement without losing current waypoint progress. |
 | **`A`** (or UI Button) | **Toggle Autopilot**: Starts or stops autonomous WASD navigation. |
 | **`P`** (or UI Button) | **Cycle Next Pink Dot**: Instantly shifts target to Pink Dot 1, 2, ..., 7. |

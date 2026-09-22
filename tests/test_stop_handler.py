@@ -11,6 +11,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from src.stop_handler import EmergencyStopHandler, stop_handler
 
 
+def test_stop_handler_default_initialization():
+    handler = EmergencyStopHandler()
+    assert handler.stop_key == "f2"
+    assert handler.is_stopped() is False
+
+
 def test_stop_handler_initialization():
     handler = EmergencyStopHandler(stop_key="f1")
     assert handler.stop_key == "f1"
@@ -18,7 +24,7 @@ def test_stop_handler_initialization():
 
 
 def test_stop_handler_trigger():
-    handler = EmergencyStopHandler(stop_key="f1")
+    handler = EmergencyStopHandler(stop_key="f2")
     assert handler.is_stopped() is False
 
     handler.trigger_stop()
@@ -26,3 +32,4 @@ def test_stop_handler_trigger():
 
     handler.reset()
     assert handler.is_stopped() is False
+

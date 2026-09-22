@@ -16,6 +16,7 @@
     "orb_features": 2500
   },
   "autopilot": {
+    "emergency_stop_key": "f2",
     "auto_click_encounters": false,
     "interaction_key": "e",
     "click_target": "center",
@@ -57,7 +58,7 @@
     "loot_approach_wait_seconds": 1.1,
     "max_loot_pickups": 15,
     "wait_for_loot_confirmation": false,
-    "start_at_pink_dot": 2,
+    "start_at_pink_dot": 0,
     "persistent_combat_action": "key",
     "persistent_combat_key": "t",
     "persistent_combat_interval_seconds": 0.65,

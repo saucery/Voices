@@ -223,7 +223,7 @@ def main():
         print("   [A / G] Toggle Autonomous Navigation (WASD along route)")
         print("   [R]     Refresh Route from route.png (or click UI button)")
         print("   [V]     Cycle Map View: Active Room Template <-> World Map <-> Ref Map")
-        print("   [F1]    Emergency STOP (halts all movement immediately)")
+        print("   [F2]    Emergency STOP (halts all movement immediately)")
         print("   [Q/Esc] Exit Visualizer")
         print("=" * 70 + "\n")
         try:

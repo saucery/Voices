@@ -42,6 +42,12 @@
           "description": "Click encounter banner to start encounter"
         },
         {
+          "action": "navigate_to_pink_location",
+          "timeout": 8.0,
+          "arrival_threshold": 15.0,
+          "description": "Position character on pink dot before combat"
+        },
+        {
           "action": "press_key",
           "key": "t",
           "clicks": 1,

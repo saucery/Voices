@@ -1,9 +1,11 @@
 """
 Emergency Stop & Hotkey Handler Module
-Listens for global emergency stop hotkey (F1) to immediately halt bot execution,
+Listens for global emergency stop hotkey (F2) to immediately halt bot execution,
 release held keys, and restore full manual keyboard/mouse control to the user.
 """
 
+import json
+import os
 import threading
 import time
 from typing import Callable, Optional, List
@@ -19,16 +21,33 @@ except ImportError:
     pydirectinput = None
 
 
-class EmergencyStopHandler:
-    """Manages global emergency stop hotkey (F1) listener."""
+def get_default_stop_key() -> str:
+    """Reads configured emergency_stop_key from config.json, defaulting to 'f2'."""
+    for cfg_candidate in ["config.json", "../config.json"]:
+        if os.path.exists(cfg_candidate):
+            try:
+                with open(cfg_candidate, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                key = cfg.get("autopilot", {}).get("emergency_stop_key") or cfg.get("emergency_stop_key")
+                if key:
+                    return str(key).lower().strip()
+            except Exception:
+                pass
+    return "f2"
 
-    def __init__(self, stop_key: str = "f1", on_stop_callback: Optional[Callable[[], None]] = None):
+
+class EmergencyStopHandler:
+    """Manages global emergency stop hotkey (F2) listener."""
+
+    def __init__(self, stop_key: Optional[str] = None, on_stop_callback: Optional[Callable[[], None]] = None):
         """
         Initialize EmergencyStopHandler.
 
-        :param stop_key: Key name for emergency stop (default: 'f1').
+        :param stop_key: Key name for emergency stop (default: 'f2' or loaded from config.json).
         :param on_stop_callback: Optional callback function invoked when stop triggered.
         """
+        if stop_key is None:
+            stop_key = get_default_stop_key()
         self.stop_key = stop_key.lower()
         self.on_stop_callback = on_stop_callback
         self.stop_requested = False
@@ -43,7 +62,7 @@ class EmergencyStopHandler:
             try:
                 keyboard.add_hotkey(self.stop_key, self.trigger_stop, suppress=False)
                 self._listener_running = True
-                print(f"[EMERGENCY STOP ENGINE] F1 Stop Switch Active. Press '{self.stop_key.upper()}' anytime to halt bot.")
+                print(f"[EMERGENCY STOP ENGINE] {self.stop_key.upper()} Stop Switch Active. Press '{self.stop_key.upper()}' anytime to halt bot.")
             except Exception as e:
                 print(f"[EMERGENCY STOP ENGINE] Warning: Could not register global hotkey ({e})")
 

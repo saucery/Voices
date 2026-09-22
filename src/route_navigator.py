@@ -116,6 +116,23 @@ class RouteNavigator:
         self._routine_did_orbit: bool = False
         self._log = _log
 
+        # Run Session Metrics and SIM Tracking
+        self.run_history_file: str = "debug_logs/run_history.json"
+        self.run_summary_file: str = "debug_logs/run_history.txt"
+        self.run_id: Optional[str] = None
+        self.run_start_time: Optional[float] = None
+        self.run_end_time: Optional[float] = None
+        self.run_pause_time: Optional[float] = None
+        self.total_paused_duration: float = 0.0
+        self.run_completed: bool = False
+        self.run_last_room_cleared: Optional[str] = None
+        self.run_rooms_cleared: List[Dict[str, Any]] = []
+        self.run_sims_clicked: List[Dict[str, Any]] = []
+        self.run_loot_picked: List[Dict[str, Any]] = []
+        self._last_clicked_loot_item: Optional[Any] = None
+        self.current_room_key: Optional[str] = None
+        self._last_completed_run_data: Dict[str, Any] = {}
+
         # Yellow Shape Orbit Navigation State
         self.is_orbiting: bool = False
         self.orbit_start_time: float = 0.0
@@ -264,6 +281,8 @@ class RouteNavigator:
                 self.minimap_early_exit_min_seconds = float(ap_cfg.get("minimap_early_exit_min_seconds", self.minimap_early_exit_min_seconds))
                 self.minimap_early_exit_check_interval = float(ap_cfg.get("minimap_early_exit_check_interval", self.minimap_early_exit_check_interval))
                 self.minimap_early_exit_min_icons = int(ap_cfg.get("minimap_early_exit_min_icons", self.minimap_early_exit_min_icons))
+                self.run_history_file = str(ap_cfg.get("run_history_file", self.run_history_file))
+                self.run_summary_file = str(ap_cfg.get("run_summary_file", self.run_summary_file))
             except Exception:
                 pass
 
@@ -1024,7 +1043,12 @@ class RouteNavigator:
         self._routine_did_orbit = False
         steps = routine.get("steps", [])
         routine_name = routine.get("name", zone_label)
-        _log(f"\n[ROUTINE] >>> Starting custom routine '{routine_name}' ({len(steps)} steps) for {zone_label}...")
+        room_key = self._resolve_room_key(routine, zone_label=zone_label, target=target, zone=zone)
+        prev_room_key = self.current_room_key
+        self.current_room_key = room_key
+        routine_start_time = time.time()
+
+        _log(f"\n[ROUTINE] >>> Starting custom routine '{routine_name}' ({len(steps)} steps) for {zone_label} (room={room_key})...")
         self.status_message = f"[{zone_label}] Executing Routine..."
         pink_origin = None
         if target and isinstance(target, dict):
@@ -1044,21 +1068,29 @@ class RouteNavigator:
             "banner_clicked": False,
         }
 
-        for idx, step in enumerate(steps, 1):
-            if stop_handler.is_stopped() or not self.is_active:
-                _log(f"  [ROUTINE] Stopped during step {idx}/{len(steps)}.")
-                return False
+        try:
+            for idx, step in enumerate(steps, 1):
+                if stop_handler.is_stopped() or not self.is_active:
+                    _log(f"  [ROUTINE] Stopped during step {idx}/{len(steps)}.")
+                    return False
 
-            action = step.get("action", "").lower().strip()
-            desc = step.get("description", action)
-            _log(f"  [ROUTINE STEP {idx}/{len(steps)}] {desc} (action={action})")
+                action = step.get("action", "").lower().strip()
+                desc = step.get("description", action)
+                _log(f"  [ROUTINE STEP {idx}/{len(steps)}] {desc} (action={action})")
 
-            success = self._execute_zone_routine_step(step, context, zone_label=zone_label)
-            if not success and (stop_handler.is_stopped() or not self.is_active):
-                return False
+                success = self._execute_zone_routine_step(step, context, zone_label=zone_label)
+                if not success and (stop_handler.is_stopped() or not self.is_active):
+                    return False
 
-        _log(f"[ROUTINE] <<< Finished custom routine '{routine_name}' for {zone_label}!\n")
-        return True
+            _log(f"[ROUTINE] <<< Finished custom routine '{routine_name}' for {zone_label}!\n")
+            routine_elapsed = time.time() - routine_start_time
+            if room_key:
+                self._record_room_cleared(room_key, routine_elapsed)
+                if self._is_last_room(room_key):
+                    self._finalize_run(last_room=room_key, reason="last_room_cleared")
+            return True
+        finally:
+            self.current_room_key = prev_room_key
 
     def _execute_zone_routine_step(
         self,
@@ -1356,9 +1388,21 @@ class RouteNavigator:
                             pydirectinput.mouseUp(button="left")
                         time.sleep(0.15)
                 context["banner_clicked"] = True
+                if step.get("activate_combat", True):
+                    c_act = step.get("combat_action", getattr(self, "persistent_combat_action", "key"))
+                    c_key = step.get("combat_key", getattr(self, "persistent_combat_key", "t"))
+                    c_int = float(step.get("combat_interval", getattr(self, "persistent_combat_interval", 0.65)))
+                    self.enable_persistent_combat(interval=c_int, action=c_act, key=c_key)
+                    _log(f"    [COMBAT] Activated continuous '{c_key.upper()}' attack after encounter banner.")
             else:
                 _log(f"    [WARNING] Encounter banner not detected on screen.")
                 self.move_mouse_inside_game()
+                if step.get("activate_combat", False):
+                    c_act = step.get("combat_action", getattr(self, "persistent_combat_action", "key"))
+                    c_key = step.get("combat_key", getattr(self, "persistent_combat_key", "t"))
+                    c_int = float(step.get("combat_interval", getattr(self, "persistent_combat_interval", 0.65)))
+                    self.enable_persistent_combat(interval=c_int, action=c_act, key=c_key)
+                    _log(f"    [COMBAT] Activated continuous '{c_key.upper()}' attack after banner attempt.")
 
             # Hide loot labels after sims/banner interaction before combat/orbit
             self.hide_loot_labels()
@@ -1531,6 +1575,372 @@ class RouteNavigator:
             return ["w", "d"]             # North-East
         return []
 
+    # =========================================================================
+    # RUN SESSION TIMING & PERSISTENCE
+    # =========================================================================
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        """Formats seconds into readable 'Xm Y.Ys' or 'X.Xs' string."""
+        if seconds < 0:
+            seconds = 0.0
+        m = int(seconds // 60)
+        s = seconds % 60
+        if m > 0:
+            return f"{m}m {s:04.1f}s" if s < 10 else f"{m}m {s:.1f}s"
+        return f"{s:.1f}s"
+
+    def _start_new_run(self):
+        """Initializes tracking metrics for a new bot run session."""
+        now = time.time()
+        run_ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.run_id = f"run_{run_ts_str}"
+        self.run_start_time = now
+        self.run_end_time = None
+        self.run_pause_time = None
+        self.total_paused_duration = 0.0
+        self.run_completed = False
+        self.run_last_room_cleared = None
+        self.run_rooms_cleared = []
+        self.run_sims_clicked = []
+        self.run_loot_picked = []
+        self._last_clicked_loot_item = None
+        self.current_room_key = None
+        _log(f"[RUN TIMER] Run session '{self.run_id}' started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}.")
+
+    def _record_sim_clicked(self, sim_key: str, room_key: Optional[str] = None):
+        """Records a pressed SIM into the active run session."""
+        now = time.time()
+        elapsed = round(now - self.run_start_time, 2) if self.run_start_time else 0.0
+        room = room_key or getattr(self, "current_room_key", None) or "unknown"
+        sim_entry = {
+            "sim": sim_key,
+            "room": room,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "elapsed_seconds": elapsed,
+        }
+        self.run_sims_clicked.append(sim_entry)
+        _log(f"  [RUN STATS] Recorded SIM pressed: {sim_key} in {room} (Run Elapsed: {self._format_duration(elapsed)})")
+
+    def _record_loot_picked(self, item: Any, pos: Tuple[int, int], room_key: Optional[str] = None) -> Dict[str, Any]:
+        """Records a picked up loot item into the active run session."""
+        now = time.time()
+        elapsed = round(now - self.run_start_time, 2) if self.run_start_time else 0.0
+        room = room_key or getattr(self, "current_room_key", None) or "unknown"
+
+        name = getattr(item, "rule_name", None) or "Unknown Loot"
+        rule_id = getattr(item, "rule_id", None) or "unknown_rule"
+        priority = getattr(item, "priority", 99) if item else 99
+        conf = getattr(item, "confidence", 1.0) if item else 1.0
+        box = getattr(item, "rect", (pos[0], pos[1], 0, 0)) if item else (pos[0], pos[1], 0, 0)
+
+        loot_entry = {
+            "name": name,
+            "rule_id": rule_id,
+            "room": room,
+            "priority": priority,
+            "confidence": round(float(conf), 3),
+            "screen_pos": [int(pos[0]), int(pos[1])],
+            "box": list(box) if isinstance(box, (list, tuple)) else None,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "elapsed_seconds": elapsed,
+            "elapsed_formatted": self._format_duration(elapsed),
+        }
+        self.run_loot_picked.append(loot_entry)
+        _log(f"  [RUN STATS] Recorded Loot collected: '{name}' in {room} (Run Elapsed: {self._format_duration(elapsed)})")
+        return loot_entry
+
+    def _record_room_cleared(self, room_key: str, routine_duration: float):
+        """Records a completed room into the active run session."""
+        now = time.time()
+        elapsed = round(now - self.run_start_time, 2) if self.run_start_time else 0.0
+        sims_in_room = [s["sim"] for s in self.run_sims_clicked if s.get("room") == room_key]
+        loot_in_room = [l for l in self.run_loot_picked if l.get("room") == room_key]
+        loot_names = [l["name"] for l in loot_in_room]
+        room_entry = {
+            "room": room_key,
+            "cleared_at_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "cleared_at_elapsed_sec": elapsed,
+            "cleared_at_elapsed_formatted": self._format_duration(elapsed),
+            "routine_duration_sec": round(routine_duration, 2),
+            "routine_duration_formatted": self._format_duration(routine_duration),
+            "sims_clicked": list(sims_in_room),
+            "loot_collected": list(loot_names),
+            "loot_count": len(loot_names),
+            "loot_detail": list(loot_in_room),
+        }
+        existing = [r for r in self.run_rooms_cleared if r.get("room") == room_key]
+        if not existing:
+            self.run_rooms_cleared.append(room_entry)
+        self.run_last_room_cleared = room_key
+        loot_note = f", Loot: {len(loot_names)} items" if loot_names else ""
+        _log(f"[RUN STATS] Room '{room_key}' cleared! (Split: {self._format_duration(elapsed)}, Routine: {routine_duration:.1f}s, SIMs: {sims_in_room or 'None'}{loot_note})")
+
+    def _get_last_pink_room_key(self) -> str:
+        """Determines the configured final pink room key (e.g. 'pink_7')."""
+        import re
+        if self.zone_routines and "pink_zones" in self.zone_routines:
+            pz = self.zone_routines["pink_zones"]
+            max_num = -1
+            max_key = None
+            for k in pz.keys():
+                m = re.search(r'(\d+)', k)
+                if m:
+                    num = int(m.group(1))
+                    if num > max_num:
+                        max_num = num
+                        max_key = k
+            if max_key:
+                return max_key
+
+        if hasattr(self.movement_path, "waypoints"):
+            max_num = -1
+            for wp in self.movement_path.waypoints:
+                name = str(wp.get("name", ""))
+                m = re.search(r'pink[_\s]*(\d+)', name, re.IGNORECASE)
+                if m:
+                    num = int(m.group(1))
+                    if num > max_num:
+                        max_num = num
+            if max_num > 0:
+                return f"pink_{max_num}"
+
+        return "pink_7"
+
+    def _is_last_room(self, room_key: str) -> bool:
+        """Checks whether the given room_key represents the last room to be cleared."""
+        if not room_key:
+            return False
+        last_key = self._get_last_pink_room_key()
+        if room_key.lower() == last_key.lower():
+            return True
+        import re
+        m1 = re.search(r'(\d+)', room_key)
+        m2 = re.search(r'(\d+)', last_key)
+        if m1 and m2 and m1.group(1) == m2.group(1):
+            return True
+        return False
+
+    def _resolve_room_key(
+        self,
+        routine: Dict[str, Any],
+        zone_label: str = "",
+        target: Optional[Dict[str, Any]] = None,
+        zone: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Resolves canonical room key (e.g. 'pink_1', ..., 'pink_7') for a routine."""
+        import re
+        # 1. Match against configured pink_zones by identity
+        if self.zone_routines and "pink_zones" in self.zone_routines:
+            pz = self.zone_routines["pink_zones"]
+            for k, v in pz.items():
+                if v is routine:
+                    return k
+
+        # 2. Check routine name (e.g. 'Pink Dot #7 (WP #74 - Room 7)')
+        r_name = str(routine.get("name", ""))
+        m_r = re.search(r'pink(?:[_\s]*dot)?[_\s]*#?(\d+)', r_name, re.IGNORECASE)
+        if m_r:
+            return f"pink_{m_r.group(1)}"
+        m_room = re.search(r'room[_\s]*(\d+)', r_name, re.IGNORECASE)
+        if m_room:
+            return f"pink_{m_room.group(1)}"
+
+        # 3. Check target name or pink_id
+        if target and isinstance(target, dict):
+            t_name = str(target.get("name", ""))
+            m_t = re.search(r'pink[_\s]*(\d+)', t_name, re.IGNORECASE)
+            if m_t:
+                return f"pink_{m_t.group(1)}"
+            pid = str(target.get("pink_id", ""))
+            m_pid = re.search(r'(\d+)', pid)
+            if m_pid:
+                return f"pink_{m_pid.group(1)}"
+
+        # 4. Check zone_label
+        m_zl = re.search(r'(\d+)', zone_label)
+        if m_zl and "pink" in zone_label.lower():
+            return f"pink_{m_zl.group(1)}"
+
+        # 5. Check orbit_zone
+        if zone and isinstance(zone, dict):
+            z_id = str(zone.get("id", ""))
+            m_z = re.search(r'(\d+)', z_id)
+            if m_z:
+                return f"zone_{m_z.group(1)}"
+
+        # 6. Fallback target waypoint index
+        if target and isinstance(target, dict):
+            idx = target.get("index")
+            if idx is not None:
+                return f"wp_{idx}"
+
+        return zone_label or "unknown_room"
+
+    def _finalize_run(self, last_room: Optional[str] = None, reason: str = "last_room_cleared") -> Dict[str, Any]:
+        """Finalizes the current bot run, computes metrics, and writes summary files to disk."""
+        if self.run_start_time is None:
+            return {}
+        if self.run_completed:
+            return getattr(self, "_last_completed_run_data", {})
+
+        now = time.time()
+        self.run_end_time = now
+        self.run_completed = True
+        if last_room:
+            self.run_last_room_cleared = last_room
+        elif self.run_rooms_cleared:
+            self.run_last_room_cleared = self.run_rooms_cleared[-1]["room"]
+
+        wall_duration = max(0.0, self.run_end_time - self.run_start_time)
+        active_duration = max(0.0, wall_duration - self.total_paused_duration)
+
+        sims_list = [s["sim"] for s in self.run_sims_clicked]
+        sims_by_room: Dict[str, List[str]] = {}
+        for s in self.run_sims_clicked:
+            r = s.get("room", "unknown")
+            sims_by_room.setdefault(r, []).append(s["sim"])
+
+        sim_counts: Dict[str, int] = {}
+        for s in sims_list:
+            sim_counts[s] = sim_counts.get(s, 0) + 1
+        sim_counts["total"] = len(sims_list)
+
+        loot_list = [l["name"] for l in self.run_loot_picked]
+        loot_by_room: Dict[str, List[str]] = {}
+        loot_by_room_detail: Dict[str, List[Dict[str, Any]]] = {}
+        for l in self.run_loot_picked:
+            r = l.get("room", "unknown")
+            loot_by_room.setdefault(r, []).append(l["name"])
+            loot_by_room_detail.setdefault(r, []).append(l)
+
+        loot_counts: Dict[str, int] = {}
+        for item_name in loot_list:
+            loot_counts[item_name] = loot_counts.get(item_name, 0) + 1
+        loot_counts["total"] = len(loot_list)
+
+        rooms_list = [r["room"] for r in self.run_rooms_cleared]
+
+        run_summary = {
+            "run_id": self.run_id or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            "completed": reason in ("last_room_cleared", "route_completed"),
+            "completion_reason": reason,
+            "start_time": datetime.fromtimestamp(self.run_start_time).strftime("%Y-%m-%d %H:%M:%S"),
+            "end_time": datetime.fromtimestamp(self.run_end_time).strftime("%Y-%m-%d %H:%M:%S"),
+            "duration_seconds": round(wall_duration, 2),
+            "duration_formatted": self._format_duration(wall_duration),
+            "active_duration_seconds": round(active_duration, 2),
+            "active_duration_formatted": self._format_duration(active_duration),
+            "paused_seconds": round(self.total_paused_duration, 2),
+            "last_room_cleared": self.run_last_room_cleared or "None",
+            "total_rooms_cleared": len(self.run_rooms_cleared),
+            "rooms_cleared": rooms_list,
+            "rooms_detail": self.run_rooms_cleared,
+            "sims_total_count": len(sims_list),
+            "sims_counts": sim_counts,
+            "sims_clicked_by_room": sims_by_room,
+            "sims_log": self.run_sims_clicked,
+            "total_loot_collected": len(loot_list),
+            "loot_counts": loot_counts,
+            "loot_by_room": loot_by_room,
+            "loot_by_room_detail": loot_by_room_detail,
+            "loot_log": self.run_loot_picked,
+        }
+
+        self._last_completed_run_data = run_summary
+
+        self._save_run_to_history_json(run_summary)
+        self._append_run_to_summary_txt(run_summary)
+        self._save_last_run_json(run_summary)
+
+        _log("\n" + "=" * 70)
+        _log(f"[RUN COMPLETE] Duration: {run_summary['duration_formatted']} | Last Room: {run_summary['last_room_cleared']}")
+        _log(f"  Rooms Cleared ({len(rooms_list)}): {', '.join(rooms_list)}")
+        _log(f"  SIMs Clicked ({len(sims_list)} total): {sims_by_room}")
+        _log(f"  Loot Collected ({len(loot_list)} total): {loot_by_room if loot_by_room else 'None'}")
+        _log(f"  Saved run metrics to: {self.run_history_file} & {self.run_summary_file}")
+        _log("=" * 70 + "\n")
+
+        return run_summary
+
+    def _save_run_to_history_json(self, run_summary: Dict[str, Any]):
+        """Appends run summary to persistent JSON history file."""
+        try:
+            target_dir = os.path.dirname(self.run_history_file) or "."
+            os.makedirs(target_dir, exist_ok=True)
+            history = []
+            if os.path.exists(self.run_history_file):
+                try:
+                    with open(self.run_history_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            history = data
+                        elif isinstance(data, dict):
+                            history = [data]
+                except Exception as e:
+                    _log(f"[RUN TIMER] Warning reading {self.run_history_file}: {e}")
+            history.append(run_summary)
+            with open(self.run_history_file, "w", encoding="utf-8") as f:
+                json.dump(history, f, indent=2)
+        except Exception as e:
+            _log(f"[RUN TIMER] Error saving history JSON: {e}")
+
+    def _append_run_to_summary_txt(self, run_summary: Dict[str, Any]):
+        """Appends a formatted human-readable summary block to text log file."""
+        try:
+            target_dir = os.path.dirname(self.run_summary_file) or "."
+            os.makedirs(target_dir, exist_ok=True)
+            entry_lines = [
+                "=" * 78,
+                f"RUN ID: {run_summary['run_id']} | {run_summary['start_time']} -> {run_summary['end_time']}",
+                f"Status: {'COMPLETED' if run_summary['completed'] else 'PARTIAL'} ({run_summary['completion_reason']})",
+                f"Total Duration: {run_summary['duration_formatted']} ({run_summary['duration_seconds']:.1f}s) | Active: {run_summary['active_duration_formatted']}",
+                f"Last Room Cleared: {run_summary['last_room_cleared']}",
+                f"Rooms Cleared ({run_summary['total_rooms_cleared']}): {', '.join(run_summary['rooms_cleared']) if run_summary['rooms_cleared'] else 'None'}",
+                f"SIMs Pressed ({run_summary['sims_total_count']} total):",
+            ]
+            if run_summary['sims_clicked_by_room']:
+                for room, sims in run_summary['sims_clicked_by_room'].items():
+                    entry_lines.append(f"  - {room}: {', '.join(sims)}")
+            else:
+                entry_lines.append("  - (No SIMs pressed)")
+
+            total_loot = run_summary.get('total_loot_collected', 0)
+            entry_lines.append(f"Loot Collected ({total_loot} total):")
+            if run_summary.get('loot_by_room'):
+                for room, items in run_summary['loot_by_room'].items():
+                    item_counts: Dict[str, int] = {}
+                    for it in items:
+                        item_counts[it] = item_counts.get(it, 0) + 1
+                    item_strs = [f"{count}x {name}" if count > 1 else name for name, count in item_counts.items()]
+                    entry_lines.append(f"  - {room} ({len(items)} items): {', '.join(item_strs)}")
+            else:
+                entry_lines.append("  - (No loot collected)")
+
+            if run_summary.get('rooms_detail'):
+                entry_lines.append("Room Splits:")
+                for r in run_summary['rooms_detail']:
+                    sim_note = f" [SIMs: {', '.join(r['sims_clicked'])}]" if r.get('sims_clicked') else ""
+                    loot_count = r.get('loot_count', len(r.get('loot_collected', [])))
+                    loot_note = f" [Loot: {loot_count} item{'s' if loot_count != 1 else ''}]" if loot_count > 0 else ""
+                    entry_lines.append(f"  - {r['room']}: cleared at +{r['cleared_at_elapsed_formatted']} (routine: {r['routine_duration_sec']}s){sim_note}{loot_note}")
+            entry_lines.append("=" * 78 + "\n")
+
+            with open(self.run_summary_file, "a", encoding="utf-8") as f:
+                f.write("\n".join(entry_lines) + "\n")
+        except Exception as e:
+            _log(f"[RUN TIMER] Error writing summary TXT: {e}")
+
+    def _save_last_run_json(self, run_summary: Dict[str, Any]):
+        """Saves latest run summary to debug_logs/last_run.json."""
+        try:
+            target_file = os.path.join(os.path.dirname(self.run_history_file) or "debug_logs", "last_run.json")
+            os.makedirs(os.path.dirname(target_file), exist_ok=True)
+            with open(target_file, "w", encoding="utf-8") as f:
+                json.dump(run_summary, f, indent=2)
+        except Exception as e:
+            _log(f"[RUN TIMER] Error saving last run JSON: {e}")
+
     def start(self, monitor_idx: Optional[int] = None):
         """Enables autopilot navigation."""
         if not self.movement_path.is_configured:
@@ -1570,6 +1980,10 @@ class RouteNavigator:
         self.status_message = "Autopilot Active (Press 'A' to stop | 'F4' to pause)"
         _log(f"[NAVIGATOR] Autopilot Navigation ACTIVATED. Press 'A' to stop | 'F4' to pause.")
 
+        # Initialize or reset run timer and SIM tracking if starting fresh
+        if self.run_start_time is None or self.run_completed:
+            self._start_new_run()
+
         if self.start_at_pink_dot > 0 and self.movement_path.is_configured:
             self.set_start_pink_dot(self.start_at_pink_dot)
 
@@ -1594,11 +2008,15 @@ class RouteNavigator:
         self.release_all_keys()
         self.status_message = "Autopilot Paused (Press 'A' to resume)"
         _log("[NAVIGATOR] Autopilot Navigation STOPPED.")
+        if self.run_start_time is not None and not self.run_completed and (self.run_rooms_cleared or self.run_sims_clicked):
+            self._finalize_run(reason="stopped_by_user")
 
     def pause(self):
         """Pauses navigation, releases all movement keys, and holds current waypoint position."""
         if not self.is_active:
             return
+        if self.run_start_time is not None and self.run_pause_time is None:
+            self.run_pause_time = time.time()
         self.is_paused = True
         self.release_all_keys()
         self.status_message = "Autopilot PAUSED (Press 'F4' to resume)"
@@ -1610,6 +2028,9 @@ class RouteNavigator:
         """Resumes navigation towards current target waypoint from where it was paused."""
         if not self.is_active:
             return
+        if self.run_pause_time is not None:
+            self.total_paused_duration += max(0.0, time.time() - self.run_pause_time)
+            self.run_pause_time = None
         self.is_paused = False
         window_focuser.focus_game_window(monitor_idx=self.monitor_idx)
         now = time.time()
@@ -1905,6 +2326,58 @@ class RouteNavigator:
             pass
         return char_center
 
+    def click_mouse_near_character(
+        self,
+        button: str = "left",
+        offset_x: int = 60,
+        offset_y: int = 40,
+        follow_up_key: Optional[str] = None,
+        follow_up_delay: float = 2.0,
+        label: str = "Frost Bomb",
+    ) -> Tuple[int, int]:
+        """
+        Moves mouse next to character location, clicks mouse button, and optionally
+        waits follow_up_delay to press a follow-up keyboard key (e.g. 'R').
+        """
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+        cx, cy = self.get_game_center_coords()
+        tx = cx + int(offset_x)
+        ty = cy + int(offset_y)
+        mx, my = self.move_mouse_inside_game(tx, ty)
+        _log(f"    [ACTION] Clicking {button.upper()} mouse next to character at ({mx}, {my}) [{label}]...")
+        self.status_message = f"Clicking {button.upper()} ({label})"
+
+        if pydirectinput:
+            if button.lower() == "left":
+                pydirectinput.click()
+                time.sleep(0.05)
+                pydirectinput.mouseUp(button="left")
+            elif button.lower() == "right":
+                pydirectinput.rightClick()
+            elif button.lower() == "middle":
+                pydirectinput.middleClick()
+        time.sleep(0.08)
+
+        if follow_up_key and not stop_handler.is_stopped():
+            delay_start = time.time()
+            while (time.time() - delay_start) < follow_up_delay:
+                if stop_handler.is_stopped():
+                    return mx, my
+                time.sleep(0.02)
+
+            _log(f"    [ACTION] Pressing follow-up key '{follow_up_key.upper()}' ({follow_up_delay:.1f}s after {button.upper()} click)...")
+            self.status_message = f"Pressing [{follow_up_key.upper()}]..."
+            if pydirectinput:
+                try:
+                    pydirectinput.keyDown(follow_up_key.lower())
+                    time.sleep(0.03)
+                    pydirectinput.keyUp(follow_up_key.lower())
+                except Exception:
+                    pass
+            time.sleep(0.05)
+
+        return mx, my
+
     def execute_hold_q(
         self,
         zone_label: str = "ENCOUNTER",
@@ -1954,8 +2427,47 @@ class RouteNavigator:
         detector = self._get_enemy_detector()
         capt = self._get_capturer()
 
-        _log(f"    [ENEMY DETECT] Monitoring screen for enemies before pressing 'Q' (timeout={wait_timeout:.1f}s, near_thresh={near_thresh:.0f}px, min_hold={min_hold:.1f}s)...")
-        self.status_message = f"[{zone_label}] Waiting for enemies..."
+        pre_cast_button = None
+        if step:
+            if "pre_cast_button" in step:
+                pre_cast_button = str(step["pre_cast_button"]).lower().strip()
+            elif step.get("frost_bomb", False):
+                pre_cast_button = "left"
+
+        pre_cast_interval = float(step.get("pre_cast_interval", 4.0)) if step else 4.0
+        follow_up_key = step.get("follow_up_key") if step else None
+        if pre_cast_button and follow_up_key is None and (not step or "follow_up_key" not in step):
+            follow_up_key = "r"
+        follow_up_delay = float(step.get("follow_up_delay", 2.0)) if step else 2.0
+
+        offset_xy = step.get("click_offset") if step else None
+        if not offset_xy and step:
+            offset_xy = [step.get("click_offset_x", 60), step.get("click_offset_y", 40)]
+        offset_x = int(offset_xy[0]) if offset_xy else 60
+        offset_y = int(offset_xy[1]) if offset_xy else 40
+
+        press_attack_key = step.get("combat_key", getattr(self, "persistent_combat_key", "t")) if step else getattr(self, "persistent_combat_key", "t")
+        attack_interval = float(step.get("combat_interval", getattr(self, "persistent_combat_interval", 0.65))) if step else getattr(self, "persistent_combat_interval", 0.65)
+        last_attack_time = 0.0
+
+        if pre_cast_button:
+            self.disable_persistent_combat()
+            _log(f"    [FROST BOMB] Executing initial {pre_cast_button.upper()} click near character + follow-up '{follow_up_key.upper() if follow_up_key else 'None'}'...")
+            self.click_mouse_near_character(
+                button=pre_cast_button,
+                offset_x=offset_x,
+                offset_y=offset_y,
+                follow_up_key=follow_up_key,
+                follow_up_delay=follow_up_delay,
+                label="Frost Bomb",
+            )
+            last_pre_cast_time = time.time()
+            _log(f"    [ENEMY DETECT] Monitoring screen for enemies (repeat {pre_cast_button.upper()} click every {pre_cast_interval:.1f}s, timeout={wait_timeout:.1f}s, hold={min_hold:.1f}s)...")
+            self.status_message = f"[{zone_label}] Frost Bomb active | Monitoring for enemies..."
+        else:
+            last_pre_cast_time = 0.0
+            _log(f"    [ENEMY DETECT] Monitoring screen for enemies while pulsing skill '{press_attack_key.upper()}' before holding 'Q' (timeout={wait_timeout:.1f}s, hold={min_hold:.1f}s)...")
+            self.status_message = f"[{zone_label}] Pulsing [{press_attack_key.upper()}] & waiting for enemies..."
 
         detect_start = time.time()
         enemies_detected = False
@@ -1964,6 +2476,29 @@ class RouteNavigator:
         while (time.time() - detect_start) < wait_timeout:
             if stop_handler.is_stopped() or (getattr(self, "is_navigating", False) and not self.is_active):
                 return False
+
+            now = time.time()
+            if pre_cast_button and (now - last_pre_cast_time) >= pre_cast_interval:
+                _log(f"    [FROST BOMB] No enemies detected after {pre_cast_interval:.1f}s. Repeating {pre_cast_button.upper()} click near character + follow-up '{follow_up_key.upper() if follow_up_key else ''}'...")
+                self.click_mouse_near_character(
+                    button=pre_cast_button,
+                    offset_x=offset_x,
+                    offset_y=offset_y,
+                    follow_up_key=follow_up_key,
+                    follow_up_delay=follow_up_delay,
+                    label="Frost Bomb",
+                )
+                last_pre_cast_time = time.time()
+
+            if not pre_cast_button and press_attack_key and (now - last_attack_time) >= attack_interval:
+                last_attack_time = now
+                if pydirectinput:
+                    try:
+                        pydirectinput.keyDown(press_attack_key)
+                        time.sleep(0.02)
+                        pydirectinput.keyUp(press_attack_key)
+                    except Exception:
+                        pass
 
             try:
                 screen = capt.capture()
@@ -1988,7 +2523,7 @@ class RouteNavigator:
         # Enemies detected! Press and hold Q
         e_count = first_det_result["count"] if first_det_result else 1
         min_d = first_det_result["nearest_distance"] if first_det_result else 999.0
-        _log(f"    [ACTION] Enemies detected ({e_count} health bar(s), nearest={min_d:.1f}px). Pressing and holding 'Q' key (min={min_hold:.1f}s, max={max_hold:.1f}s)...")
+        _log(f"    [ACTION] Enemies detected ({e_count} health bar(s), nearest={min_d:.1f}px). Pressing and holding 'Q' key for {min_hold:.1f}s (max={max_hold:.1f}s)...")
         self.is_holding_mouse = True
 
         try:
@@ -2006,6 +2541,7 @@ class RouteNavigator:
                 except Exception as e:
                     screen = None
 
+                det = None
                 if screen is not None and screen.size > 0:
                     char_center = self._get_screen_char_center(screen, capt)
                     det = detector.detect(screen, character_center=char_center, near_threshold_px=near_thresh)
@@ -2021,9 +2557,13 @@ class RouteNavigator:
                 else:
                     self.status_message = f"[{zone_label}] Holding [Q]..."
 
+                if elapsed_hold >= min_hold and min_hold >= max_hold:
+                    _log(f"    [ENEMY REACTIVE] Held 'Q' for {elapsed_hold:.2f}s (hold duration={min_hold:.1f}s reached). Releasing 'Q'!")
+                    break
+
                 time.sleep(0.05)
             else:
-                _log(f"    [ENEMY REACTIVE] Max hold duration ({max_hold:.1f}s) reached without enemy in near range. Releasing 'Q'.")
+                _log(f"    [ENEMY REACTIVE] Max hold duration ({max_hold:.1f}s) reached. Releasing 'Q'.")
         finally:
             self.is_holding_mouse = False
             if pydirectinput:
@@ -2306,6 +2846,7 @@ class RouteNavigator:
                 time.sleep(0.08)
                 pydirectinput.mouseUp(button="left")
             sims_clicked.append(sim_key)
+            self._record_sim_clicked(sim_key, room_key=getattr(self, "current_room_key", None))
 
             # Approach wait: allow character to move closer to the sim object before proceeding
             if eff_app_wait > 0:
@@ -2450,6 +2991,7 @@ class RouteNavigator:
         Returns desktop absolute coordinates (X, Y) of the loot item center, or None if not found.
         """
         capt = self._get_capturer()
+        self._last_clicked_loot_item = None
         if screen is None:
             try:
                 screen = capt.capture()
@@ -2499,6 +3041,7 @@ class RouteNavigator:
                     except Exception as e:
                         _log(f"  [LOOT DEBUG] Failed to save loot debug screenshot: {e}")
 
+                self._last_clicked_loot_item = item
                 _log(f"  [LOOT MATCH] Found [P{item.priority}] {item.rule_name} (conf={item.confidence:.2f}, {item.w}x{item.h}) at screen ({desktop_x}, {desktop_y})")
                 return desktop_x, desktop_y
 
@@ -2546,21 +3089,23 @@ class RouteNavigator:
                         if math.hypot(desktop_x - ex_x, desktop_y - ex_y) < 28.0:
                             return None
 
+                tmpl_item = LootItem(
+                    x=int(best_loc[0]),
+                    y=int(best_loc[1]),
+                    w=int(tw * best_scale),
+                    h=int(th * best_scale),
+                    center_x=cx,
+                    center_y=cy,
+                    rule_id="custom_template_loot1",
+                    rule_name="Template Matcher (ui/loot1.png)",
+                    priority=99,
+                    confidence=best_val,
+                )
+                self._last_clicked_loot_item = tmpl_item
+
                 # Save debug screenshot for fallback template loot if enabled
                 if (self.save_loot_debug_screenshots or getattr(self.loot_detector, "save_debug_screenshots", False)) and hasattr(self, "loot_detector") and self.loot_detector:
                     try:
-                        tmpl_item = LootItem(
-                            x=int(best_loc[0]),
-                            y=int(best_loc[1]),
-                            w=int(tw * best_scale),
-                            h=int(th * best_scale),
-                            center_x=cx,
-                            center_y=cy,
-                            rule_id="custom_template_loot1",
-                            rule_name="Template Matcher (ui/loot1.png)",
-                            priority=99,
-                            confidence=best_val,
-                        )
                         self.loot_detector.save_debug_screenshot(
                             screen,
                             tmpl_item,
@@ -2726,6 +3271,13 @@ class RouteNavigator:
                 _log(f"  [LOOT #{picked_count}] Targeting loot item at ({lx}, {ly}). Clicking left mouse button...")
                 self.status_message = f"[LOOT] Picking #{picked_count} at ({lx}, {ly})"
 
+                # Record picked loot item in run session
+                self._record_loot_picked(
+                    getattr(self, "_last_clicked_loot_item", None),
+                    pos=(lx, ly),
+                    room_key=getattr(self, "current_room_key", None),
+                )
+
                 if pydirectinput:
                     pydirectinput.click()
                     time.sleep(0.08)
@@ -2772,7 +3324,7 @@ class RouteNavigator:
     def get_game_center_coords(self) -> Tuple[int, int]:
         """Returns safe screen coordinates inside the game window."""
         bounds = window_focuser.get_game_window_bounds()
-        if bounds:
+        if bounds and isinstance(bounds, (list, tuple)) and len(bounds) == 4:
             left, top, right, bottom = bounds
             return (left + right) // 2, (top + bottom) // 2
         # Fallback to monitor center
@@ -2799,7 +3351,7 @@ class RouteNavigator:
     def clamp_coords_to_game_window(self, x: int, y: int) -> Tuple[int, int]:
         """Clamps desktop coordinates (x, y) to guarantee they are strictly inside the game window."""
         bounds = window_focuser.get_game_window_bounds()
-        if bounds:
+        if bounds and isinstance(bounds, (list, tuple)) and len(bounds) == 4:
             left, top, right, bottom = bounds
             margin = 60
             clamped_x = max(left + margin, min(right - margin, x))
@@ -3025,6 +3577,11 @@ class RouteNavigator:
         if custom_routine and custom_routine.get("steps"):
             return self._execute_zone_routine(custom_routine, zone_label="PINK DOT", target=target)
 
+        fallback_room_key = self._resolve_room_key({}, zone_label="PINK DOT", target=target)
+        prev_room_key = self.current_room_key
+        self.current_room_key = fallback_room_key
+        fallback_start_time = time.time()
+
         self.release_all_keys()
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
         self.move_mouse_inside_game()
@@ -3237,6 +3794,12 @@ class RouteNavigator:
             _log("  [AUTOPILOT] Finished Pink Dot interaction! Resuming green route navigation...")
         else:
             self.status_message = f"Orbiting Yellow Zone ({self.orbit_duration:.1f}s left)"
+
+        if fallback_room_key:
+            self._record_room_cleared(fallback_room_key, time.time() - fallback_start_time)
+            if self._is_last_room(fallback_room_key):
+                self._finalize_run(last_room=fallback_room_key, reason="last_room_cleared")
+        self.current_room_key = prev_room_key
         return True
 
     def skip_current_waypoint(self) -> Optional[Dict[str, Any]]:
@@ -3539,6 +4102,8 @@ class RouteNavigator:
                     self.release_all_keys()
                     self.status_message = "Route Completed!"
                     _log("\n[AUTOPILOT] >>> ALL WAYPOINTS COMPLETED! Reached destination (Red Dot).")
+                    if not self.run_completed and self.run_start_time is not None:
+                        self._finalize_run(reason="route_completed")
                     break
 
                 target_pos = (target["x"], target["y"])
@@ -3628,6 +4193,8 @@ class RouteNavigator:
                         self.release_all_keys()
                         self.status_message = "Route Finished!"
                         _log("\n[AUTOPILOT] >>> DESTINATION REACHED (Red Dot)!")
+                        if not self.run_completed and self.run_start_time is not None:
+                            self._finalize_run(reason="route_completed")
                         break
                     target = next_target
                     target_pos = (target["x"], target["y"])
@@ -3950,6 +4517,12 @@ class RouteNavigator:
         elif is_paused or self.is_paused:
             status_msg = "Autopilot PAUSED (Press 'F4' to resume)"
 
+        now = time.time()
+        elapsed_sec = 0.0
+        if self.run_start_time is not None:
+            end_t = self.run_end_time if self.run_end_time is not None else now
+            elapsed_sec = max(0.0, end_t - self.run_start_time)
+
         return {
             "is_active": self.is_active,
             "is_paused": self.is_paused or is_paused,
@@ -3980,5 +4553,14 @@ class RouteNavigator:
             "minimap_early_exit_enabled": getattr(self, "minimap_early_exit_enabled", True),
             "minimap_early_exit_min_seconds": getattr(self, "minimap_early_exit_min_seconds", 25.0),
             "minimap_early_exit_min_icons": getattr(self, "minimap_early_exit_min_icons", 1),
+            "run_id": self.run_id,
+            "run_active": self.is_active and not self.run_completed,
+            "run_completed": self.run_completed,
+            "run_elapsed_sec": round(elapsed_sec, 1),
+            "run_elapsed_str": self._format_duration(elapsed_sec),
+            "run_sims_count": len(self.run_sims_clicked),
+            "run_loot_count": len(self.run_loot_picked),
+            "run_last_room_cleared": self.run_last_room_cleared,
+            "run_rooms_cleared_count": len(self.run_rooms_cleared),
         }
 

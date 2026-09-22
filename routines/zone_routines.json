@@ -39,6 +39,7 @@
           "approach_wait": 2.0,
           "reclick": false,
           "search_attempts": 5,
+          "activate_combat": false,
           "description": "Click encounter banner to start encounter"
         },
         {
@@ -48,21 +49,21 @@
           "description": "Position character on pink dot before combat"
         },
         {
-          "action": "press_key",
-          "key": "t",
-          "clicks": 1,
-          "delay": 0.15,
-          "description": "Press 'T' key skill"
-        },
-        {
           "action": "hold_key",
           "key": "q",
-          "duration": 5,
+          "duration": 1.6,
+          "min_hold_seconds": 1.6,
+          "max_hold_seconds": 1.6,
+          "pre_cast_button": "left",
+          "pre_cast_interval": 4.0,
+          "follow_up_key": "r",
+          "follow_up_delay": 2.0,
+          "click_offset": [60, 40],
           "combat_interval": 0.65,
           "combat_action": "key",
           "combat_key": "t",
           "right_click_interval": 0.65,
-          "description": "Hold 'Q' key for 5.0s and activate persistent 'T' key combat attack"
+          "description": "Click left mouse near character (frost bomb), wait 2s, press 'R', retry every 4s until enemies detected, then hold 'Q' for 1.6s and start orbiting with 'T'"
         },
         {
           "action": "orbit_yellow_zone",

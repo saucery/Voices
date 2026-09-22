@@ -1290,7 +1290,23 @@ class PlayerTrackerVisualizer:
         wp_target = nav_res.get("target_index", 0)
         total_wps = len(self.movement_path.waypoints) if self.movement_path else 0
         nav_status_str = f"WP {wp_target}/{total_wps} | Keys: [{held_keys_str}]"
-        cv2.putText(dashboard, nav_status_str, (nav_col_x, telemetry_y + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (120, 220, 255), 1, cv2.LINE_AA)
+        cv2.putText(dashboard, nav_status_str, (nav_col_x, telemetry_y + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (120, 220, 255), 1, cv2.LINE_AA)
+        run_timer_str = nav_res.get("run_elapsed_str", "0.0s")
+        sims_c = nav_res.get("run_sims_count", 0)
+        loot_c = nav_res.get("run_loot_count", 0)
+        is_run_done = nav_res.get("run_completed", False)
+        last_room = nav_res.get("run_last_room_cleared")
+        if is_run_done:
+            timer_txt = f"Done: {run_timer_str} | SIMs: {sims_c} | Loot: {loot_c}"
+            timer_col = (0, 255, 120)
+        elif nav_res.get("is_active"):
+            room_txt = f" ({last_room})" if last_room else ""
+            timer_txt = f"Run: {run_timer_str} | SIMs: {sims_c} | Loot: {loot_c}{room_txt}"
+            timer_col = (0, 255, 255)
+        else:
+            timer_txt = f"Run: Ready | SIMs: {sims_c} | Loot: {loot_c}"
+            timer_col = (150, 160, 175)
+        cv2.putText(dashboard, timer_txt, (nav_col_x, telemetry_y + 54), cv2.FONT_HERSHEY_SIMPLEX, 0.36, timer_col, 1, cv2.LINE_AA)
 
         # Col 5: Monitor, Performance & Combat Attack State
         perf_x = left_x + 1170

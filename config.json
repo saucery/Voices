@@ -71,7 +71,9 @@
     "minimap_early_exit_enabled": true,
     "minimap_early_exit_min_seconds": 25.0,
     "minimap_early_exit_check_interval": 0.5,
-    "minimap_early_exit_min_icons": 1
+    "minimap_early_exit_min_icons": 1,
+    "run_history_file": "debug_logs/run_history.json",
+    "run_summary_file": "debug_logs/run_history.txt"
   },
   "rooms": [
     {

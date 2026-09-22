@@ -439,6 +439,16 @@
       "threshold": 0.464
     },
     {
+      "id": "template_ruby_8580",
+      "name": "Ruby",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/ruby.png",
+      "threshold": 0.6302325581395349,
+      "description": "Visual template matcher for Ruby"
+    },
+    {
       "id": "template_vaalorb_4814",
       "name": "VaalOrb",
       "enabled": true,

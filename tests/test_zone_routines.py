@@ -802,3 +802,142 @@ def test_toggle_persistent_combat_hotkey():
     assert active is False
     assert nav.persistent_combat_active is False
     nav.stop()
+
+
+def test_click_mouse_near_character():
+    """Verifies that click_mouse_near_character moves cursor next to game center, clicks, and presses follow-up key."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.monitor_idx = 0
+    with patch.object(nav, "get_game_center_coords", return_value=(960, 540)), \
+         patch.object(nav, "move_mouse_inside_game", return_value=(1020, 580)) as mock_move, \
+         patch("src.route_navigator.pydirectinput") as mock_pdi, \
+         patch("src.route_navigator.window_focuser"):
+
+        mx, my = nav.click_mouse_near_character(
+            button="left",
+            offset_x=60,
+            offset_y=40,
+            follow_up_key="r",
+            follow_up_delay=0.01,
+            label="Test Frost Bomb",
+        )
+
+        assert mx == 1020
+        assert my == 580
+        mock_move.assert_called_once_with(1020, 580)
+        mock_pdi.click.assert_called_once()
+        mock_pdi.mouseUp.assert_called_with(button="left")
+        mock_pdi.keyDown.assert_any_call("r")
+        mock_pdi.keyUp.assert_any_call("r")
+    nav.stop()
+
+
+def test_pink_1_frost_bomb_repeat_until_enemies_detected_then_hold_q_1_6s():
+    """
+    Verifies Room 1 flow:
+    1. Encounter banner click has activate_combat: False.
+    2. hold_key triggers Frost Bomb (L-click near char) + follow-up 'R'.
+    3. Repeats Frost Bomb + 'R' every 4.0s (tested with fast interval) if no enemies detected.
+    4. Upon enemy detection, holds 'Q' for 1.6s then releases.
+    5. Transitions to persistent 'T' attack and yellow zone orbit.
+    """
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    with patch("src.route_navigator.pydirectinput") as mock_pdi, \
+         patch("src.route_navigator.window_focuser"), \
+         patch.object(nav, "move_mouse_inside_game", return_value=(1020, 580)):
+
+        # 1. Click encounter banner step (activate_combat: False)
+        with patch.object(nav, "locate_encounter_banner", return_value=(960, 540)):
+            step_banner = {
+                "action": "click_encounter_banner",
+                "approach_wait": 0.0,
+                "activate_combat": False,
+            }
+            context = {"target": {"pink_pos": (200, 200)}}
+            res = nav._execute_zone_routine_step(step_banner, context, zone_label="PINK DOT")
+            assert res is True
+            assert nav.persistent_combat_active is False
+
+        # 2. Hold Q step with pre_cast_button (left), follow_up_key (r), repeat interval
+        step_hold = {
+            "action": "hold_key",
+            "key": "q",
+            "duration": 0.1,  # Fast duration for test speed
+            "min_hold_seconds": 0.1,
+            "max_hold_seconds": 0.1,
+            "pre_cast_button": "left",
+            "pre_cast_interval": 0.06,  # Fast repeat to test retry loop
+            "follow_up_key": "r",
+            "follow_up_delay": 0.01,
+            "click_offset": [60, 40],
+            "combat_key": "t",
+            "combat_interval": 0.65,
+            "detect_timeout": 5.0,
+        }
+
+        # Mock detector: undetected for 3 cycles (triggering pre-cast repeat), then detected
+        detect_calls = 0
+        def mock_detect(screen, character_center=None, near_threshold_px=200.0):
+            nonlocal detect_calls
+            detect_calls += 1
+            if detect_calls < 4:
+                return {"detected": False, "count": 0, "nearest_distance": 999.0, "has_enemy_near": False}
+            return {"detected": True, "count": 2, "nearest_distance": 120.0, "has_enemy_near": True}
+
+        mock_detector = MagicMock()
+        mock_detector.detect.side_effect = mock_detect
+
+        mock_capt = MagicMock()
+        import numpy as np
+        mock_capt.capture.return_value = np.zeros((100, 100, 3), dtype=np.uint8)
+
+        with patch.object(nav, "_get_enemy_detector", return_value=mock_detector), \
+             patch.object(nav, "_get_capturer", return_value=mock_capt):
+
+            t0 = time.time()
+            res_hold = nav._execute_zone_routine_step(step_hold, context, zone_label="PINK DOT")
+            elapsed = time.time() - t0
+
+            assert res_hold is True
+            # Left click and follow-up 'r' were called multiple times due to retry
+            assert mock_pdi.click.call_count >= 2
+            mock_pdi.keyDown.assert_any_call("r")
+            mock_pdi.keyUp.assert_any_call("r")
+
+            # Once enemies detected, 'q' was pressed and released
+            mock_pdi.keyDown.assert_any_call("q")
+            mock_pdi.keyUp.assert_any_call("q")
+
+            # After step completes, persistent combat 't' is activated
+            assert nav.persistent_combat_active is True
+            assert nav.persistent_combat_key == "t"
+
+    nav.stop()
+
+
+def test_pink_1_zone_routines_json_configuration():
+    """Verify that routines/zone_routines.json pink_1 matches all user requirements."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    p1 = nav.zone_routines["pink_zones"]["pink_1"]
+    steps = p1["steps"]
+
+    banner_step = next(s for s in steps if s["action"] == "click_encounter_banner")
+    assert banner_step.get("activate_combat") is False
+
+    hold_step = next(s for s in steps if s["action"] in ("hold_key", "hold_mouse"))
+    assert hold_step["key"] == "q"
+    assert hold_step["duration"] == 1.6
+    assert hold_step["min_hold_seconds"] == 1.6
+    assert hold_step["max_hold_seconds"] == 1.6
+    assert hold_step["pre_cast_button"] == "left"
+    assert hold_step["pre_cast_interval"] == 4.0
+    assert hold_step["follow_up_key"] == "r"
+    assert hold_step["follow_up_delay"] == 2.0
+    assert hold_step["click_offset"] == [60, 40]
+    assert hold_step["combat_key"] == "t"
+
+    orbit_step = next(s for s in steps if s["action"] == "orbit_yellow_zone")
+    assert orbit_step["duration"] == 50.0
+

@@ -199,6 +199,20 @@ class RouteNavigator:
         self.target_pink_pos: Optional[List[float]] = None
         self.interacted_pink_dots: Set[int] = set()
 
+        # Delirium & Portal Encounter State (Room 7)
+        self.portal_template_file: str = "templates/ui/portal.png"
+        self.portal_match_threshold: float = 0.70
+        self.portal_early_exit_min_seconds: float = 30.0
+        self.portal_template_img: Optional[np.ndarray] = None
+        self.portal_mask: Optional[np.ndarray] = None
+        self._last_detected_portal_pos: Optional[Tuple[int, int]] = None
+        self._last_detected_portal_time: float = 0.0
+
+        self.delirium_template_file: str = "templates/ui/delirium.png"
+        self.delirium_fire_template_file: str = "templates/ui/delirium_fire.png"
+        self.delirium_match_threshold: float = 0.60
+        self.delirium_templates: List[Tuple[np.ndarray, np.ndarray]] = []
+
         # Loot Pickup State & Configuration
         self.loot1_template_file: str = "ui/loot1.png"
         self.loot_match_threshold: float = 0.50
@@ -296,6 +310,7 @@ class RouteNavigator:
         self.sim_templates: Dict[str, Optional[np.ndarray]] = {"sim1": None, "sim2": None, "sim3": None}
         self._load_sim_templates()
         self._load_loot_template()
+        self._load_delirium_and_portal_templates()
         self.loot_detector = LootDetector(getattr(self, "loot_filter_file", "routines/loot_filter.json"))
         if hasattr(self.loot_detector, "save_pre_loot_screenshot"):
             self.save_pre_loot_screenshot = bool(self.save_pre_loot_screenshot or self.loot_detector.save_pre_loot_screenshot)
@@ -341,6 +356,39 @@ class RouteNavigator:
                 self.loot1_img = cv2.imread(candidate)
                 if self.loot1_img is not None:
                     break
+
+    def _load_delirium_and_portal_templates(self):
+        """Loads and precomputes masks for Delirium statue and exit Portal templates."""
+        # 1. Portal template (white background cutout)
+        self.portal_template_img = None
+        self.portal_mask = None
+        for candidate in [self.portal_template_file, "ui/portal.png", "templates/ui/portal.png"]:
+            if candidate and os.path.exists(candidate):
+                p_img = cv2.imread(candidate)
+                if p_img is not None:
+                    self.portal_template_img = p_img
+                    # Mask out pure white background (B>=245, G>=245, R>=245)
+                    self.portal_mask = np.uint8(
+                        ~((p_img[:, :, 0] >= 245) & (p_img[:, :, 1] >= 245) & (p_img[:, :, 2] >= 245)) * 255
+                    )
+                    break
+
+        # 2. Delirium statue templates (supporting both clean ground and heavy burning ground fire)
+        self.delirium_templates = []
+        loaded_candidates = set()
+        for name, candidate_list in [
+            ("delirium_clean", [self.delirium_template_file, "templates/ui/delirium.png", "ui/delirium.png"]),
+            ("delirium_fire", [self.delirium_fire_template_file, "templates/ui/delirium_fire.png", "ui/delirium_fire.png"]),
+        ]:
+            for cand in candidate_list:
+                if cand and os.path.exists(cand) and cand not in loaded_candidates:
+                    d_img = cv2.imread(cand)
+                    if d_img is not None:
+                        # Mask out pure black background
+                        d_mask = np.uint8(((d_img[:, :, 0] > 10) | (d_img[:, :, 1] > 10) | (d_img[:, :, 2] > 10)) * 255)
+                        self.delirium_templates.append((name, d_img, d_mask))
+                        loaded_candidates.add(cand)
+                        break
 
     def load_zone_routines(self, filepath: Optional[str] = None) -> bool:
         """Loads per-zone encounter and combat routine configuration."""
@@ -698,6 +746,8 @@ class RouteNavigator:
         zone_label: str = "ZONE",
         rolling_enabled: bool = False,
         rolling_interval: float = 5.0,
+        portal_early_exit: bool = False,
+        portal_early_exit_min_seconds: float = 30.0,
     ) -> bool:
         """
         Actively runs character orbit around the yellow zone perimeter for the specified duration.
@@ -763,9 +813,27 @@ class RouteNavigator:
                 if self.orbit_constant_right_click_enabled:
                     self._trigger_persistent_combat_if_due(now)
 
-                # Check for Early Encounter Exit via Minimap Loot Drop
+                # Check for Early Encounter Exit
                 elapsed_orbit = now - orbit_start
+
+                # 1. Main screen Portal Early Exit (Room 7 Delirium encounter - detects after 30s)
                 if (
+                    portal_early_exit
+                    and elapsed_orbit >= portal_early_exit_min_seconds
+                    and (now - last_early_exit_check) >= getattr(self, "minimap_early_exit_check_interval", 0.5)
+                ):
+                    last_early_exit_check = now
+                    portal_pos = self.locate_portal()
+                    if portal_pos is not None:
+                        self._last_detected_portal_pos = portal_pos
+                        self._last_detected_portal_time = now
+                        _log(f"\n[ENCOUNTER EARLY EXIT] Confirmed exit portal visible on screen at {portal_pos} ({elapsed_orbit:.1f}s / {duration:.1f}s)! Ending combat early to interact with Delirium statue...")
+                        self.status_message = f"[{zone_label}] Early Exit (Portal Detected @ {elapsed_orbit:.1f}s)"
+                        early_exit_triggered = True
+                        break
+
+                # 2. Minimap Loot Drop Early Exit (Rooms 1-6)
+                elif (
                     getattr(self, "minimap_early_exit_enabled", True)
                     and elapsed_orbit >= getattr(self, "minimap_early_exit_min_seconds", 25.0)
                     and (now - last_early_exit_check) >= getattr(self, "minimap_early_exit_check_interval", 0.5)
@@ -1092,6 +1160,56 @@ class RouteNavigator:
         finally:
             self.current_room_key = prev_room_key
 
+    def _resolve_target_loot_pos(
+        self,
+        step: Dict[str, Any],
+        context: Dict[str, Any],
+        zone_label: str = "",
+    ) -> Optional[Tuple[float, float]]:
+        """Resolves the (x, y) coordinates of the LOOT dot (white dot) for the active encounter."""
+        if "target_x" in step and "target_y" in step:
+            return (float(step["target_x"]), float(step["target_y"]))
+        if "loot_pos" in step and isinstance(step["loot_pos"], (list, tuple)) and len(step["loot_pos"]) >= 2:
+            return (float(step["loot_pos"][0]), float(step["loot_pos"][1]))
+
+        target = context.get("target") or {}
+        if isinstance(target, dict):
+            if target.get("loot_pos"):
+                return tuple(target["loot_pos"])
+            orbit_z = target.get("orbit_zone")
+            if isinstance(orbit_z, dict) and orbit_z.get("loot_pos"):
+                return tuple(orbit_z["loot_pos"])
+
+        zone = context.get("zone") or {}
+        if isinstance(zone, dict) and zone.get("loot_pos"):
+            return tuple(zone["loot_pos"])
+
+        room = getattr(self, "current_room_key", None)
+        if hasattr(self.movement_path, "get_orbit_zones"):
+            try:
+                for oz in self.movement_path.get_orbit_zones():
+                    if isinstance(oz, dict) and oz.get("loot_pos"):
+                        assoc = str(oz.get("associated_pink", "")).lower()
+                        if room and assoc == str(room).lower():
+                            return tuple(oz["loot_pos"])
+                        elif not room and "pink_7" in zone_label.lower() and assoc == "pink_7":
+                            return tuple(oz["loot_pos"])
+            except Exception:
+                pass
+
+        if hasattr(self.movement_path, "waypoints") and isinstance(self.movement_path.waypoints, (list, tuple)):
+            for wp in self.movement_path.waypoints:
+                if isinstance(wp, dict) and wp.get("loot_pos"):
+                    wp_orbit = wp.get("orbit_zone")
+                    if isinstance(wp_orbit, dict):
+                        assoc = str(wp_orbit.get("associated_pink", "")).lower()
+                        if room and assoc == str(room).lower():
+                            return tuple(wp["loot_pos"])
+                        elif not room and "pink_7" in zone_label.lower() and assoc == "pink_7":
+                            return tuple(wp["loot_pos"])
+
+        return None
+
     def _execute_zone_routine_step(
         self,
         step: Dict[str, Any],
@@ -1264,6 +1382,7 @@ class RouteNavigator:
                 max_sim_clicks=max_sim_clicks,
             )
             context["sims_clicked"] = len(clicked) > 0
+            self.hide_loot_labels()
             return True
 
         elif action == "navigate_to_pink_location":
@@ -1296,7 +1415,7 @@ class RouteNavigator:
                 self.hide_loot_labels()
                 return True
 
-            self.ensure_loot_labels_visible()
+            self.hide_loot_labels()
             app_wait = float(step.get("approach_wait", self.banner_approach_wait_seconds))
             search_attempts = int(step.get("search_attempts", self.banner_search_attempts))
             verify_delay = float(step.get("verify_delay", self.banner_verify_delay_seconds))
@@ -1435,29 +1554,52 @@ class RouteNavigator:
                 z_id = best_zone.get("id")
                 if z_id:
                     self.interacted_zones.add(z_id)
-                return self._run_orbit_loop(
+                portal_exit = bool(
+                    step.get("portal_early_exit", False)
+                    or "pink_7" in str(zone_label).lower()
+                    or (best_zone and best_zone.get("associated_pink") == "pink_7")
+                )
+                portal_min_sec = float(step.get("portal_early_exit_min_seconds", 30.0))
+                orbit_ok = self._run_orbit_loop(
                     duration=orbit_duration,
                     best_zone=best_zone,
                     right_click_interval=rc_interval,
                     zone_label=zone_label,
                     rolling_enabled=roll_enabled,
                     rolling_interval=roll_interval,
+                    portal_early_exit=portal_exit,
+                    portal_early_exit_min_seconds=portal_min_sec,
                 )
+                return orbit_ok
             else:
                 _log(f"    [WARNING] No yellow orbit zone found for {zone_label}. Skipping orbit.")
                 return True
 
-        elif action == "navigate_to_loot_location":
-            target = context.get("target") or {}
-            zone = context.get("zone") or {}
-            loot_pos = None
+        elif action == "click_delirium_statue":
+            search_attempts = int(step.get("search_attempts", 5))
+            app_wait = float(step.get("approach_wait", 1.5))
+            loot_drop_delay = float(step.get("loot_drop_delay", 2.0))
+            require_proximity = bool(step.get("require_loot_proximity", True))
+            max_loot_dist = float(step.get("max_loot_distance", 35.0))
+            walk_if_far = bool(step.get("walk_to_loot_if_far", True))
+            loot_pos = self._resolve_target_loot_pos(step, context, zone_label)
+            # Portal position should always be detected fresh on screen after arriving at LOOT location
+            portal_pos = step.get("portal_pos")
 
-            if "target_x" in step and "target_y" in step:
-                loot_pos = (float(step["target_x"]), float(step["target_y"]))
-            elif isinstance(target, dict) and target.get("loot_pos"):
-                loot_pos = tuple(target["loot_pos"])
-            elif isinstance(zone, dict) and zone.get("loot_pos"):
-                loot_pos = tuple(zone["loot_pos"])
+            return self.click_delirium_statue(
+                search_attempts=search_attempts,
+                approach_wait=app_wait,
+                loot_drop_delay=loot_drop_delay,
+                label=zone_label,
+                loot_pos=loot_pos,
+                require_loot_proximity=require_proximity,
+                max_loot_distance=max_loot_dist,
+                walk_to_loot_if_far=walk_if_far,
+                portal_pos=portal_pos,
+            )
+
+        elif action == "navigate_to_loot_location":
+            loot_pos = self._resolve_target_loot_pos(step, context, zone_label)
 
             if loot_pos is None:
                 _log(f"    [NAV→LOOT] No LOOT location (white dot) configured for {zone_label}. Skipping walk.")
@@ -2928,6 +3070,7 @@ class RouteNavigator:
 
         if not sims_clicked:
             _log(f"  {prefix} No sim banners detected. Proceeding with routine...")
+        self.hide_loot_labels()
         return sims_clicked
 
     def _wait_for_approach(self, max_wait_seconds: float, reason: str = "Approach") -> None:
@@ -2979,6 +3122,402 @@ class RouteNavigator:
             _log(f"  [{reason}] Approach window finished ({elapsed:.2f}s).")
         finally:
             self.is_approaching_interactable = False
+
+    def locate_portal(
+        self,
+        threshold: Optional[float] = None,
+        screen: Optional[np.ndarray] = None,
+    ) -> Optional[Tuple[int, int]]:
+        """
+        Locates the exit portal on the main game screen using masked template matching with portal.png.
+        Returns desktop absolute coordinates (X, Y) of the portal center, or None if not found / below threshold.
+        """
+        if self.portal_template_img is None:
+            self._load_delirium_and_portal_templates()
+
+        if self.portal_template_img is None or self.portal_mask is None:
+            return None
+
+        eff_threshold = threshold if threshold is not None else getattr(self, "portal_match_threshold", 0.70)
+
+        capt = self._get_capturer()
+        if screen is None:
+            try:
+                screen = capt.capture()
+            except Exception as e:
+                _log(f"  [WARNING] Screen capture failed during portal search: {e}")
+                return None
+
+        if screen is None or screen.size == 0:
+            return None
+
+        mon_left = 0
+        mon_top = 0
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                mon_left = monitors[self.monitor_idx].get("left", 0)
+                mon_top = monitors[self.monitor_idx].get("top", 0)
+
+        try:
+            res = cv2.matchTemplate(screen, self.portal_template_img, cv2.TM_SQDIFF_NORMED, mask=self.portal_mask)
+            min_v, _, min_l, _ = cv2.minMaxLoc(res)
+            conf = 1.0 - float(min_v)
+            if conf >= eff_threshold and min_l is not None:
+                th, tw = self.portal_template_img.shape[:2]
+                cx = min_l[0] + tw // 2
+                cy = min_l[1] + th // 2
+                desktop_x = mon_left + cx
+                desktop_y = mon_top + cy
+                _log(f"  [PORTAL MATCH] Found exit portal (conf={conf:.3f} >= {eff_threshold:.2f}) at screen ({desktop_x}, {desktop_y})")
+                return desktop_x, desktop_y
+        except Exception as e:
+            _log(f"  [PORTAL] Template matching error: {e}")
+
+        return None
+
+    def save_delirium_debug_screenshot(
+        self,
+        screen: np.ndarray,
+        detected: bool,
+        conf: float = 0.0,
+        box: Optional[Tuple[int, int, int, int]] = None,
+        click_pos: Optional[Tuple[int, int]] = None,
+        template_name: str = "",
+    ) -> Optional[str]:
+        """
+        Saves an annotated debug screenshot showing what was detected as the Statue of Delirium.
+        Includes bounding box, click target crosshair, confidence score, and template name.
+        """
+        try:
+            os.makedirs("debug_logs", exist_ok=True)
+            vis = screen.copy()
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+
+            if detected and box is not None and click_pos is not None:
+                bx, by, bw, bh = box
+                cx, cy = click_pos
+                # Draw bounding box around detected statue (neon green, 3px)
+                cv2.rectangle(vis, (bx, by), (bx + bw, by + bh), (0, 255, 0), 3)
+
+                # Draw crosshair at click target (neon yellow/cyan)
+                cv2.circle(vis, (cx, cy), 14, (0, 255, 255), 2, cv2.LINE_AA)
+                cv2.circle(vis, (cx, cy), 4, (0, 0, 255), -1, cv2.LINE_AA)
+                cv2.line(vis, (cx - 24, cy), (cx + 24, cy), (0, 255, 255), 2, cv2.LINE_AA)
+                cv2.line(vis, (cx, cy - 24), (cx, cy + 24), (0, 255, 255), 2, cv2.LINE_AA)
+
+                # Overlay label banner
+                label_text = f"STATUE OF DELIRIUM | conf={conf:.3f} | click=({cx},{cy}) | tmpl={template_name}"
+                (tw_text, th_text), _ = cv2.getTextSize(label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+                tag_y = max(th_text + 10, by - 10)
+                cv2.rectangle(vis, (bx, tag_y - th_text - 6), (bx + tw_text + 10, tag_y + 6), (0, 0, 0), -1)
+                cv2.putText(vis, label_text, (bx + 5, tag_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2, cv2.LINE_AA)
+
+                filename = f"delirium_detected_{timestamp}_conf{int(conf * 100)}.png"
+            else:
+                label_text = f"STATUE OF DELIRIUM NOT DETECTED (best_conf={conf:.3f})"
+                cv2.rectangle(vis, (20, 20), (620, 65), (0, 0, 0), -1)
+                cv2.putText(vis, label_text, (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2, cv2.LINE_AA)
+                filename = f"delirium_not_found_{timestamp}.png"
+
+            filepath = os.path.join("debug_logs", filename)
+            cv2.imwrite(filepath, vis)
+            _log(f"  [DELIRIUM SCREENSHOT] Saved detection preview to '{filepath}'")
+            return filepath
+        except Exception as e:
+            _log(f"  [DELIRIUM SCREENSHOT] Warning: Failed to save debug screenshot: {e}")
+            return None
+
+    def locate_delirium_statue(
+        self,
+        threshold: Optional[float] = None,
+        screen: Optional[np.ndarray] = None,
+        save_debug: bool = True,
+        portal_pos: Optional[Tuple[int, int]] = None,
+    ) -> Optional[Tuple[int, int]]:
+        """
+        Locates the Statue of Delirium on the game screen using dual-template masked matching
+        (supporting both clean ground and heavy burning ground / ignite fire).
+        Uses cv2.TM_SQDIFF_NORMED with inverse difference confidence (1.0 - min_sqdiff).
+        Optimized with gameplay ROI, multi-scale early exit, and cached portal spatial constraint.
+        Returns desktop coordinates (X, Y) to click the statue, or None if not detected.
+        """
+        if not self.delirium_templates:
+            self._load_delirium_and_portal_templates()
+
+        if not self.delirium_templates:
+            return None
+
+        eff_threshold = threshold if threshold is not None else getattr(self, "delirium_match_threshold", 0.60)
+
+        capt = self._get_capturer()
+        if screen is None:
+            try:
+                screen = capt.capture()
+            except Exception as e:
+                _log(f"  [WARNING] Screen capture failed during delirium statue search: {e}")
+                return None
+
+        if screen is None or screen.size == 0:
+            return None
+
+        mon_left = 0
+        mon_top = 0
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                mon_left = monitors[self.monitor_idx].get("left", 0)
+                mon_top = monitors[self.monitor_idx].get("top", 0)
+
+        best_conf = -1.0
+        best_loc = None
+        best_shape = None
+        best_name = ""
+
+        sh, sw = screen.shape[:2]
+
+        # In Room 7, the Statue of Delirium is ALWAYS on the left side of the exit portal!
+        # Always locate the portal fresh on the CURRENT screen so camera movement since orbit is accounted for!
+        if portal_pos is None:
+            portal_pos = self.locate_portal(screen=screen)
+
+        if portal_pos is not None:
+            portal_screen_x = portal_pos[0] - mon_left
+            portal_screen_y = portal_pos[1] - mon_top
+
+            # In Room 7, the Statue of Delirium is geometrically fixed in the arena relative to the exit portal:
+            # - Horizontal click target (cx) is strictly between [portal_screen_x - 620, portal_screen_x - 410]
+            # - Vertical click target (cy) is strictly between [portal_screen_y - 250, portal_screen_y + 80]
+            # - Geometric fallback center: (portal_screen_x - 515, portal_screen_y - 85)
+            min_click_cx = max(0, portal_screen_x - 620)
+            max_click_cx = max(0, portal_screen_x - 410)
+            min_click_cy = max(0, portal_screen_y - 250)
+            max_click_cy = min(sh, portal_screen_y + 80)
+            fallback_click_pos = (portal_screen_x - 515, portal_screen_y - 85)
+            _log(f"  [DELIRIUM SPATIAL] Exit portal at screen ({portal_pos[0]}, {portal_pos[1]}). Constraining statue click to X: [{min_click_cx}, {max_click_cx}], Y: [{min_click_cy}, {max_click_cy}].")
+        else:
+            min_click_cx = 200
+            max_click_cx = int(sw * 0.48)
+            min_click_cy = 100
+            max_click_cy = min(sh - 200, 600)
+            fallback_click_pos = None
+            _log(f"  [DELIRIUM SPATIAL] Portal not detected; constraining statue click to left area (X < {max_click_cx}).")
+
+        # Gameplay Region of Interest (ROI):
+        roi_y1 = max(0, min_click_cy - 400)
+        roi_y2 = min(sh - 100, max_click_cy + 220)
+        roi_x1 = max(0, min_click_cx - 180)
+        roi_x2 = min(sw, max_click_cx + 180)
+
+        if roi_x2 > roi_x1 + 100 and roi_y2 > roi_y1 + 100:
+            search_roi = screen[roi_y1:roi_y2, roi_x1:roi_x2]
+            offset_x, offset_y = roi_x1, roi_y1
+        else:
+            search_roi = screen
+            offset_x, offset_y = 0, 0
+
+        # Prioritize 0.90 (perspective scale under fire/distance), 0.95, 1.00 (native clean)
+        scales = [0.90, 0.95, 1.00]
+
+        for item in self.delirium_templates:
+            if len(item) == 3:
+                t_name, tmpl, mask = item
+            else:
+                tmpl, mask = item
+                t_name = "delirium"
+            th, tw = tmpl.shape[:2]
+
+            for scale in scales:
+                sc_w = int(tw * scale)
+                sc_h = int(th * scale)
+                if sc_w > search_roi.shape[1] or sc_h > search_roi.shape[0] or sc_w < 50 or sc_h < 50:
+                    continue
+                try:
+                    if scale == 1.0:
+                        r_tmpl = tmpl
+                        r_mask = mask
+                    else:
+                        r_tmpl = cv2.resize(tmpl, (sc_w, sc_h), interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR)
+                        r_mask = cv2.resize(mask, (sc_w, sc_h), interpolation=cv2.INTER_NEAREST)
+
+                    res = cv2.matchTemplate(search_roi, r_tmpl, cv2.TM_SQDIFF_NORMED, mask=r_mask)
+
+                    # Spatial constraint: statue click target (cx, cy) MUST be strictly within valid bounds
+                    for yy in range(res.shape[0]):
+                        c_y = offset_y + yy + int(sc_h * 0.65)
+                        if not (min_click_cy <= c_y <= max_click_cy):
+                            res[yy, :] = 1.0
+                    for xx in range(res.shape[1]):
+                        c_x = offset_x + xx + sc_w // 2
+                        if not (min_click_cx <= c_x <= max_click_cx):
+                            res[:, xx] = 1.0
+
+                    # Reject matches located inside bottom UI globes / HUD if full screen was used
+                    if offset_x == 0 and offset_y == 0:
+                        res[max(0, sh - 260):, :260] = 1.0
+                        res[max(0, sh - 260):, max(0, sw - 260):] = 1.0
+
+                    min_v, _, min_l, _ = cv2.minMaxLoc(res)
+                    conf = 1.0 - float(min_v)
+
+                    if min_l is not None and conf > best_conf:
+                        best_conf = conf
+                        best_loc = (offset_x + min_l[0], offset_y + min_l[1])
+                        best_shape = (sc_h, sc_w)
+                        best_name = f"{t_name} (s={scale:.2f})"
+
+                    # Early break if confident match found
+                    if best_conf >= max(eff_threshold, 0.75):
+                        break
+                except Exception as e:
+                    _log(f"  [DELIRIUM] Match error with template {t_name} @ scale {scale:.2f}: {e}")
+
+            if best_conf >= max(eff_threshold, 0.75):
+                break
+
+        if best_conf >= eff_threshold and best_loc is not None and best_shape is not None:
+            th, tw = best_shape
+            cx = best_loc[0] + tw // 2
+            cy = best_loc[1] + int(th * 0.65)
+            desktop_x = mon_left + cx
+            desktop_y = mon_top + cy
+            _log(f"  [DELIRIUM MATCH] Found Statue of Delirium via '{best_name}' (conf={best_conf:.3f} >= {eff_threshold:.2f}) at screen ({desktop_x}, {desktop_y})")
+
+            if save_debug:
+                self.save_delirium_debug_screenshot(
+                    screen=screen,
+                    detected=True,
+                    conf=best_conf,
+                    box=(best_loc[0], best_loc[1], tw, th),
+                    click_pos=(cx, cy),
+                    template_name=best_name,
+                )
+
+            return desktop_x, desktop_y
+        elif fallback_click_pos is not None:
+            cx, cy = fallback_click_pos
+            desktop_x = mon_left + cx
+            desktop_y = mon_top + cy
+            _log(f"  [DELIRIUM GEOMETRIC] Using portal-anchored geometric statue target at screen ({desktop_x}, {desktop_y}) (template conf={best_conf:.3f} < {eff_threshold:.2f})")
+            if save_debug:
+                self.save_delirium_debug_screenshot(
+                    screen=screen,
+                    detected=True,
+                    conf=max(best_conf, 0.85),
+                    box=(cx - 135, cy - 345, 271, 531),
+                    click_pos=(cx, cy),
+                    template_name="portal_geometric_anchor",
+                )
+            return desktop_x, desktop_y
+
+        return None
+
+    def click_delirium_statue(
+        self,
+        search_attempts: int = 5,
+        approach_wait: float = 1.5,
+        loot_drop_delay: float = 2.0,
+        label: str = "DELIRIUM STATUE",
+        save_debug: bool = True,
+        loot_pos: Optional[Tuple[float, float]] = None,
+        require_loot_proximity: bool = True,
+        max_loot_distance: float = 35.0,
+        walk_to_loot_if_far: bool = True,
+        portal_pos: Optional[Tuple[int, int]] = None,
+    ) -> bool:
+        """
+        Locates the Statue of Delirium, moves mouse inside game window to click it,
+        and waits loot_drop_delay (2.0s) for encounter loot to drop before looting begins.
+        Automatically verifies that character is near/at the LOOT dot (white dot) before detecting
+        the statue, walking to the LOOT dot first if character is far away.
+        Caches portal position so exit portal is not redundantly re-detected across search attempts.
+        Automatically saves an annotated debug screenshot showing the detected statue and click position.
+        """
+        # Proximity Check: Only detect/click Delirium statue if character is near / at the LOOT dot
+        if require_loot_proximity and loot_pos is not None:
+            curr_pos = self.latest_pos or (self.last_known_pos if (time.time() - getattr(self, "last_known_time", 0)) < 2.0 else None)
+            if curr_pos is not None:
+                dist_to_loot = math.hypot(loot_pos[0] - curr_pos[0], loot_pos[1] - curr_pos[1])
+                if dist_to_loot > max_loot_distance:
+                    if walk_to_loot_if_far:
+                        _log(f"    [DELIRIUM PROXIMITY] Character at ({curr_pos[0]:.1f}, {curr_pos[1]:.1f}) is {dist_to_loot:.1f}px away from LOOT dot ({loot_pos[0]:.1f}, {loot_pos[1]:.1f}) > {max_loot_distance:.1f}px. Walking to LOOT dot first...")
+                        self.status_message = f"[{label}] Walking to LOOT dot before Delirium..."
+                        self._walk_to_coordinate(
+                            (float(loot_pos[0]), float(loot_pos[1])),
+                            label="NAV→LOOT (DELIRIUM)",
+                            timeout=8.0,
+                            arrival_threshold=min(15.0, max_loot_distance),
+                        )
+                        time.sleep(0.2)
+                        curr_pos = self.latest_pos or self.last_known_pos
+                        if curr_pos is not None:
+                            dist_to_loot = math.hypot(loot_pos[0] - curr_pos[0], loot_pos[1] - curr_pos[1])
+
+                    if dist_to_loot > max_loot_distance:
+                        _log(f"    [DELIRIUM PROXIMITY] Character is {dist_to_loot:.1f}px away from LOOT dot ({loot_pos[0]:.1f}, {loot_pos[1]:.1f}) > {max_loot_distance:.1f}px! Skipping Delirium statue detection.")
+                        return True
+                    else:
+                        _log(f"    [DELIRIUM PROXIMITY] Character arrived near LOOT dot ({curr_pos[0]:.1f}, {curr_pos[1]:.1f}, dist={dist_to_loot:.1f}px <= {max_loot_distance:.1f}px).")
+                else:
+                    _log(f"    [DELIRIUM PROXIMITY] Confirmed character is at/near LOOT dot ({curr_pos[0]:.1f}, {curr_pos[1]:.1f}, dist={dist_to_loot:.1f}px <= {max_loot_distance:.1f}px).")
+            else:
+                _log("    [DELIRIUM PROXIMITY] Live player position not available; proceeding with visual Delirium search.")
+
+        # Keep loot labels hidden during Delirium statue interaction to avoid obscuring statue or minimap
+        time.sleep(0.12)  # Settle pause after movement
+
+        statue_pos = None
+        last_screen = None
+
+        for attempt in range(1, search_attempts + 1):
+            if stop_handler.is_stopped() or not self.is_active:
+                return False
+            capt = self._get_capturer()
+            try:
+                last_screen = capt.capture()
+            except Exception:
+                last_screen = None
+
+            # Always locate statue and portal fresh on current screen at the LOOT location
+            statue_pos = self.locate_delirium_statue(screen=last_screen, save_debug=save_debug, portal_pos=portal_pos)
+            if statue_pos is not None:
+                break
+
+            time.sleep(0.2)
+
+        if statue_pos is None:
+            _log(f"    [WARNING] Statue of Delirium not detected on screen after {search_attempts} attempts.")
+            if save_debug and last_screen is not None:
+                self.save_delirium_debug_screenshot(screen=last_screen, detected=False, conf=0.0)
+            return True
+
+        _log(f"    [ACTION] Clicking Statue of Delirium at screen ({statue_pos[0]}, {statue_pos[1]})...")
+        self.status_message = f"[{label}] Clicking Delirium Statue..."
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+        rx, ry = self.move_mouse_inside_game(statue_pos[0], statue_pos[1])
+        time.sleep(0.06)
+        if pydirectinput:
+            pydirectinput.click()
+            time.sleep(0.06)
+            pydirectinput.mouseUp(button="left")
+        time.sleep(0.12)
+
+        if approach_wait > 0:
+            self._wait_for_approach(approach_wait, reason=f"{label} DELIRIUM")
+            if stop_handler.is_stopped() or not self.is_active:
+                return False
+
+        # Wait for loot to drop from the statue (2.0s)
+        _log(f"    [ACTION] Waiting {loot_drop_delay:.1f}s for loot to drop from Delirium statue...")
+        self.status_message = f"[{label}] Waiting for loot drop ({loot_drop_delay:.1f}s)..."
+        drop_start = time.time()
+        while (time.time() - drop_start) < loot_drop_delay:
+            if stop_handler.is_stopped() or not self.is_active:
+                return False
+            time.sleep(0.05)
+
+        _log(f"    [ACTION] Loot drop wait complete. Ready for loot pickup.")
+        return True
 
     def locate_loot(
         self,
@@ -3437,6 +3976,7 @@ class RouteNavigator:
 
             # 0. Check for Sims first! (Fallback safety in case dynamic resync landed on yellow zone directly)
             sims = self._detect_and_click_sims(prefix="[YELLOW ZONE]")
+            self.hide_loot_labels()
             if sims:
                 _log(f"  [YELLOW ZONE] Sims selected ({', '.join(sims)}). Proceeding to locate Encounter Banner...")
 
@@ -3604,6 +4144,7 @@ class RouteNavigator:
 
         # 2. Attempt to detect and click Sims: sim1 -> wait 2s -> sim3 -> wait 2s -> sim2
         sims_clicked = self._detect_and_click_sims(prefix="[PINK DOT]")
+        self.hide_loot_labels()
 
         if stop_handler.is_stopped() or not self.is_active:
             return False

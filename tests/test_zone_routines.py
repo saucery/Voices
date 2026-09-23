@@ -4,6 +4,8 @@ import sys
 import time
 from unittest.mock import MagicMock, patch
 import pytest
+import cv2
+import numpy as np
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -356,6 +358,8 @@ def test_zone_routine_step_execution_orbit_yellow_zone():
         zone_label="TEST_ZONE",
         rolling_enabled=False,
         rolling_interval=5.0,
+        portal_early_exit=False,
+        portal_early_exit_min_seconds=30.0,
     )
 
 
@@ -940,4 +944,328 @@ def test_pink_1_zone_routines_json_configuration():
 
     orbit_step = next(s for s in steps if s["action"] == "orbit_yellow_zone")
     assert orbit_step["duration"] == 50.0
+
+
+def test_locate_portal_detection():
+    """Verifies that locate_portal correctly detects the portal with high confidence."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.monitor_idx = 0
+
+    fire_path = r"C:\Users\gregg\OneDrive\Pictures\Screenshots\Screenshot 2026-09-22 191708.png"
+    nofire_path = r"C:\Users\gregg\OneDrive\Pictures\Screenshots\Screenshot 2026-09-22 191732.png"
+
+    if os.path.exists(fire_path) and os.path.exists(nofire_path):
+        img_fire = cv2.imread(fire_path)
+        img_nofire = cv2.imread(nofire_path)
+
+        pos_f = nav.locate_portal(screen=img_fire)
+        assert pos_f is not None
+        assert 1400 <= pos_f[0] <= 1700
+        assert 350 <= pos_f[1] <= 650
+
+        pos_nf = nav.locate_portal(screen=img_nofire)
+        assert pos_nf is not None
+        assert 1400 <= pos_nf[0] <= 1700
+        assert 350 <= pos_nf[1] <= 650
+
+    # Negative test on empty screen
+    zero_screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    assert nav.locate_portal(screen=zero_screen) is None
+    nav.stop()
+
+
+def test_locate_delirium_statue_detection():
+    """Verifies that locate_delirium_statue detects the statue in both fire and clean ground."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.monitor_idx = 0
+
+    fire_path = r"C:\Users\gregg\OneDrive\Pictures\Screenshots\Screenshot 2026-09-22 191708.png"
+    nofire_path = r"C:\Users\gregg\OneDrive\Pictures\Screenshots\Screenshot 2026-09-22 191732.png"
+
+    if os.path.exists(fire_path) and os.path.exists(nofire_path):
+        img_fire = cv2.imread(fire_path)
+        img_nofire = cv2.imread(nofire_path)
+
+        pos_f = nav.locate_delirium_statue(screen=img_fire)
+        assert pos_f is not None
+        assert 900 <= pos_f[0] <= 1250
+        assert 300 <= pos_f[1] <= 600
+
+        pos_nf = nav.locate_delirium_statue(screen=img_nofire)
+        assert pos_nf is not None
+        assert 900 <= pos_nf[0] <= 1250
+        assert 300 <= pos_nf[1] <= 600
+
+    # Test on user run screenshot where statue is on left of portal
+    user_shot_path = r"debug_logs\delirium_detected_20260923_105309_conf66.png"
+    if os.path.exists(user_shot_path):
+        img_user = cv2.imread(user_shot_path)
+        pos_u = nav.locate_delirium_statue(screen=img_user)
+        assert pos_u is not None
+        # Must detect genuine statue on the left (x < 800), NOT false match on right (x > 1150)
+        assert 600 <= pos_u[0] <= 800
+        assert 250 <= pos_u[1] <= 400
+
+    # Test on user run screenshot 134031 where burning ground previously pulled detection to the right
+    user_shot_134031 = r"debug_logs\delirium_detected_20260923_134031_conf72.png"
+    if os.path.exists(user_shot_134031):
+        img_user2 = cv2.imread(user_shot_134031)
+        pos_u2 = nav.locate_delirium_statue(screen=img_user2)
+        assert pos_u2 is not None
+        # Must detect genuine statue on the left (x in [600, 720]), NOT missclick into fire (x > 750)
+        assert 600 <= pos_u2[0] <= 720
+        assert 250 <= pos_u2[1] <= 450
+
+    # Negative test on empty screen
+    zero_screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    assert nav.locate_delirium_statue(screen=zero_screen) is None
+    nav.stop()
+
+
+def test_click_delirium_statue_step_execution():
+    """Verifies that click_delirium_statue locates statue, clicks, and waits loot_drop_delay."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    with patch.object(nav, "locate_delirium_statue", return_value=(1080, 420)), \
+         patch.object(nav, "move_mouse_inside_game", return_value=(1080, 420)) as mock_move, \
+         patch("src.route_navigator.pydirectinput") as mock_pdi:
+
+        step = {
+            "action": "click_delirium_statue",
+            "search_attempts": 3,
+            "approach_wait": 0.0,
+            "loot_drop_delay": 0.05,
+        }
+        res = nav._execute_zone_routine_step(step, {}, zone_label="PINK DOT #7")
+        assert res is True
+        mock_move.assert_called_once_with(1080, 420)
+        mock_pdi.click.assert_called_once()
+        mock_pdi.mouseUp.assert_called_with(button="left")
+
+    nav.stop()
+
+
+def test_orbit_yellow_zone_portal_early_exit():
+    """Verifies that orbit_yellow_zone checks portal after 30s min duration and exits early when detected."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.monitor_idx = 0
+
+    best_zone = {
+        "id": "zone_7",
+        "center": [112.5, 105.1],
+        "radius": 60.0,
+        "perimeter_points": [[112.5, 165.1], [172.5, 105.1]],
+        "associated_pink": "pink_7",
+    }
+
+    # Simulate orbit: portal not detected initially (< portal_early_exit_min_seconds), then detected
+    portal_calls = 0
+    def mock_locate_portal(threshold=None, screen=None):
+        nonlocal portal_calls
+        portal_calls += 1
+        return (1550, 490)
+
+    with patch.object(nav, "locate_portal", side_effect=mock_locate_portal), \
+         patch("src.route_navigator.window_focuser"), \
+         patch.object(nav, "move_mouse_inside_game"):
+
+        # Test with portal_early_exit=True and min_seconds=0.05 for fast test execution
+        t0 = time.time()
+        res = nav._run_orbit_loop(
+            duration=10.0,
+            best_zone=best_zone,
+            right_click_interval=1.0,
+            zone_label="PINK DOT #7",
+            portal_early_exit=True,
+            portal_early_exit_min_seconds=0.05,
+        )
+        elapsed = time.time() - t0
+
+        assert res is True
+        assert elapsed < 5.0  # Exited early before 10.0s duration
+        assert portal_calls >= 1
+
+    nav.stop()
+
+
+def test_pink_7_zone_routines_json_configuration():
+    """Verify that routines/zone_routines.json pink_7 matches all Room 7 requirements."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    p7 = nav.zone_routines["pink_zones"]["pink_7"]
+    steps = p7["steps"]
+
+    orbit_step = next(s for s in steps if s["action"] == "orbit_yellow_zone")
+    assert orbit_step["portal_early_exit"] is True
+    assert orbit_step["portal_early_exit_min_seconds"] == 30.0
+
+    statue_step = next(s for s in steps if s["action"] == "click_delirium_statue")
+    assert statue_step["loot_drop_delay"] == 2.0
+    assert statue_step.get("require_loot_proximity") is True
+    assert statue_step.get("max_loot_distance", 35.0) == 35.0
+
+    # Ensure correct ordering: orbit -> navigate_to_loot_location -> click_delirium_statue -> pickup_loot
+    actions = [s["action"] for s in steps]
+    orbit_idx = actions.index("orbit_yellow_zone")
+    loot_nav_idx = actions.index("navigate_to_loot_location")
+    statue_idx = actions.index("click_delirium_statue")
+    pickup_idx = actions.index("pickup_loot")
+
+    assert orbit_idx < loot_nav_idx < statue_idx < pickup_idx
+    nav.stop()
+
+
+def test_click_delirium_statue_proximity_guard_at_loot_dot():
+    """Verifies that click_delirium_statue proceeds when character is within max_loot_distance of LOOT dot."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.latest_pos = (130.0, 61.0)  # ~1.4px away from (131.0, 62.0)
+
+    with patch.object(nav, "locate_delirium_statue", return_value=(1080, 420)) as mock_locate, \
+         patch.object(nav, "move_mouse_inside_game", return_value=(1080, 420)), \
+         patch("src.route_navigator.pydirectinput") as mock_pdi:
+
+        step = {
+            "action": "click_delirium_statue",
+            "search_attempts": 2,
+            "approach_wait": 0.0,
+            "loot_drop_delay": 0.05,
+            "require_loot_proximity": True,
+            "max_loot_distance": 35.0,
+            "loot_pos": [131.0, 62.0],
+        }
+        res = nav._execute_zone_routine_step(step, {}, zone_label="PINK DOT #7")
+        assert res is True
+        mock_locate.assert_called()
+        mock_pdi.click.assert_called_once()
+    nav.stop()
+
+
+def test_click_delirium_statue_proximity_guard_walks_to_loot_if_far():
+    """Verifies that if character is far from LOOT dot, click_delirium_statue walks to LOOT dot first."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.latest_pos = (50.0, 50.0)  # ~82px away from (131.0, 62.0)
+
+    def mock_walk(target_pos, **kwargs):
+        nav.latest_pos = (131.0, 62.0)
+        return True
+
+    with patch.object(nav, "_walk_to_coordinate", side_effect=mock_walk) as mock_walk_fn, \
+         patch.object(nav, "locate_delirium_statue", return_value=(1080, 420)) as mock_locate, \
+         patch.object(nav, "move_mouse_inside_game", return_value=(1080, 420)), \
+         patch("src.route_navigator.pydirectinput") as mock_pdi:
+
+        step = {
+            "action": "click_delirium_statue",
+            "search_attempts": 2,
+            "approach_wait": 0.0,
+            "loot_drop_delay": 0.05,
+            "require_loot_proximity": True,
+            "max_loot_distance": 35.0,
+            "walk_to_loot_if_far": True,
+            "loot_pos": [131.0, 62.0],
+        }
+        res = nav._execute_zone_routine_step(step, {}, zone_label="PINK DOT #7")
+        assert res is True
+        mock_walk_fn.assert_called_once()
+        mock_locate.assert_called()
+        mock_pdi.click.assert_called_once()
+    nav.stop()
+
+
+def test_click_delirium_statue_proximity_guard_skips_when_far_and_no_walk():
+    """Verifies that if character is far and walk is disabled, click_delirium_statue skips detection."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.latest_pos = (50.0, 50.0)  # ~82px away from (131.0, 62.0)
+
+    with patch.object(nav, "locate_delirium_statue") as mock_locate, \
+         patch("src.route_navigator.pydirectinput") as mock_pdi:
+
+        step = {
+            "action": "click_delirium_statue",
+            "search_attempts": 2,
+            "approach_wait": 0.0,
+            "loot_drop_delay": 0.05,
+            "require_loot_proximity": True,
+            "max_loot_distance": 35.0,
+            "walk_to_loot_if_far": False,
+            "loot_pos": [131.0, 62.0],
+        }
+        res = nav._execute_zone_routine_step(step, {}, zone_label="PINK DOT #7")
+        assert res is True
+        mock_locate.assert_not_called()
+        mock_pdi.click.assert_not_called()
+    nav.stop()
+
+
+def test_loot_hidden_after_sims_and_before_encounter_banner():
+    """Verifies that loot labels are hidden immediately after SIMs are pressed, and stay hidden during banner click."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.hide_loot_labels = MagicMock()
+    nav.ensure_loot_labels_visible = MagicMock()
+    nav._detect_and_click_sims = MagicMock(return_value=["sim1"])
+    nav.locate_encounter_banner = MagicMock(return_value=(500, 300))
+    nav.move_mouse_inside_game = MagicMock(return_value=(500, 300))
+
+    context = {}
+
+    # 1. Step: detect_and_click_sims
+    sim_step = {"action": "detect_and_click_sims", "priority": ["sim1"]}
+    nav._execute_zone_routine_step(sim_step, context, zone_label="TEST_ZONE")
+
+    # hide_loot_labels MUST be called after SIM detection completes
+    nav.hide_loot_labels.assert_called()
+    assert context["sims_clicked"] is True
+
+    # 2. Step: click_encounter_banner
+    nav.ensure_loot_labels_visible.reset_mock()
+    nav.hide_loot_labels.reset_mock()
+
+    banner_step = {"action": "click_encounter_banner", "approach_wait": 0.0}
+    with patch("src.route_navigator.pydirectinput.click"), \
+         patch("src.route_navigator.pydirectinput.mouseUp"):
+        nav._execute_zone_routine_step(banner_step, context, zone_label="TEST_ZONE")
+
+    # click_encounter_banner must NOT call ensure_loot_labels_visible, and must call hide_loot_labels
+    nav.ensure_loot_labels_visible.assert_not_called()
+    nav.hide_loot_labels.assert_called()
+    nav.stop()
+
+
+def test_delirium_statue_fresh_screen_detection_and_hidden_loot_labels():
+    """Verifies that click_delirium_statue locates statue fresh on screen and keeps loot labels hidden."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    nav.ensure_loot_labels_visible = MagicMock()
+    nav.locate_delirium_statue = MagicMock(return_value=(800, 350))
+    nav.move_mouse_inside_game = MagicMock(return_value=(800, 350))
+
+    with patch("src.route_navigator.pydirectinput.click"), \
+         patch("src.route_navigator.pydirectinput.mouseUp"), \
+         patch("src.route_navigator.window_focuser"):
+
+        step = {
+            "action": "click_delirium_statue",
+            "search_attempts": 2,
+            "approach_wait": 0.0,
+            "loot_drop_delay": 0.01,
+            "require_loot_proximity": False,
+        }
+        context = {}
+        res = nav._execute_zone_routine_step(step, context, zone_label="PINK DOT #7")
+
+    assert res is True
+    # locate_delirium_statue should be called fresh with portal_pos=None
+    nav.locate_delirium_statue.assert_called()
+    # Loot labels must NOT be unhidden before clicking Delirium statue
+    nav.ensure_loot_labels_visible.assert_not_called()
+    nav.stop()
+
+
+
 

@@ -12,7 +12,9 @@ import sys
 import glob
 import json
 import time
+import re
 from typing import List, Dict, Any, Optional, Tuple
+
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -28,7 +30,7 @@ from src.loot_detector import LootDetector, LootItem
 class LootItemSelectorUI:
     """Desktop GUI for selecting, cropping, editing, and correcting loot filter rules."""
 
-    def __init__(self, root: tk.Tk, initial_image: Optional[str] = None):
+    def __init__(self, root: tk.Tk, initial_image: Optional[str] = None, initial_folder: Optional[str] = None):
         self.root = root
         self.root.title("Voices - Loot Filter Builder & Template Editor")
         self.root.geometry("1340x860")
@@ -73,10 +75,24 @@ class LootItemSelectorUI:
         # Currently selected active rule in editor tab
         self.selected_rule_id: Optional[str] = None
 
+        # Folder screenshot navigation state
+        self.current_folder: Optional[str] = None
+        self.folder_images: List[str] = []
+        self.current_folder_index: int = -1
+        self.auto_test_on_switch: tk.BooleanVar = tk.BooleanVar(value=True)
+
         self._build_ui()
 
-        # Load initial image or browse most recent
-        if initial_image and os.path.exists(initial_image):
+        # Key bindings for fast screenshot navigation (<Left>/<Right> and [/])
+        self.root.bind("<Left>", lambda e: self._on_key_nav(e, "prev"))
+        self.root.bind("<Right>", lambda e: self._on_key_nav(e, "next"))
+        self.root.bind("[", lambda e: self._on_key_nav(e, "prev"))
+        self.root.bind("]", lambda e: self._on_key_nav(e, "next"))
+
+        # Load initial folder, initial image, or browse most recent
+        if initial_folder and os.path.isdir(initial_folder):
+            self.load_folder(initial_folder)
+        elif initial_image and os.path.exists(initial_image):
             self.load_image(initial_image)
         else:
             self._auto_load_recent_screenshot()
@@ -86,16 +102,32 @@ class LootItemSelectorUI:
         top_bar = ttk.Frame(self.root, padding=6)
         top_bar.pack(side=tk.TOP, fill=tk.X)
 
-        ttk.Button(top_bar, text="📁 Open Screenshot...", command=self.browse_image).pack(side=tk.LEFT, padx=4)
+        ttk.Button(top_bar, text="📁 Open File...", command=self.browse_image).pack(side=tk.LEFT, padx=3)
+        ttk.Button(top_bar, text="📂 Select Folder...", command=self.browse_folder).pack(side=tk.LEFT, padx=3)
 
-        # Quick Load Dropdown
+        # Folder Navigation (Prev / Counter / Next)
+        nav_frame = ttk.Frame(top_bar)
+        nav_frame.pack(side=tk.LEFT, padx=6)
+
+        self.btn_prev = ttk.Button(nav_frame, text="◀ Prev", width=7, command=self.show_prev_image)
+        self.btn_prev.pack(side=tk.LEFT, padx=1)
+
+        self.lbl_folder_pos = ttk.Label(nav_frame, text="[ - / - ]", font=("Segoe UI", 9, "bold"), width=9, anchor="center")
+        self.lbl_folder_pos.pack(side=tk.LEFT, padx=3)
+
+        self.btn_next = ttk.Button(nav_frame, text="Next ▶", width=7, command=self.show_next_image)
+        self.btn_next.pack(side=tk.LEFT, padx=1)
+
+        # Quick Load / File Dropdown
         self.recent_combo_var = tk.StringVar()
-        self.recent_combo = ttk.Combobox(top_bar, textvariable=self.recent_combo_var, state="readonly", width=45)
+        self.recent_combo = ttk.Combobox(top_bar, textvariable=self.recent_combo_var, state="readonly", width=40)
         self.recent_combo.pack(side=tk.LEFT, padx=6)
         self.recent_combo.bind("<<ComboboxSelected>>", self._on_recent_selected)
-        self._refresh_recent_screenshots_list()
 
-        ttk.Button(top_bar, text="🔄 Refresh", command=self._refresh_recent_screenshots_list).pack(side=tk.LEFT, padx=2)
+        ttk.Button(top_bar, text="🔄 Refresh", command=self.refresh_current_folder).pack(side=tk.LEFT, padx=2)
+
+        # Auto-Test rules on image switch checkbox
+        ttk.Checkbutton(top_bar, text="Auto-Test on Switch", variable=self.auto_test_on_switch).pack(side=tk.LEFT, padx=8)
 
         # Zoom Controls
         zoom_frame = ttk.Frame(top_bar)
@@ -604,6 +636,10 @@ class LootItemSelectorUI:
             self.status_var.set("Rule deleted.")
             self.test_detection_on_current_image()
 
+    def _natural_sort_key(self, s: str):
+        """Natural sorting key: e.g. Screenshot 2.png comes before Screenshot 10.png."""
+        return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
+
     def _refresh_recent_screenshots_list(self):
         """Scans loot_debug, scratch, templates for recent png/jpg files."""
         patterns = [
@@ -619,36 +655,193 @@ class LootItemSelectorUI:
             files.extend(glob.glob(p, recursive=True))
         files.sort(key=lambda f: os.path.getmtime(f) if os.path.exists(f) else 0, reverse=True)
         self.recent_files = files[:40]
-        display_names = [os.path.basename(f) for f in self.recent_files]
+        display_names = [f"[{i + 1}/{len(self.recent_files)}] {os.path.basename(f)}" for i, f in enumerate(self.recent_files)]
         self.recent_combo["values"] = display_names
         if display_names and not self.current_image_path:
             self.recent_combo.current(0)
+            if hasattr(self, "lbl_folder_pos"):
+                self.lbl_folder_pos.config(text=f"[ 1 / {len(self.recent_files)} ]")
 
     def _auto_load_recent_screenshot(self):
+        self._refresh_recent_screenshots_list()
         if getattr(self, "recent_files", None) and len(self.recent_files) > 0:
-            self.load_image(self.recent_files[0])
+            first_file = self.recent_files[0]
+            if os.path.exists(first_file):
+                self.load_image(first_file)
 
     def _on_recent_selected(self, event=None):
         idx = self.recent_combo.current()
-        if 0 <= idx < len(self.recent_files):
+        if self.folder_images:
+            if 0 <= idx < len(self.folder_images):
+                self.load_image_by_index(idx)
+        elif getattr(self, "recent_files", None) and 0 <= idx < len(self.recent_files):
             self.load_image(self.recent_files[idx])
 
+    def _on_key_nav(self, event, direction: str):
+        """Handles Left/Right arrow and bracket navigation, ignoring when typing in entry widgets."""
+        focused = self.root.focus_get()
+        if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text, ttk.Combobox, ttk.Spinbox)):
+            return
+        if direction == "prev":
+            self.show_prev_image()
+        elif direction == "next":
+            self.show_next_image()
+
+    def browse_folder(self, folder_path: Optional[str] = None):
+        """Opens directory selection dialog and loads screenshots in that folder."""
+        if not folder_path:
+            init_dir = self.current_folder
+            if not init_dir and self.current_image_path:
+                init_dir = os.path.dirname(self.current_image_path)
+            if not init_dir or not os.path.isdir(init_dir):
+                init_dir = os.getcwd()
+            folder_path = filedialog.askdirectory(
+                title="Select Folder Containing Screenshots",
+                initialdir=init_dir
+            )
+        if folder_path:
+            self.load_folder(folder_path)
+
+    def load_folder(self, folder_path: str, select_path: Optional[str] = None) -> bool:
+        """Loads all screenshot images from folder_path, naturally sorted, and displays one."""
+        if not os.path.isdir(folder_path):
+            return False
+
+        valid_exts = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
+        try:
+            entries = os.listdir(folder_path)
+        except Exception as e:
+            messagebox.showerror("Folder Error", f"Failed to read directory:\n{folder_path}\n{e}")
+            return False
+
+        image_files = [
+            os.path.join(folder_path, fname)
+            for fname in entries
+            if fname.lower().endswith(valid_exts) and os.path.isfile(os.path.join(folder_path, fname))
+        ]
+
+        if not image_files:
+            messagebox.showinfo("No Images Found", f"No screenshots ({', '.join(valid_exts)}) found in:\n{folder_path}")
+            return False
+
+        # Sort naturally (e.g. 1, 2, 10 instead of 1, 10, 2)
+        image_files.sort(key=lambda p: self._natural_sort_key(os.path.basename(p)))
+
+        self.current_folder = os.path.abspath(folder_path)
+        self.folder_images = [os.path.abspath(p) for p in image_files]
+
+        # Update dropdown values
+        display_names = [
+            f"[{i + 1}/{len(self.folder_images)}] {os.path.basename(p)}"
+            for i, p in enumerate(self.folder_images)
+        ]
+        self.recent_combo["values"] = display_names
+
+        # Determine starting index
+        target_idx = 0
+        if select_path:
+            abs_select = os.path.abspath(select_path)
+            for i, p in enumerate(self.folder_images):
+                if p == abs_select:
+                    target_idx = i
+                    break
+
+        self.load_image_by_index(target_idx)
+        return True
+
+    def load_image_by_index(self, idx: int, run_test: Optional[bool] = None):
+        """Loads the screenshot at index idx from self.folder_images."""
+        if not self.folder_images:
+            return
+        idx = max(0, min(len(self.folder_images) - 1, idx))
+        self.current_folder_index = idx
+        path = self.folder_images[idx]
+
+        if not self._load_image_file(path):
+            return
+
+        total = len(self.folder_images)
+        if hasattr(self, "lbl_folder_pos"):
+            self.lbl_folder_pos.config(text=f"[ {idx + 1} / {total} ]")
+
+        if hasattr(self, "recent_combo"):
+            self.recent_combo.current(idx)
+
+        folder_name = os.path.basename(self.current_folder) if self.current_folder else ""
+        self.root.title(f"Voices - Loot Filter Builder & Template Editor — [{idx + 1}/{total}] {os.path.basename(path)}")
+
+        should_test = self.auto_test_on_switch.get() if run_test is None else run_test
+        if should_test:
+            self.test_detection_on_current_image()
+
+    def show_prev_image(self):
+        """Moves to previous image in the folder with wrap-around."""
+        if not self.folder_images:
+            return
+        new_idx = (self.current_folder_index - 1) % len(self.folder_images)
+        self.load_image_by_index(new_idx)
+
+    def show_next_image(self):
+        """Moves to next image in the folder with wrap-around."""
+        if not self.folder_images:
+            return
+        new_idx = (self.current_folder_index + 1) % len(self.folder_images)
+        self.load_image_by_index(new_idx)
+
+    def refresh_current_folder(self):
+        """Refreshes the current folder's images or scans recent screenshots."""
+        if self.current_folder and os.path.isdir(self.current_folder):
+            curr_path = self.folder_images[self.current_folder_index] if (0 <= self.current_folder_index < len(self.folder_images)) else None
+            self.load_folder(self.current_folder, select_path=curr_path)
+        else:
+            self._refresh_recent_screenshots_list()
+
     def browse_image(self):
+        init_dir = self.current_folder
+        if not init_dir and self.current_image_path:
+            init_dir = os.path.dirname(self.current_image_path)
+        if not init_dir or not os.path.isdir(init_dir):
+            init_dir = os.getcwd()
         path = filedialog.askopenfilename(
             title="Select Game Screenshot",
-            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp"), ("All Files", "*.*")]
+            initialdir=init_dir,
+            filetypes=[("Image Files", "*.png *.jpg *.jpeg *.bmp *.webp"), ("All Files", "*.*")]
         )
         if path:
             self.load_image(path)
 
-    def load_image(self, path: str):
+    def load_image(self, path: str, sync_folder: bool = True):
         if not os.path.exists(path):
             messagebox.showerror("File Error", f"Cannot find image: {path}")
             return
+
+        abs_path = os.path.abspath(path)
+        parent_dir = os.path.dirname(abs_path)
+
+        if sync_folder:
+            # If image is in currently loaded folder, switch to it
+            if self.current_folder and os.path.abspath(self.current_folder) == parent_dir and self.folder_images:
+                for i, p in enumerate(self.folder_images):
+                    if p == abs_path:
+                        self.load_image_by_index(i)
+                        return
+            # Otherwise load the parent folder and select this file
+            if os.path.isdir(parent_dir):
+                if self.load_folder(parent_dir, select_path=abs_path):
+                    return
+
+        # Fallback to loading just the single file
+        self._load_image_file(abs_path)
+
+    def _load_image_file(self, path: str) -> bool:
+        """Decodes image from path and updates canvas display."""
+        if not os.path.exists(path):
+            messagebox.showerror("File Error", f"Cannot find image: {path}")
+            return False
         img = cv2.imread(path)
         if img is None:
             messagebox.showerror("Image Error", f"Failed to decode image: {path}")
-            return
+            return False
         self.current_image_path = path
         self.cv_image = img
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -659,6 +852,7 @@ class LootItemSelectorUI:
         self.highlighted_detected_item = None
         self.fit_to_window()
         self.status_var.set(f"Loaded '{os.path.basename(path)}' ({img.shape[1]}x{img.shape[0]} px)")
+        return True
 
     def fit_to_window(self):
         if self.pil_image is None:
@@ -1169,10 +1363,11 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Loot Item Selector & Filter Builder UI")
     parser.add_argument("--input", "-i", help="Initial screenshot image path to load.")
+    parser.add_argument("--folder", "-f", help="Folder containing screenshots to load.")
     args = parser.parse_args()
 
     root = tk.Tk()
-    app = LootItemSelectorUI(root, initial_image=args.input)
+    app = LootItemSelectorUI(root, initial_image=args.input, initial_folder=args.folder)
     root.mainloop()
 
 

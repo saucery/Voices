@@ -528,10 +528,87 @@ def test_encounter_banner_and_sims_toggle_loot_visibility():
         success = nav._execute_zone_routine_step(step, context, zone_label="TEST")
 
     assert success is True
-    assert "ensure_visible" in z_actions
+    # Encounter banner must keep loot labels hidden so minimap is not obscured
+    assert "ensure_visible" not in z_actions
     assert "hide" in z_actions
-    # Ensure visible was called before hide
-    assert z_actions.index("ensure_visible") < z_actions.index("hide")
+
+
+def test_loot_item_selector_natural_sort_and_folder_navigation(tmp_path):
+    """Verifies natural numerical sorting, folder scanning, Prev/Next navigation, and auto-testing in LootItemSelectorUI."""
+    import tkinter as tk
+    from tools.loot_item_selector_ui import LootItemSelectorUI
+
+    # Create dummy images in a folder
+    img_names = ["screen_10.png", "screen_1.png", "screen_2.png", "ignore.txt", "screen_20.jpg"]
+    dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
+    for name in img_names:
+        file_path = tmp_path / name
+        if name.endswith((".png", ".jpg")):
+            cv2.imwrite(str(file_path), dummy_img)
+        else:
+            file_path.write_text("text")
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        ui = LootItemSelectorUI(root, initial_image=None)
+
+        # 1. Test natural sorting
+        keys = sorted(["img10.png", "img1.png", "img2.png"], key=ui._natural_sort_key)
+        assert keys == ["img1.png", "img2.png", "img10.png"]
+
+        # 2. Test load_folder
+        loaded = ui.load_folder(str(tmp_path))
+        assert loaded is True
+        assert len(ui.folder_images) == 4  # ignores .txt
+
+        # 3. Verify natural order of loaded images
+        basenames = [os.path.basename(p) for p in ui.folder_images]
+        assert basenames == ["screen_1.png", "screen_2.png", "screen_10.png", "screen_20.jpg"]
+        assert ui.current_folder_index == 0
+
+        # 4. Test Next and Prev navigation with wrap-around
+        ui.show_next_image()
+        assert ui.current_folder_index == 1
+        assert os.path.basename(ui.folder_images[ui.current_folder_index]) == "screen_2.png"
+
+        ui.show_next_image()
+        assert ui.current_folder_index == 2
+
+        ui.show_prev_image()
+        assert ui.current_folder_index == 1
+
+        ui.show_prev_image()
+        assert ui.current_folder_index == 0
+
+        # Prev from index 0 wraps to end
+        ui.show_prev_image()
+        assert ui.current_folder_index == 3
+        assert os.path.basename(ui.folder_images[ui.current_folder_index]) == "screen_20.jpg"
+
+        # Next from last wraps to beginning
+        ui.show_next_image()
+        assert ui.current_folder_index == 0
+        assert os.path.basename(ui.folder_images[ui.current_folder_index]) == "screen_1.png"
+
+        # 5. Test auto-test trigger
+        with patch.object(ui, "test_detection_on_current_image") as mock_test:
+            ui.auto_test_on_switch.set(True)
+            ui.show_next_image()
+            mock_test.assert_called_once()
+
+        with patch.object(ui, "test_detection_on_current_image") as mock_test:
+            ui.auto_test_on_switch.set(False)
+            ui.show_next_image()
+            mock_test.assert_not_called()
+
+        # 6. Test load_image with sync_folder
+        target_img = str(tmp_path / "screen_10.png")
+        ui.load_image(target_img, sync_folder=True)
+        assert ui.current_folder_index == 2
+        assert os.path.basename(ui.folder_images[ui.current_folder_index]) == "screen_10.png"
+    finally:
+        root.destroy()
 
 
 

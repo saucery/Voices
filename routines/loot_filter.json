@@ -267,7 +267,7 @@
       "priority": 1,
       "type": "template",
       "template_file": "ui/loot_templates/orbofchance.png",
-      "threshold": 0.5,
+      "threshold": 0.661,
       "description": "Visual template matcher for OrbOfChance"
     },
     {
@@ -319,6 +319,46 @@
       "template_file": "ui/loot_templates/exceptionalrare.png",
       "threshold": 0.6581395348837209,
       "description": "Visual template matcher for ExceptionalRare"
+    },
+    {
+      "id": "template_perfectregalorb_7833",
+      "name": "PerfectRegalOrb",
+      "enabled": true,
+      "priority": 1,
+      "type": "template",
+      "template_file": "ui/loot_templates/perfectregalorb.png",
+      "threshold": 0.672,
+      "description": "Visual template matcher for PerfectRegalOrb"
+    },
+    {
+      "id": "template_exceptionalrare_62",
+      "name": "ExceptionalRare",
+      "enabled": true,
+      "priority": 1,
+      "type": "template",
+      "template_file": "ui/loot_templates/exceptionalrare.png",
+      "threshold": 0.619,
+      "description": "Visual template matcher for ExceptionalRare"
+    },
+    {
+      "id": "template_exceptionalrare2_5134",
+      "name": "ExceptionalRare2",
+      "enabled": true,
+      "priority": 1,
+      "type": "template",
+      "template_file": "ui/loot_templates/exceptionalrare2.png",
+      "threshold": 0.5852713178294574,
+      "description": "Visual template matcher for ExceptionalRare2"
+    },
+    {
+      "id": "template_emerald_5292",
+      "name": "Emerald",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/emerald.png",
+      "threshold": 0.697,
+      "description": "Visual template matcher for Emerald"
     },
     {
       "id": "template_tabletunique_8743",
@@ -445,8 +485,28 @@
       "priority": 2,
       "type": "template",
       "template_file": "ui/loot_templates/ruby.png",
-      "threshold": 0.6302325581395349,
+      "threshold": 0.83,
       "description": "Visual template matcher for Ruby"
+    },
+    {
+      "id": "template_perfectorbofaugumentation_8085",
+      "name": "PerfectOrbOfAugumentation",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/perfectorbofaugumentation.png",
+      "threshold": 0.6178294573643411,
+      "description": "Visual template matcher for PerfectOrbOfAugumentation"
+    },
+    {
+      "id": "template_gemcuttersprism_8133",
+      "name": "GemCuttersPrism",
+      "enabled": true,
+      "priority": 2,
+      "type": "template",
+      "template_file": "ui/loot_templates/gemcuttersprism.png",
+      "threshold": 0.6317829457364341,
+      "description": "Visual template matcher for GemCuttersPrism"
     },
     {
       "id": "template_vaalorb_4814",
@@ -455,8 +515,18 @@
       "priority": 3,
       "type": "template",
       "template_file": "ui/loot_templates/vaalorb.png",
-      "threshold": 0.665,
+      "threshold": 0.714,
       "description": "Visual template matcher for VaalOrb"
+    },
+    {
+      "id": "template_greaterregalorb_8195",
+      "name": "GreaterRegalOrb",
+      "enabled": true,
+      "priority": 3,
+      "type": "template",
+      "template_file": "ui/loot_templates/greaterregalorb.png",
+      "threshold": 0.489,
+      "description": "Visual template matcher for GreaterRegalOrb"
     }
   ]
 }

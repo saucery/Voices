@@ -320,6 +320,8 @@ class RouteNavigator(
         self.last_map_device_pos: Optional[Tuple[int, int]] = None
         self.traverse_match_threshold: float = 0.60
         self.hideout_portal_match_threshold: float = 0.65
+        self.portal_entry_hold_w_seconds: float = 1.3
+        self.portal_entry_settle_seconds: float = 1.5
 
         self.tier15_map_template_file: str = "templates/ui/tier15_map.png"
         self.tier15_map_tpl: Optional[np.ndarray] = None
@@ -387,6 +389,8 @@ class RouteNavigator(
                 self.sim_max_click_attempts = int(ap_cfg.get("sim_max_click_attempts", self.sim_max_click_attempts))
                 self.sim_verify_click_enabled = bool(ap_cfg.get("sim_verify_click_enabled", self.sim_verify_click_enabled))
                 self.reclick_after_approach = bool(ap_cfg.get("reclick_after_approach", self.reclick_after_approach))
+                self.portal_entry_hold_w_seconds = float(ap_cfg.get("portal_entry_hold_w_seconds", self.portal_entry_hold_w_seconds))
+                self.portal_entry_settle_seconds = float(ap_cfg.get("portal_entry_settle_seconds", self.portal_entry_settle_seconds))
                 self.pink_dot_stop_seconds = float(ap_cfg.get("pink_dot_stop_seconds", self.pink_dot_stop_seconds))
                 self.sim1_template_file = ap_cfg.get("sim1_template_file", self.sim1_template_file)
                 self.sim2_template_file = ap_cfg.get("sim2_template_file", self.sim2_template_file)

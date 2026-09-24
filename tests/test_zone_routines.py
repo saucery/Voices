@@ -2236,11 +2236,15 @@ def test_click_hideout_portal_and_zone_transition():
             verify_transition=True,
             auto_start_route=True,
             start_pink_dot=1,
+            settle_wait=0.01,
+            hold_w_seconds=0.01,
         )
         assert ok_live is True
         assert nav.in_hideout is False
         mock_pdi.mouseDown.assert_called_once_with(button="left")
         mock_pdi.mouseUp.assert_called_once_with(button="left")
+        mock_pdi.keyDown.assert_any_call("w")
+        mock_pdi.keyUp.assert_any_call("w")
         mock_set_pink.assert_called_once_with(1)
         mock_start.assert_called_once()
 

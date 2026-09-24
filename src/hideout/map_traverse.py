@@ -531,12 +531,15 @@ class HideoutTraverseMixin:
         verify_transition: bool = True,
         auto_start_route: bool = True,
         start_pink_dot: int = 1,
+        hold_w_seconds: Optional[float] = None,
+        settle_wait: Optional[float] = None,
         dry_run: bool = False,
     ) -> bool:
         """
         Polls for spawned Map Device portal(s) in the hideout, left-clicks one of the visible
         portals to enter the danger zone (Simulacrum), waits for area transition (loading screen),
-        and automatically starts the standard navigation routine towards Pink Dot #1 / Room 1.
+        holds 'W' for configured duration (1.3s default) to step away from portal spawn so player
+        coordinates can be localized, and optionally starts the standard navigation routine.
         """
         self.release_all_keys()
         self.status_message = "Looking for Portals..."
@@ -597,6 +600,37 @@ class HideoutTraverseMixin:
                 _log("  [ZONE TRANSITION] Area transition timeout elapsed. Assuming character entered danger zone.")
 
         self.in_hideout = False
+
+        if stop_handler.is_stopped():
+            return False
+
+        # Post-transition settle: allow loading screen to complete and game world to be active
+        eff_settle = settle_wait if settle_wait is not None else getattr(self, "portal_entry_settle_seconds", 1.5)
+        if eff_settle > 0:
+            _log(f"  [ZONE TRANSITION] Allowing {eff_settle:.1f}s for loading screen to complete...")
+            time.sleep(eff_settle)
+
+        if stop_handler.is_stopped():
+            return False
+
+        # Keep 'W' key held for 1.3 seconds upon entering enemy territory to move away from portal spawn
+        eff_hold_w = hold_w_seconds if hold_w_seconds is not None else getattr(self, "portal_entry_hold_w_seconds", 1.3)
+        if eff_hold_w > 0:
+            _log(f"  [PORTAL ENTRY] Holding 'W' for {eff_hold_w:.1f}s to move character away from portal spawn for reliable localization...")
+            self.status_message = f"Entering Zone: Moving Forward ({eff_hold_w:.1f}s)..."
+            window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+            if pydirectinput:
+                try:
+                    pydirectinput.keyDown("w")
+                    time.sleep(eff_hold_w)
+                    pydirectinput.keyUp("w")
+                except Exception as e:
+                    _log(f"  [PORTAL ENTRY WARNING] Error while holding 'W' key: {e}")
+            else:
+                time.sleep(eff_hold_w)
+            self.release_all_keys()
+            time.sleep(0.2)
+            _log(f"  [PORTAL ENTRY] 'W' key released after {eff_hold_w:.1f}s. Character clear of portal spawn.")
 
         if auto_start_route:
             _log(f"  [ROUTINE START] Starting standard navigation routine targeting Pink Dot #{start_pink_dot}...")

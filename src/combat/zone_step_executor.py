@@ -557,6 +557,8 @@ class ZoneStepExecutorMixin:
                 verify_transition=verify_trans,
                 auto_start_route=auto_start,
                 start_pink_dot=start_pink,
+                hold_w_seconds=step.get("hold_w_seconds"),
+                settle_wait=step.get("settle_wait"),
             )
 
         elif action in ("hideout_full_cycle", "run_hideout_full_cycle"):

@@ -178,7 +178,7 @@ class RouteNavigator:
         self.persistent_combat_interval: float = 0.65
         self.persistent_right_click_active: bool = False
         self.persistent_right_click_interval: float = 0.65
-        self.suppress_combat_during_approach: bool = True
+        self.suppress_combat_during_approach: bool = False
         self.is_approaching_interactable: bool = False
         self._combat_thread: Optional[threading.Thread] = None
         self.is_holding_mouse: bool = False
@@ -212,6 +212,83 @@ class RouteNavigator:
         self.delirium_fire_template_file: str = "templates/ui/delirium_fire.png"
         self.delirium_match_threshold: float = 0.60
         self.delirium_templates: List[Tuple[np.ndarray, np.ndarray]] = []
+
+        # Hideout & Stash Interaction State
+        self.in_hideout: bool = False
+        self.last_hideout_confidence: float = 0.0
+        self.stash_label_template_file: str = "templates/ui/stash_label.png"
+        self.stash_full_template_file: str = "templates/ui/stash_full.png"
+        self.stash_match_threshold: float = 0.58
+        self.stash_label_tpl: Optional[np.ndarray] = None
+        self.stash_full_tpl: Optional[np.ndarray] = None
+
+        self.inventory_title_template_file: str = "templates/ui/inventory_title.png"
+        self.inventory_close_template_file: str = "templates/ui/inventory_close.png"
+        self.inventory_match_threshold: float = 0.58
+        self.inventory_title_tpl: Optional[np.ndarray] = None
+        self.inventory_close_tpl: Optional[np.ndarray] = None
+
+        self.hideout_layout_template_file: str = "templates/ui/hideout_layout.png"
+        self.hideout_match_threshold: float = 0.50
+        self.hideout_layout_tpl: Optional[np.ndarray] = None
+        self.hideout_detection_mode: str = "minimap_or_map_device"
+        self.inventory_screenshots_dir: str = "inventory_screenshots"
+
+        # Atlas Map Device & Simulacrum Map Selection State
+        self.map_device_label_template_file: str = "templates/ui/map_device_label.png"
+        self.map_device_full_template_file: str = "templates/ui/map_device_full.png"
+        self.map_device_match_threshold: float = 0.68
+        self.map_device_click_y_offset_px: int = 0
+        self.map_device_label_tpl: Optional[np.ndarray] = None
+        self.map_device_full_tpl: Optional[np.ndarray] = None
+
+        self.simulacrum_icon_template_file: str = "templates/ui/simulacrum_icon.png"
+        self.simulacrum_medal_template_file: str = "templates/ui/simulacrum_medal.png"
+        self.simulacrum_node_template_file: str = "templates/ui/simulacrum_node_full.png"
+        self.simulacrum_circle_template_file: str = "templates/ui/simulacrum_circle.png"
+        self.simulacrum_node_v1_template_file: str = "templates/ui/simulacrum_node_v1.png"
+        self.simulacrum_node_v2_template_file: str = "templates/ui/simulacrum_node_v2.png"
+        self.simulacrum_node_v3_template_file: str = "templates/ui/simulacrum_node_v3.png"
+        self.simulacrum_match_threshold: float = 0.78
+        self.simulacrum_click_y_offset: float = 26.0
+        self.simulacrum_icon_tpl: Optional[np.ndarray] = None
+        self.simulacrum_medal_tpl: Optional[np.ndarray] = None
+        self.simulacrum_node_tpl: Optional[np.ndarray] = None
+        self.simulacrum_circle_tpl: Optional[np.ndarray] = None
+        self.simulacrum_node_v1_tpl: Optional[np.ndarray] = None
+        self.simulacrum_node_v2_tpl: Optional[np.ndarray] = None
+        self.simulacrum_node_v3_tpl: Optional[np.ndarray] = None
+
+        self.delusion_popup_template_file: str = "templates/ui/delusion_popup.png"
+        self.delusion_popup_full_template_file: str = "templates/ui/delusion_popup_full.png"
+        self.delusion_4square_template_file: str = "templates/ui/delusion_4square_slots.png"
+        self.delusion_traverse_template_file: str = "templates/ui/traverse_button.png"
+        self.delusion_title_template_file: str = "templates/ui/delusion_title_banner.png"
+        self.delusion_popup_tpl: Optional[np.ndarray] = None
+        self.delusion_4square_tpl: Optional[np.ndarray] = None
+        self.delusion_traverse_tpl: Optional[np.ndarray] = None
+        self.delusion_title_tpl: Optional[np.ndarray] = None
+        self.delusion_popup_match_threshold: float = 0.55
+        self.delusion_detected_slots: List[Tuple[int, int]] = []
+        self.delusion_detected_traverse: Optional[Tuple[int, int]] = None
+        self.last_map_device_pos: Optional[Tuple[int, int]] = None
+        self.traverse_match_threshold: float = 0.60
+        self.hideout_portal_match_threshold: float = 0.65
+
+        self.tier15_map_template_file: str = "templates/ui/tier15_map.png"
+        self.tier15_map_tpl: Optional[np.ndarray] = None
+        self.tier15_map_match_threshold: float = 0.60
+
+        self.map_node_completed_template_file: str = "templates/ui/map_node_completed.png"
+        self.map_node_accessible_template_file: str = "templates/ui/map_node_accessible.png"
+        self.map_node_inaccessible_template_file: str = "templates/ui/map_node_inaccessible.png"
+        self.map_node_completed_tpl: Optional[np.ndarray] = None
+        self.map_node_accessible_tpl: Optional[np.ndarray] = None
+        self.map_node_inaccessible_tpl: Optional[np.ndarray] = None
+        self.sim_require_green_connection: bool = True
+
+        self.waiting_for_user_key: bool = False
+        self.waiting_user_key_name: str = "f5"
 
         # Loot Pickup State & Configuration
         self.loot1_template_file: str = "ui/loot1.png"
@@ -278,6 +355,15 @@ class RouteNavigator:
                 self.persistent_combat_interval = float(ap_cfg.get("persistent_combat_interval_seconds", ap_cfg.get("persistent_right_click_interval", self.persistent_combat_interval)))
                 self.persistent_right_click_interval = self.persistent_combat_interval
                 self.suppress_combat_during_approach = bool(ap_cfg.get("suppress_combat_during_approach", self.suppress_combat_during_approach))
+                self.hideout_detection_mode = str(ap_cfg.get("hideout_detection_mode", self.hideout_detection_mode)).lower().strip()
+                self.hideout_match_threshold = float(ap_cfg.get("hideout_match_threshold", self.hideout_match_threshold))
+                self.map_device_match_threshold = float(ap_cfg.get("map_device_match_threshold", self.map_device_match_threshold))
+                self.map_device_click_y_offset_px = int(ap_cfg.get("map_device_click_y_offset_px", self.map_device_click_y_offset_px))
+                self.simulacrum_click_y_offset = float(ap_cfg.get("simulacrum_click_y_offset", self.simulacrum_click_y_offset))
+                self.simulacrum_match_threshold = float(ap_cfg.get("simulacrum_match_threshold", self.simulacrum_match_threshold))
+                self.simulacrum_node_v1_template_file = ap_cfg.get("simulacrum_node_v1_template_file", self.simulacrum_node_v1_template_file)
+                self.simulacrum_node_v2_template_file = ap_cfg.get("simulacrum_node_v2_template_file", self.simulacrum_node_v2_template_file)
+                self.simulacrum_node_v3_template_file = ap_cfg.get("simulacrum_node_v3_template_file", self.simulacrum_node_v3_template_file)
                 self.loot1_template_file = ap_cfg.get("loot1_template_file", self.loot1_template_file)
                 self.loot_match_threshold = float(ap_cfg.get("loot_match_threshold", self.loot_match_threshold))
                 self.loot_pickup_wait_seconds = float(ap_cfg.get("loot_pickup_wait_seconds", self.loot_pickup_wait_seconds))
@@ -311,6 +397,7 @@ class RouteNavigator:
         self._load_sim_templates()
         self._load_loot_template()
         self._load_delirium_and_portal_templates()
+        self._load_stash_and_inventory_templates()
         self.loot_detector = LootDetector(getattr(self, "loot_filter_file", "routines/loot_filter.json"))
         if hasattr(self.loot_detector, "save_pre_loot_screenshot"):
             self.save_pre_loot_screenshot = bool(self.save_pre_loot_screenshot or self.loot_detector.save_pre_loot_screenshot)
@@ -388,6 +475,194 @@ class RouteNavigator:
                         d_mask = np.uint8(((d_img[:, :, 0] > 10) | (d_img[:, :, 1] > 10) | (d_img[:, :, 2] > 10)) * 255)
                         self.delirium_templates.append((name, d_img, d_mask))
                         loaded_candidates.add(cand)
+                        break
+
+    def _load_stash_and_inventory_templates(self, force_reload: bool = False):
+        """Loads reference templates for Hideout Stash and Inventory window detection."""
+        if force_reload:
+            self.stash_label_tpl = None
+            self.stash_full_tpl = None
+            self.inventory_title_tpl = None
+            self.inventory_close_tpl = None
+            self.hideout_layout_tpl = None
+            self.map_device_label_tpl = None
+            self.map_device_full_tpl = None
+            self.simulacrum_icon_tpl = None
+            self.simulacrum_medal_tpl = None
+            self.simulacrum_node_tpl = None
+            self.simulacrum_circle_tpl = None
+            self.simulacrum_node_v1_tpl = None
+            self.simulacrum_node_v2_tpl = None
+            self.simulacrum_node_v3_tpl = None
+            self.delusion_popup_tpl = None
+            self.delusion_4square_tpl = None
+            self.delusion_traverse_tpl = None
+            self.delusion_title_tpl = None
+            self.tier15_map_tpl = None
+
+        if self.stash_label_tpl is None:
+            for cand in [self.stash_label_template_file, "templates/ui/stash_label.png", "ui/stash_label.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.stash_label_tpl = img
+                        break
+
+        if self.stash_full_tpl is None:
+            for cand in [self.stash_full_template_file, "templates/ui/stash_full.png", "ui/stash_full.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.stash_full_tpl = img
+                        break
+
+        if self.inventory_title_tpl is None:
+            for cand in [self.inventory_title_template_file, "templates/ui/inventory_title.png", "ui/inventory_title.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.inventory_title_tpl = img
+                        break
+
+        if self.inventory_close_tpl is None:
+            for cand in [self.inventory_close_template_file, "templates/ui/inventory_close.png", "ui/inventory_close.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.inventory_close_tpl = img
+                        break
+
+        if self.hideout_layout_tpl is None:
+            for cand in [self.hideout_layout_template_file, "templates/ui/hideout_layout.png", "ui/hideout_layout.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.hideout_layout_tpl = img
+                        break
+
+        if self.map_device_label_tpl is None:
+            for cand in [self.map_device_label_template_file, "templates/ui/map_device_label.png", "ui/map_device_label.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.map_device_label_tpl = img
+                        break
+
+        if self.map_device_full_tpl is None:
+            for cand in [self.map_device_full_template_file, "templates/ui/map_device_full.png", "ui/map_device_full.png", "templates/ui/map_device.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.map_device_full_tpl = img
+                        break
+
+        if self.simulacrum_icon_tpl is None:
+            for cand in [self.simulacrum_icon_template_file, "templates/ui/simulacrum_icon.png", "ui/simulacrum_icon.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.simulacrum_icon_tpl = img
+                        break
+
+        if self.simulacrum_medal_tpl is None:
+            for cand in [self.simulacrum_medal_template_file, "templates/ui/simulacrum_medal.png", "ui/simulacrum_medal.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.simulacrum_medal_tpl = img
+                        break
+
+        if self.simulacrum_node_tpl is None:
+            for cand in [self.simulacrum_node_template_file, "templates/ui/simulacrum_node_full.png", "ui/simulacrum_node_full.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.simulacrum_node_tpl = img
+                        break
+
+        if self.simulacrum_circle_tpl is None:
+            for cand in [self.simulacrum_circle_template_file, "templates/ui/simulacrum_circle.png", "ui/simulacrum_circle.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.simulacrum_circle_tpl = img
+                        break
+
+        for attr, fname, cands in [
+            ("simulacrum_node_v1_tpl", self.simulacrum_node_v1_template_file, ["templates/ui/simulacrum_node_v1.png", "ui/simulacrum_node_v1.png"]),
+            ("simulacrum_node_v2_tpl", self.simulacrum_node_v2_template_file, ["templates/ui/simulacrum_node_v2.png", "ui/simulacrum_node_v2.png"]),
+            ("simulacrum_node_v3_tpl", self.simulacrum_node_v3_template_file, ["templates/ui/simulacrum_node_v3.png", "ui/simulacrum_node_v3.png"]),
+        ]:
+            if getattr(self, attr, None) is None:
+                for cand in [fname] + cands:
+                    if cand and os.path.exists(cand):
+                        img = cv2.imread(cand)
+                        if img is not None:
+                            setattr(self, attr, img[:, :, :3] if img.shape[-1] == 4 else img)
+                            break
+
+        if self.delusion_popup_tpl is None:
+            for cand in [self.delusion_popup_template_file, getattr(self, "delusion_popup_full_template_file", None), "templates/ui/delusion_popup_full.png", "templates/ui/delusion_popup.png", "ui/delusion_popup.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.delusion_popup_tpl = img
+                        break
+
+        if getattr(self, "delusion_4square_tpl", None) is None:
+            for cand in [getattr(self, "delusion_4square_template_file", None), "templates/ui/delusion_4square_slots.png", "ui/delusion_4square_slots.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.delusion_4square_tpl = img
+                        break
+
+        if getattr(self, "delusion_traverse_tpl", None) is None:
+            for cand in [getattr(self, "delusion_traverse_template_file", None), "templates/ui/traverse_button.png", "ui/traverse_button.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.delusion_traverse_tpl = img
+                        break
+
+        if getattr(self, "delusion_title_tpl", None) is None:
+            for cand in [getattr(self, "delusion_title_template_file", None), "templates/ui/delusion_title_banner.png", "ui/delusion_title_banner.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.delusion_title_tpl = img
+                        break
+
+        if self.tier15_map_tpl is None:
+            for cand in [self.tier15_map_template_file, "templates/ui/tier15_map.png", "ui/tier15_map.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.tier15_map_tpl = img
+                        break
+
+        if getattr(self, "map_node_completed_tpl", None) is None:
+            for cand in [getattr(self, "map_node_completed_template_file", None), "templates/ui/map_node_completed.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.map_node_completed_tpl = img
+                        break
+
+        if getattr(self, "map_node_accessible_tpl", None) is None:
+            for cand in [getattr(self, "map_node_accessible_template_file", None), "templates/ui/map_node_accessible.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.map_node_accessible_tpl = img
+                        break
+
+        if getattr(self, "map_node_inaccessible_tpl", None) is None:
+            for cand in [getattr(self, "map_node_inaccessible_template_file", None), "templates/ui/map_node_inaccessible.png"]:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        self.map_node_inaccessible_tpl = img
                         break
 
     def load_zone_routines(self, filepath: Optional[str] = None) -> bool:
@@ -539,6 +814,9 @@ class RouteNavigator:
         Guarantees that attack execution continues during ALL events until the final destination is reached.
         If suppress_combat_during_approach is active and character is walking up to an interactable, pulses are suppressed.
         """
+        if getattr(self, "in_hideout", False):
+            return False
+
         if (not self.persistent_combat_active and not self.persistent_right_click_active and not (self.orbit_constant_right_click_enabled and self.is_orbiting)) or stop_handler.is_stopped():
             return False
 
@@ -829,6 +1107,7 @@ class RouteNavigator:
                         self._last_detected_portal_time = now
                         _log(f"\n[ENCOUNTER EARLY EXIT] Confirmed exit portal visible on screen at {portal_pos} ({elapsed_orbit:.1f}s / {duration:.1f}s)! Ending combat early to interact with Delirium statue...")
                         self.status_message = f"[{zone_label}] Early Exit (Portal Detected @ {elapsed_orbit:.1f}s)"
+                        self.disable_persistent_combat()
                         early_exit_triggered = True
                         break
 
@@ -986,6 +1265,8 @@ class RouteNavigator:
             self.is_orbiting = False
             self.current_orbit_zone = None
             self.orbit_perimeter_pts = []
+            if portal_early_exit and getattr(self, "_last_detected_portal_pos", None) is not None:
+                self.disable_persistent_combat()
 
         if early_exit_triggered:
             _log(f"    [ACTION] Early encounter exit triggered for yellow shape ({zone_id}) ({time.time() - orbit_start:.1f}s elapsed)!")
@@ -1108,6 +1389,10 @@ class RouteNavigator:
         zone: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Executes a list of configured steps for a specific pink or yellow zone."""
+        if getattr(self, "in_hideout", False):
+            _log(f"  [ROUTINE] Aborted: Character is in Hideout (Safe Zone - no combat or routines allowed).")
+            return False
+
         self._routine_did_orbit = False
         steps = routine.get("steps", [])
         routine_name = routine.get("name", zone_label)
@@ -1236,6 +1521,12 @@ class RouteNavigator:
         elif action in ("hold_mouse", "hold_key"):
             if self.has_executed_initial_hold:
                 _log(f"    [STEP] Hold action already executed once in this session. Skipping hold for {zone_label}.")
+                # Ensure persistent combat remains active throughout all rooms until Room 7 portal
+                if not self.persistent_combat_active and not getattr(self, "in_hideout", False):
+                    c_int = step.get("combat_interval") or step.get("right_click_interval") or step.get("persistent_right_click_interval")
+                    c_act = step.get("combat_action", "key")
+                    c_key = step.get("combat_key", "t")
+                    self.enable_persistent_combat(interval=c_int, action=c_act, key=c_key)
                 return True
 
             hold_k = step.get("key")
@@ -1383,6 +1674,12 @@ class RouteNavigator:
             )
             context["sims_clicked"] = len(clicked) > 0
             self.hide_loot_labels()
+            if step.get("activate_combat", False):
+                c_act = step.get("combat_action", getattr(self, "persistent_combat_action", "key"))
+                c_key = step.get("combat_key", getattr(self, "persistent_combat_key", "t"))
+                c_int = float(step.get("combat_interval", getattr(self, "persistent_combat_interval", 0.65)))
+                self.enable_persistent_combat(interval=c_int, action=c_act, key=c_key)
+                _log(f"    [COMBAT] Activated continuous '{c_key.upper()}' attack after sim selection.")
             return True
 
         elif action == "navigate_to_pink_location":
@@ -1507,7 +1804,7 @@ class RouteNavigator:
                             pydirectinput.mouseUp(button="left")
                         time.sleep(0.15)
                 context["banner_clicked"] = True
-                if step.get("activate_combat", True):
+                if step.get("activate_combat", False):
                     c_act = step.get("combat_action", getattr(self, "persistent_combat_action", "key"))
                     c_key = step.get("combat_key", getattr(self, "persistent_combat_key", "t"))
                     c_int = float(step.get("combat_interval", getattr(self, "persistent_combat_interval", 0.65)))
@@ -1661,6 +1958,84 @@ class RouteNavigator:
             if pydirectinput:
                 pydirectinput.keyUp(key)
             time.sleep(0.05)
+            return True
+
+        elif action in ("wait_for_user_key", "wait_for_key", "wait_for_user_confirmation"):
+            target_key = str(step.get("key", "f5")).lower().strip()
+            prompt = str(step.get("prompt", f"Press [{target_key.upper()}] to continue"))
+            timeout = float(step.get("timeout", 0.0))
+            return self.wait_for_user_key(key=target_key, prompt=prompt, timeout=timeout)
+
+        elif action in ("click_exit_portal", "click_portal"):
+            search_attempts = int(step.get("search_attempts", 5))
+            app_wait = float(step.get("approach_wait", 2.0))
+            return self.click_exit_portal(search_attempts=search_attempts, approach_wait=app_wait, context=context)
+
+        elif action == "click_stash":
+            search_attempts = int(step.get("search_attempts", 10))
+            timeout = float(step.get("timeout", 15.0))
+            verify_inv = bool(step.get("verify_inventory_open", True))
+            return self.click_stash(search_attempts=search_attempts, timeout=timeout, verify_inventory=verify_inv)
+
+        elif action in ("stash_inventory_items", "stash_items"):
+            exclude_cols = int(step.get("exclude_last_columns", 3))
+            close_after = bool(step.get("close_after", False))
+            return self.stash_inventory_items(exclude_last_columns=exclude_cols, close_after=close_after) >= 0
+
+        elif action in ("close_all_hideout_windows", "press_escape", "close_windows"):
+            wait_s = float(step.get("wait_seconds", 0.35))
+            return self.close_all_hideout_windows(wait_seconds=wait_s)
+
+        elif action in ("click_map_device", "interact_map_device"):
+            search_attempts = int(step.get("search_attempts", 8))
+            timeout = float(step.get("timeout", 12.0))
+            return self.click_map_device(search_attempts=search_attempts, timeout=timeout)
+
+        elif action in ("select_simulacrum_map", "open_simulacrum_map", "click_simulacrum_map"):
+            max_attempts = int(step.get("max_attempts", 5))
+            node = self.select_accessible_simulacrum_map(max_attempts=max_attempts)
+            return node is not None
+
+        elif action in ("insert_simulacrum_map", "insert_map", "insert_map_into_popup"):
+            target_slot = int(step.get("target_slot", 0))
+            method = str(step.get("method", "drag"))
+            return self.insert_map_into_simulacrum_popup(target_slot_idx=target_slot, method=method)
+
+        elif action in ("click_traverse", "click_traverse_button", "traverse"):
+            timeout = float(step.get("timeout", 5.0))
+            verify_close = bool(step.get("verify_close", True))
+            return self.click_traverse_button(timeout=timeout, verify_close=verify_close)
+
+        elif action in ("click_hideout_portal", "click_portal_to_danger_zone", "enter_portal", "enter_simulacrum_portal"):
+            search_attempts = int(step.get("search_attempts", 12))
+            timeout = float(step.get("timeout", 12.0))
+            app_wait = float(step.get("approach_wait", 3.5))
+            verify_trans = bool(step.get("verify_transition", True))
+            auto_start = bool(step.get("auto_start_route", True))
+            start_pink = int(step.get("start_pink_dot", 1))
+            return self.click_hideout_portal(
+                search_attempts=search_attempts,
+                timeout=timeout,
+                approach_wait=app_wait,
+                verify_transition=verify_trans,
+                auto_start_route=auto_start,
+                start_pink_dot=start_pink,
+            )
+
+        elif action in ("hideout_full_cycle", "run_hideout_full_cycle"):
+            traverse_and_enter = bool(step.get("traverse_and_enter", False))
+            auto_start = bool(step.get("auto_start_route", True))
+            start_pink = int(step.get("start_pink_dot", 1))
+            res = self.run_hideout_full_cycle(
+                traverse_and_enter=traverse_and_enter,
+                auto_start_route=auto_start,
+                start_pink_dot=start_pink,
+            )
+            return bool(res.get("success", False))
+
+        elif action in ("stop_combat", "disable_combat"):
+            self.disable_persistent_combat()
+            _log(f"    [COMBAT] Stopped persistent combat attacks.")
             return True
 
         elif action == "wait":
@@ -2090,6 +2465,14 @@ class RouteNavigator:
             _log("[NAVIGATOR] Cannot start: No route waypoints loaded.")
             return
 
+        if self.in_hideout or self.is_in_hideout():
+            self.in_hideout = True
+            self.status_message = "Cannot start in Hideout (Safe Zone)"
+            _log("[NAVIGATOR] Character is in Hideout (safe space). Cannot start route navigation.")
+            return
+        else:
+            self.in_hideout = False
+
         if monitor_idx is not None:
             self.monitor_idx = monitor_idx
 
@@ -2142,6 +2525,7 @@ class RouteNavigator:
         self.is_active = False
         self.is_paused = False
         self.waiting_for_green_light = False
+        self.waiting_for_user_key = False
         self.is_orbiting = False
         self.current_orbit_zone = None
         self.disable_persistent_right_click()
@@ -2233,12 +2617,13 @@ class RouteNavigator:
         """Reloads waypoints on demand and resynchronizes with character's current position."""
         success = self.movement_path.reload()
         if success:
+            self.in_hideout = False
             self.is_completed = False
             self.is_paused = False
             self.waiting_for_green_light = False
             self.is_orbiting = False
             self.current_orbit_zone = None
-            self.disable_persistent_right_click()
+            self.disable_persistent_combat()
             self.has_executed_initial_hold = False
             self.interacted_zones.clear()
             self.interacted_pink_dots.clear()
@@ -3433,6 +3818,11 @@ class RouteNavigator:
         Caches portal position so exit portal is not redundantly re-detected across search attempts.
         Automatically saves an annotated debug screenshot showing the detected statue and click position.
         """
+        # In Room 7, only stop combat if the exit portal is confirmed visible
+        portal_seen = (getattr(self, "_last_detected_portal_pos", None) is not None) or (self.locate_portal() is not None)
+        if portal_seen:
+            self.disable_persistent_combat()
+
         # Proximity Check: Only detect/click Delirium statue if character is near / at the LOOT dot
         if require_loot_proximity and loot_pos is not None:
             curr_pos = self.latest_pos or (self.last_known_pos if (time.time() - getattr(self, "last_known_time", 0)) < 2.0 else None)
@@ -3493,6 +3883,8 @@ class RouteNavigator:
 
         _log(f"    [ACTION] Clicking Statue of Delirium at screen ({statue_pos[0]}, {statue_pos[1]})...")
         self.status_message = f"[{label}] Clicking Delirium Statue..."
+        if getattr(self, "_last_detected_portal_pos", None) is not None:
+            self.disable_persistent_combat()
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
         rx, ry = self.move_mouse_inside_game(statue_pos[0], statue_pos[1])
         time.sleep(0.06)
@@ -3518,6 +3910,2918 @@ class RouteNavigator:
 
         _log(f"    [ACTION] Loot drop wait complete. Ready for loot pickup.")
         return True
+
+    def wait_for_user_key(
+        self,
+        key: str = "f5",
+        prompt: str = "Press [F5] to confirm",
+        timeout: float = 0.0,
+    ) -> bool:
+        """
+        Pauses bot execution and waits for user confirmation via key press (default: F5).
+        Allows emergency stop (F2) and active checking.
+        """
+        target_k = str(key).lower().strip()
+        self.release_all_keys()
+        self.waiting_for_user_key = True
+        self.waiting_user_key_name = target_k
+        self.status_message = f"WAITING FOR USER: {prompt}"
+        _log(f"\n[USER CONFIRMATION] >>> {prompt} (or 'F2' to halt bot)...")
+
+        # Debounce: If key was held before entering, wait for release
+        if keyboard:
+            try:
+                if keyboard.is_pressed(target_k):
+                    while keyboard.is_pressed(target_k):
+                        time.sleep(0.05)
+            except Exception:
+                pass
+
+        start_time = time.time()
+        confirmed = False
+        try:
+            while self.waiting_for_user_key:
+                if stop_handler.is_stopped() or not self.is_active:
+                    return False
+                if timeout > 0 and (time.time() - start_time) >= timeout:
+                    _log(f"  [USER CONFIRMATION] Timeout ({timeout:.1f}s) elapsed. Proceeding...")
+                    confirmed = True
+                    break
+                if keyboard:
+                    try:
+                        if keyboard.is_pressed(target_k):
+                            _log(f"  [USER CONFIRMATION] '{target_k.upper()}' pressed! Proceeding with next action.")
+                            confirmed = True
+                            break
+                    except Exception:
+                        pass
+                time.sleep(0.05)
+        finally:
+            self.waiting_for_user_key = False
+            # Wait for key release
+            if keyboard:
+                try:
+                    if keyboard.is_pressed(target_k):
+                        while keyboard.is_pressed(target_k):
+                            time.sleep(0.05)
+                except Exception:
+                    pass
+        time.sleep(0.15)
+        return confirmed
+
+    def confirm_user_key(self) -> bool:
+        """Allows visualizer or external triggers to satisfy waiting_for_user_key."""
+        if self.waiting_for_user_key:
+            _log(f"  [USER CONFIRMATION] Confirmed via external trigger/visualizer.")
+            self.waiting_for_user_key = False
+            return True
+        return False
+
+    def click_exit_portal(
+        self,
+        search_attempts: int = 5,
+        approach_wait: float = 2.0,
+        screen: Optional[np.ndarray] = None,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Locates and clicks the exit portal on screen to return to the hideout.
+        If the portal is not found, walks back to the LOOT dot (where the portal is adjacent) and retries.
+        """
+        self.release_all_keys()
+        self.status_message = "Locating Exit Portal..."
+        portal_pos = None
+
+        for attempt in range(1, search_attempts + 1):
+            if stop_handler.is_stopped() or not self.is_active:
+                return False
+            portal_pos = self.locate_portal(screen=screen)
+            if portal_pos is not None:
+                break
+            time.sleep(0.25)
+
+        # If not found on screen, character may have drifted during looting: walk to LOOT dot and retry
+        if portal_pos is None and not stop_handler.is_stopped() and self.is_active:
+            loot_pos = self._resolve_target_loot_pos({}, context or {}, zone_label="PINK DOT #7")
+            if loot_pos is not None:
+                _log(f"  [EXIT PORTAL RETRY] Portal not visible on screen. Walking to LOOT dot at ({loot_pos[0]:.1f}, {loot_pos[1]:.1f}) and re-scanning...")
+                self.status_message = "Walking to LOOT dot for Portal..."
+                self._walk_to_coordinate(loot_pos, label="NAV→PORTAL-RETRY", timeout=8.0, arrival_threshold=15.0)
+                time.sleep(0.3)
+                for retry in range(1, search_attempts + 1):
+                    if stop_handler.is_stopped() or not self.is_active:
+                        return False
+                    portal_pos = self.locate_portal()
+                    if portal_pos is not None:
+                        _log(f"  [EXIT PORTAL RETRY SUCCESS] Exit portal detected at screen ({portal_pos[0]}, {portal_pos[1]})!")
+                        break
+                    time.sleep(0.25)
+
+        if portal_pos is None:
+            _log(f"  [EXIT PORTAL] Exit portal not found after {search_attempts} attempts.")
+            return False
+
+        # Stop combat before exiting zone through portal
+        self.disable_persistent_combat()
+
+        _log(f"  [ACTION] Clicking Exit Portal at screen ({portal_pos[0]}, {portal_pos[1]})...")
+        self.status_message = "Clicking Exit Portal..."
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+        rx, ry = self.move_mouse_inside_game(portal_pos[0], portal_pos[1])
+        time.sleep(0.06)
+        if pydirectinput:
+            pydirectinput.click()
+            time.sleep(0.08)
+            pydirectinput.mouseUp(button="left")
+        time.sleep(0.2)
+
+        if approach_wait > 0:
+            self._wait_for_approach(approach_wait, reason="EXIT PORTAL")
+
+        return True
+
+    def locate_stash(
+        self,
+        threshold: Optional[float] = None,
+        screen: Optional[np.ndarray] = None,
+    ) -> Optional[Tuple[int, int]]:
+        """
+        Locates the Stash in the hideout using multi-scale template matching.
+        Prioritizes the 'STASH' label banner, falling back to the chest template.
+        Returns desktop absolute (x, y) coordinates of the click target, or None if not found.
+        """
+        if self.stash_label_tpl is None and self.stash_full_tpl is None:
+            self._load_stash_and_inventory_templates()
+        if self.stash_label_tpl is None and self.stash_full_tpl is None:
+            return None
+
+        if screen is None:
+            capt = self._get_capturer()
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            return None
+
+        eff_thresh = threshold if threshold is not None else self.stash_match_threshold
+
+        mon_left = 0
+        mon_top = 0
+        capt = self._get_capturer()
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                mon_left = monitors[self.monitor_idx].get("left", 0)
+                mon_top = monitors[self.monitor_idx].get("top", 0)
+
+        sh, sw = screen.shape[:2]
+        scales = [1.0, 0.95, 1.05, 0.90, 1.10]
+
+        # 1. Search for 'STASH' text label banner
+        if self.stash_label_tpl is not None:
+            lh, lw = self.stash_label_tpl.shape[:2]
+            best_lbl_val = -1.0
+            best_lbl_loc = None
+            best_lbl_scale = 1.0
+
+            for s in scales:
+                tw = int(lw * s)
+                th = int(lh * s)
+                if sh < th or sw < tw:
+                    continue
+                scaled_tpl = self.stash_label_tpl if s == 1.0 else cv2.resize(self.stash_label_tpl, (tw, th), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR)
+                res = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val > best_lbl_val:
+                    best_lbl_val = max_val
+                    best_lbl_loc = max_loc
+                    best_lbl_scale = s
+
+            if best_lbl_val >= eff_thresh and best_lbl_loc is not None:
+                cur_w = int(lw * best_lbl_scale)
+                cur_h = int(lh * best_lbl_scale)
+                cx = int(best_lbl_loc[0] + cur_w // 2)
+                cy = int(best_lbl_loc[1] + cur_h // 2)
+                _log(f"  [STASH MATCH] Found STASH label (conf={best_lbl_val:.3f} >= {eff_thresh:.2f}, scale={best_lbl_scale:.2f}) at screen ({cx}, {cy})")
+                return (cx + mon_left, cy + mon_top)
+
+        # 2. Search for Stash full chest
+        if self.stash_full_tpl is not None:
+            ch, cw = self.stash_full_tpl.shape[:2]
+            best_chest_val = -1.0
+            best_chest_loc = None
+            best_chest_scale = 1.0
+            chest_thresh = max(0.50, eff_thresh - 0.05)
+
+            for s in scales:
+                tw = int(cw * s)
+                th = int(ch * s)
+                if sh < th or sw < tw:
+                    continue
+                scaled_tpl = self.stash_full_tpl if s == 1.0 else cv2.resize(self.stash_full_tpl, (tw, th), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR)
+                res = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val > best_chest_val:
+                    best_chest_val = max_val
+                    best_chest_loc = max_loc
+                    best_chest_scale = s
+
+            if best_chest_val >= chest_thresh and best_chest_loc is not None:
+                cur_w = int(cw * best_chest_scale)
+                cur_h = int(ch * best_chest_scale)
+                cx = int(best_chest_loc[0] + cur_w // 2)
+                cy = int(best_chest_loc[1] + int(cur_h * 0.65))
+                _log(f"  [STASH MATCH] Found Stash chest (conf={best_chest_val:.3f} >= {chest_thresh:.2f}, scale={best_chest_scale:.2f}) at screen ({cx}, {cy})")
+                return (cx + mon_left, cy + mon_top)
+
+        return None
+
+    def locate_inventory_window(
+        self,
+        screen: Optional[np.ndarray] = None,
+        threshold: Optional[float] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Dynamically locates the player's open Inventory window and detects exact row and column centers.
+        Uses multi-scale template matching across resolutions (1080p, 1440p, 1800p, 4K) and dynamic
+        horizontal edge gradient profiling to find the 5 row centers, ensuring reliable operation
+        across multiple screens (e.g. moving between Screen 2 1080p and Screen 1 1800p OLED).
+
+        :param screen: Optional screen image array. If None, captures current screen.
+        :param threshold: Match confidence threshold (defaults to self.inventory_match_threshold).
+        :return: Dictionary containing origin, dimensions, scale, row_centers, col_centers, or None.
+        """
+        if self.inventory_title_tpl is None and self.inventory_close_tpl is None:
+            self._load_stash_and_inventory_templates()
+        if self.inventory_title_tpl is None and self.inventory_close_tpl is None:
+            return None
+
+        if screen is None:
+            capt = self._get_capturer()
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            return None
+
+        eff_thresh = threshold if threshold is not None else self.inventory_match_threshold
+        sh, sw = screen.shape[:2]
+        scale_est = sh / 1080.0
+
+        # Build candidate scales tailored around current resolution scale
+        scale_candidates = [
+            round(scale_est * f, 3) for f in [0.90, 0.95, 1.0, 1.05, 1.10]
+        ] + [1.0, 1.25, 1.333, 1.5, 1.667, 2.0]
+        scales = sorted(set(scale_candidates))
+
+        # In Path of Exile, the Inventory window is docked on the right side of the screen.
+        # Check right side first for performance, and fallback to full screen if not found or on smaller canvases.
+        roi_candidates = []
+        if sw >= 1200:
+            roi_candidates.append((int(sw * 0.45), screen[:, int(sw * 0.45) :]))
+        roi_candidates.append((0, screen))
+
+        best_conf = -1.0
+        best_scale = scale_est
+        best_loc = None
+
+        # 1. Multi-scale match on golden 'INVENTORY' title banner
+        if self.inventory_title_tpl is not None:
+            th, tw = self.inventory_title_tpl.shape[:2]
+            for right_x_offset, search_roi in roi_candidates:
+                for s in scales:
+                    scaled_w = int(tw * s)
+                    scaled_h = int(th * s)
+                    if search_roi.shape[0] < scaled_h or search_roi.shape[1] < scaled_w:
+                        continue
+                    scaled_tpl = (
+                        self.inventory_title_tpl
+                        if abs(s - 1.0) < 0.01
+                        else cv2.resize(
+                            self.inventory_title_tpl,
+                            (scaled_w, scaled_h),
+                            interpolation=cv2.INTER_LINEAR if s > 1.0 else cv2.INTER_AREA,
+                        )
+                    )
+                    res = cv2.matchTemplate(search_roi, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                    _, max_v, _, max_l = cv2.minMaxLoc(res)
+                    if max_v > best_conf:
+                        best_conf = max_v
+                        best_scale = s
+                        best_loc = (max_l[0] + right_x_offset, max_l[1])
+                if best_conf >= eff_thresh:
+                    break
+
+        # 2. Fallback to red close button (X) if title was not detected
+        if (best_conf < eff_thresh or best_loc is None) and self.inventory_close_tpl is not None:
+            ch, cw = self.inventory_close_tpl.shape[:2]
+            for right_x_offset, search_roi in roi_candidates:
+                for s in scales:
+                    scaled_w = int(cw * s)
+                    scaled_h = int(ch * s)
+                    if search_roi.shape[0] < scaled_h or search_roi.shape[1] < scaled_w:
+                        continue
+                    scaled_tpl = (
+                        self.inventory_close_tpl
+                        if abs(s - 1.0) < 0.01
+                        else cv2.resize(
+                            self.inventory_close_tpl,
+                            (scaled_w, scaled_h),
+                            interpolation=cv2.INTER_LINEAR if s > 1.0 else cv2.INTER_AREA,
+                        )
+                    )
+                    res = cv2.matchTemplate(search_roi, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                    _, max_v, _, max_l = cv2.minMaxLoc(res)
+                    if max_v > best_conf and max_v >= eff_thresh:
+                        best_conf = max_v
+                        best_scale = s
+                        best_loc = (max_l[0] + right_x_offset - int(393 * s), max_l[1])
+                        break
+                if best_conf >= eff_thresh:
+                    break
+
+        if best_conf < eff_thresh or best_loc is None:
+            return None
+
+        # Snap scale if very close to scale_est or 1.0 to prevent minor resampling drift
+        if abs(best_scale - 1.0) <= 0.05:
+            best_scale = 1.0
+        elif abs(best_scale - scale_est) <= 0.05:
+            best_scale = scale_est
+
+        inv_origin_x = best_loc[0] - int(200 * best_scale)
+        inv_origin_y = best_loc[1] - int(45 * best_scale)
+        inv_w = int(629 * best_scale)
+        inv_h = int(1024 * best_scale)
+
+        # 3. Dynamic row center detection via horizontal edge gradient profiling
+        y_band_min = max(0, inv_origin_y + int(530 * best_scale))
+        y_band_max = min(sh, inv_origin_y + int(890 * best_scale))
+        x_band_min = max(0, inv_origin_x)
+        x_band_max = min(sw, inv_origin_x + inv_w)
+
+        grid_roi = screen[y_band_min:y_band_max, x_band_min:x_band_max]
+        row_centers = None
+        row_lines = None
+        row_method = "calibrated_scaled"
+
+        if grid_roi.shape[0] > int(100 * best_scale) and grid_roi.shape[1] > int(200 * best_scale):
+            try:
+                import itertools
+                gray = cv2.cvtColor(grid_roi, cv2.COLOR_BGR2GRAY)
+                sobel_y = np.abs(cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3))
+                h_prof = sobel_y.sum(axis=1)
+                k_size = max(3, int(5 * best_scale))
+                if k_size % 2 == 0:
+                    k_size += 1
+                h_smooth = np.convolve(h_prof, np.ones(k_size) / float(k_size), mode="same")
+
+                win = max(8, int(14 * best_scale))
+                peaks = []
+                for i in range(win, len(h_smooth) - win):
+                    if h_smooth[i] == max(h_smooth[max(0, i - win) : min(len(h_smooth), i + win + 1)]):
+                        peaks.append((y_band_min + i, h_smooth[i]))
+                peaks.sort(key=lambda p: p[1], reverse=True)
+
+                candidates = sorted([p[0] for p in peaks[:15]])
+                min_step = 40.0 * best_scale
+                max_step = 68.0 * best_scale
+
+                peak_map = dict(peaks)
+                best_score = -1.0
+                best_comb = None
+
+                for comb in itertools.combinations(candidates, 6):
+                    diffs = [comb[j + 1] - comb[j] for j in range(5)]
+                    if all(min_step <= d <= max_step for d in diffs):
+                        score = sum(peak_map.get(y, 0) for y in comb)
+                        if score > best_score:
+                            best_score = score
+                            best_comb = comb
+
+                if best_comb is not None:
+                    row_lines = list(best_comb)
+                    row_centers = [(best_comb[j] + best_comb[j + 1]) / 2.0 for j in range(5)]
+                    row_method = "dynamic_edges"
+            except Exception as e:
+                _log(f"  [INVENTORY WARNING] Dynamic edge row detection error: {e}")
+
+        # Fallback to calibrated proportional row centers
+        if row_centers is None:
+            calibrated_rel_y = [609.5, 665.5, 718.5, 771.0, 825.5]
+            row_centers = [inv_origin_y + c * best_scale for c in calibrated_rel_y]
+            row_method = "calibrated_scaled"
+
+        # Column centers for all 12 columns (scale-adapted)
+        calibrated_rel_x = [26.0, 78.0, 130.5, 183.0, 235.5, 288.5, 341.0, 393.5, 446.5, 499.0, 551.5, 599.5]
+        col_centers = [inv_origin_x + c * best_scale for c in calibrated_rel_x]
+
+        return {
+            "found": True,
+            "confidence": best_conf,
+            "scale": best_scale,
+            "title_pos": best_loc,
+            "inv_origin": (inv_origin_x, inv_origin_y),
+            "inv_dim": (inv_w, inv_h),
+            "row_centers": row_centers,
+            "col_centers": col_centers,
+            "row_lines": row_lines,
+            "row_method": row_method,
+        }
+
+    def is_inventory_open(
+        self,
+        threshold: Optional[float] = None,
+        screen: Optional[np.ndarray] = None,
+    ) -> bool:
+        """
+        Detects whether the player Inventory window is currently open on screen.
+        Checks for the golden 'INVENTORY' header banner or the red close button (X)
+        using multi-scale matching for multi-monitor compatibility.
+        Includes a 20-60ms fast path on the right side of the screen.
+        """
+        if self.inventory_title_tpl is None and self.inventory_close_tpl is None:
+            self._load_stash_and_inventory_templates()
+
+        if screen is None:
+            capt = self._get_capturer()
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            return False
+
+        eff_thresh = threshold if threshold is not None else self.inventory_match_threshold
+        sh, sw = screen.shape[:2]
+
+        # Fast-path on right side of screen (sw * 0.40 : ) across standard scales [1.0, 1.05, 1.10, 0.95]
+        if sw >= 800:
+            roi_x_start = int(sw * 0.40)
+            roi = screen[:, roi_x_start:]
+            # 1. Fast check for red close button (X)
+            if self.inventory_close_tpl is not None:
+                for s in [1.0, 1.05, 1.10, 0.95]:
+                    scaled_tpl = self.inventory_close_tpl if s == 1.0 else cv2.resize(
+                        self.inventory_close_tpl,
+                        (int(self.inventory_close_tpl.shape[1] * s), int(self.inventory_close_tpl.shape[0] * s)),
+                        interpolation=cv2.INTER_LINEAR if s > 1.0 else cv2.INTER_AREA,
+                    )
+                    if roi.shape[0] >= scaled_tpl.shape[0] and roi.shape[1] >= scaled_tpl.shape[1]:
+                        res = cv2.matchTemplate(roi, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                        _, mv, _, ml = cv2.minMaxLoc(res)
+                        if mv >= 0.70:
+                            _log(f"  [INVENTORY MATCH] Confirmed Inventory window open (close button conf={mv:.3f}, scale={s:.2f}) at ({ml[0] + roi_x_start}, {ml[1]}).")
+                            return True
+            # 2. Fast check for golden 'INVENTORY' title banner
+            if self.inventory_title_tpl is not None:
+                for s in [1.0, 1.05, 1.10, 0.95]:
+                    scaled_tpl = self.inventory_title_tpl if s == 1.0 else cv2.resize(
+                        self.inventory_title_tpl,
+                        (int(self.inventory_title_tpl.shape[1] * s), int(self.inventory_title_tpl.shape[0] * s)),
+                        interpolation=cv2.INTER_LINEAR if s > 1.0 else cv2.INTER_AREA,
+                    )
+                    if roi.shape[0] >= scaled_tpl.shape[0] and roi.shape[1] >= scaled_tpl.shape[1]:
+                        res = cv2.matchTemplate(roi, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                        _, mv, _, ml = cv2.minMaxLoc(res)
+                        if mv >= eff_thresh:
+                            _log(f"  [INVENTORY MATCH] Confirmed Inventory window open (title conf={mv:.3f}, scale={s:.2f}) at ({ml[0] + roi_x_start}, {ml[1]}).")
+                            return True
+
+        # Fallback to full locate_inventory_window (for non-standard screens or off-scale layouts)
+        info = self.locate_inventory_window(screen=screen, threshold=threshold)
+        if info is not None:
+            _log(f"  [INVENTORY MATCH] Confirmed Inventory window open (title conf={info['confidence']:.3f}, scale={info['scale']:.2f}, method={info['row_method']}) at ({info['title_pos'][0]}, {info['title_pos'][1]}).")
+            return True
+        return False
+
+    def is_in_hideout(
+        self,
+        threshold: Optional[float] = None,
+        screen: Optional[np.ndarray] = None,
+        check_stash_fallback: bool = False,
+        check_map_device_fallback: bool = True,
+        require_map_device: Optional[bool] = None,
+        verbose: bool = True,
+        set_state: bool = True,
+    ) -> bool:
+        """
+        Detects whether character is in the hideout by matching hideout_layout.png
+        against the top-right minimap region using multi-scale matching.
+
+        Detection Modes:
+        - 'minimap': Strictly verifies Hideout minimap layout (threshold >= 0.50).
+        - 'minimap_and_map_device': Dual confirmation requiring BOTH minimap match
+          AND Map Device presence.
+        - 'minimap_or_map_device' (default): Minimap is primary; if borderline,
+          verified against Map Device.
+
+        CRITICAL SAFETY RULE:
+        STASH can appear in enemy areas (such as Simulacrum, Delve, etc.).
+        Detecting STASH alone is NEVER sufficient to declare Hideout!
+        """
+        if self.hideout_layout_tpl is None:
+            self._load_stash_and_inventory_templates()
+        if self.hideout_layout_tpl is None:
+            return False
+
+        if screen is None:
+            capt = self._get_capturer()
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            return False
+
+        eff_thresh = threshold if threshold is not None else self.hideout_match_threshold
+        req_md = require_map_device if require_map_device is not None else (getattr(self, "hideout_detection_mode", "minimap_or_map_device") == "minimap_and_map_device")
+
+        sh, sw = screen.shape[:2]
+        lh, lw = self.hideout_layout_tpl.shape[:2]
+
+        scales = [1.0, 0.95, 1.05, 0.90, 1.10]
+        best_conf = -1.0
+        best_scale = 1.0
+
+        # Check upper-right minimap quadrant (top 40%, right 35%)
+        mm_region = screen[: int(sh * 0.40), int(sw * 0.65) :]
+        for s in scales:
+            tw = int(lw * s)
+            th = int(lh * s)
+            if mm_region.shape[0] < th or mm_region.shape[1] < tw:
+                continue
+            scaled_tpl = self.hideout_layout_tpl if s == 1.0 else cv2.resize(self.hideout_layout_tpl, (tw, th), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR)
+            res = cv2.matchTemplate(mm_region, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(res)
+            if max_val > best_conf:
+                best_conf = max_val
+                best_scale = s
+
+        # Fallback: check upper-right half (top 50%, right 50%)
+        if best_conf < eff_thresh:
+            top_half = screen[: int(sh * 0.50), int(sw * 0.50) :]
+            for s in [1.0, 0.95, 1.05]:
+                tw = int(lw * s)
+                th = int(lh * s)
+                if top_half.shape[0] < th or top_half.shape[1] < tw:
+                    continue
+                scaled_tpl = self.hideout_layout_tpl if s == 1.0 else cv2.resize(self.hideout_layout_tpl, (tw, th), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR)
+                res = cv2.matchTemplate(top_half, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(res)
+                if max_val > best_conf:
+                    best_conf = max_val
+                    best_scale = s
+
+        self.last_hideout_confidence = best_conf
+        if verbose:
+            _log(f"  [HIDEOUT CHECK] Minimap match confidence: {best_conf:.3f} (scale: {best_scale:.2f}, threshold: {eff_thresh:.2f})")
+
+        is_confirmed_hideout = False
+
+        # Mode A: Dual Confirmation required (Minimap AND Map Device)
+        if req_md:
+            if best_conf >= eff_thresh:
+                md_pos = self.locate_map_device(screen=screen, threshold=0.68)
+                if md_pos is not None:
+                    if verbose or not self.in_hideout:
+                        _log(f"  [HIDEOUT MATCH] Confirmed via Dual Check: Minimap (conf={best_conf:.3f}) AND Map Device at ({md_pos[0]}, {md_pos[1]})")
+                    is_confirmed_hideout = True
+                else:
+                    if verbose:
+                        _log(f"  [HIDEOUT CHECK] Minimap matched ({best_conf:.3f} >= {eff_thresh:.2f}) but Map Device NOT visible. Pending confirmation.")
+            else:
+                if verbose:
+                    _log(f"  [HIDEOUT CHECK] Dual mode: Minimap below threshold ({best_conf:.3f} < {eff_thresh:.2f}). Not hideout.")
+
+        # Mode B: Minimap Primary with Map Device Confirmation
+        else:
+            if best_conf >= eff_thresh:
+                if verbose or not self.in_hideout:
+                    _log(f"  [HIDEOUT MATCH] Confirmed in hideout via minimap (conf={best_conf:.3f} >= {eff_thresh:.2f})")
+                is_confirmed_hideout = True
+            elif check_map_device_fallback and best_conf >= 0.35:
+                # Borderline minimap match: verify if Map Device is visible
+                md_pos = self.locate_map_device(screen=screen, threshold=0.68)
+                if md_pos is not None:
+                    if verbose or not self.in_hideout:
+                        _log(f"  [HIDEOUT MATCH] Minimap conf was {best_conf:.3f}, but Map Device detected on screen at ({md_pos[0]}, {md_pos[1]}) -> Confirmed in Hideout!")
+                    is_confirmed_hideout = True
+
+        # STASH fallback check: STASH ALONE CAN NEVER DECLARE HIDEOUT!
+        if not is_confirmed_hideout and check_stash_fallback:
+            stash_pos = self.locate_stash(screen=screen)
+            if stash_pos is not None:
+                # Stashes can appear in enemy areas (e.g. Simulacrum). Require Map Device to confirm hideout!
+                md_pos = self.locate_map_device(screen=screen, threshold=0.68)
+                if md_pos is not None:
+                    if verbose or not self.in_hideout:
+                        _log(f"  [HIDEOUT MATCH] STASH and Map Device both detected on screen -> Confirmed in Hideout!")
+                    is_confirmed_hideout = True
+                else:
+                    if verbose:
+                        _log(f"  [HIDEOUT CHECK] STASH detected at {stash_pos}, but Map Device and Hideout Minimap absent (conf={best_conf:.3f} < {eff_thresh:.2f}). Stash may be in enemy zone (Simulacrum). NOT Hideout!")
+
+        if is_confirmed_hideout:
+            if set_state:
+                self.in_hideout = True
+                # Keep self.is_active = True while autopilot is running so hideout routine steps
+                # (stash, map device, delusion popup, portals) can execute without interruption.
+                self.disable_persistent_combat()
+                self.release_all_keys()
+            return True
+
+        return False
+
+    def save_inventory_screenshot(self, screen: Optional[np.ndarray] = None) -> Optional[str]:
+        """
+        Saves a screenshot showing the inventory window to a dedicated folder.
+        """
+        if screen is None:
+            capt = self._get_capturer()
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            return None
+
+        os.makedirs(self.inventory_screenshots_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        target_path = os.path.join(self.inventory_screenshots_dir, f"inventory_{ts}.png")
+
+        # Crop inventory window if located, or save full screen
+        sh, sw = screen.shape[:2]
+        crop_saved = False
+        info = self.locate_inventory_window(screen=screen)
+        if info is not None:
+            inv_x, inv_y = info["inv_origin"]
+            inv_w, inv_h = info["inv_dim"]
+            inv_crop = screen[max(0, inv_y) : min(sh, inv_y + inv_h), max(0, inv_x) : min(sw, inv_x + inv_w)]
+            if inv_crop.size > 0:
+                cv2.imwrite(target_path, inv_crop)
+                crop_saved = True
+
+        if not crop_saved:
+            cv2.imwrite(target_path, screen)
+
+        _log(f"  [INVENTORY SCREENSHOT] Saved inventory window screenshot to '{target_path}'")
+        return target_path
+
+    def click_stash(
+        self,
+        search_attempts: int = 10,
+        timeout: float = 15.0,
+        verify_inventory: bool = True,
+    ) -> bool:
+        """
+        Waits for hideout to load (confirmed via hideout_layout minimap), locates the Stash,
+        clicks it, confirms that both Stash and Inventory windows are open, and saves an inventory screenshot.
+        """
+        self.release_all_keys()
+
+        # 1. Wait to confirm arrival in hideout
+        self.status_message = "Waiting for Hideout Arrival..."
+        _log(f"\n[HIDEOUT] Confirming character is in hideout (allowing up to {timeout:.1f}s for loading screen)...")
+        self.in_hideout = True
+        self.disable_persistent_combat()
+        self.release_all_keys()
+        hideout_start = time.time()
+        in_hideout = False
+        while (time.time() - hideout_start) < timeout:
+            if stop_handler.is_stopped():
+                return False
+            if self.is_in_hideout():
+                in_hideout = True
+                break
+            time.sleep(0.5)
+
+        if in_hideout:
+            _log("  [HIDEOUT] Arrival confirmed! Searching for STASH...")
+        else:
+            _log("  [HIDEOUT WARNING] Hideout minimap match timed out. Proceeding to search for STASH anyway...")
+
+        # Ensure loot / object labels are unhidden in Hideout so STASH banner is visible
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+        self.ensure_loot_labels_visible()
+
+        # Check if Inventory is ALREADY open before searching or clicking
+        if self.is_inventory_open():
+            _log("  [STASH] Stash and Inventory windows are ALREADY OPEN. Skipping click.")
+            self.status_message = "Stash & Inventory Already Open!"
+            self.save_inventory_screenshot()
+            return True
+
+        self.status_message = "Locating Stash..."
+        stash_start = time.time()
+        stash_pos = None
+        attempted_z_fallback = False
+
+        # 2. Search loop for STASH
+        while (time.time() - stash_start) < 8.0:
+            if stop_handler.is_stopped():
+                return False
+            stash_pos = self.locate_stash()
+            if stash_pos is not None:
+                break
+            # If STASH is not found after 1.5 seconds, force-press 'Z' once in case labels were hidden out-of-sync
+            if not attempted_z_fallback and (time.time() - stash_start) >= 1.5:
+                attempted_z_fallback = True
+                _log("  [STASH] Stash not immediately detected. Toggling [Z] to ensure object labels are visible...")
+                self.ensure_loot_labels_visible(force=True)
+            time.sleep(0.4)
+
+        if stash_pos is None:
+            _log(f"  [WARNING] STASH not detected in hideout.")
+            return False
+
+        # 3. Click the Stash cleanly
+        _log(f"  [ACTION] Left-clicking STASH at screen ({stash_pos[0]}, {stash_pos[1]})...")
+        self.status_message = "Clicking STASH..."
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+        rx, ry = self.move_mouse_inside_game(stash_pos[0], stash_pos[1])
+        time.sleep(0.10)
+        if pydirectinput:
+            pydirectinput.mouseDown(button="left")
+            time.sleep(0.08)
+            pydirectinput.mouseUp(button="left")
+        time.sleep(0.3)
+
+        # 4. Wait for character to walk to stash and open inventory window
+        if verify_inventory:
+            self.status_message = "Verifying Stash & Inventory Open..."
+            open_confirmed = False
+            last_screen = None
+            inv_start = time.time()
+            # Allow up to 10.0s for character to walk across hideout and open stash
+            while (time.time() - inv_start) < 10.0:
+                if stop_handler.is_stopped():
+                    return False
+                capt = self._get_capturer()
+                try:
+                    last_screen = capt.capture()
+                except Exception:
+                    last_screen = None
+                if self.is_inventory_open(screen=last_screen):
+                    open_confirmed = True
+                    break
+                time.sleep(0.15)
+
+            # Retry click once if not opened: check fresh screen FIRST before re-clicking!
+            if not open_confirmed and not stop_handler.is_stopped():
+                capt = self._get_capturer()
+                fresh_screen = None
+                try:
+                    fresh_screen = capt.capture() if capt else None
+                except Exception:
+                    pass
+                if fresh_screen is not None and self.is_inventory_open(screen=fresh_screen):
+                    open_confirmed = True
+                    last_screen = fresh_screen
+                else:
+                    _log("  [STASH RETRY] Inventory not open yet. Re-checking and re-clicking STASH...")
+                    recheck_pos = self.locate_stash() or stash_pos
+                    window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+                    rx, ry = self.move_mouse_inside_game(recheck_pos[0], recheck_pos[1])
+                    time.sleep(0.10)
+                    if pydirectinput:
+                        pydirectinput.mouseDown(button="left")
+                        time.sleep(0.08)
+                        pydirectinput.mouseUp(button="left")
+                    time.sleep(0.5)
+                    inv_retry_start = time.time()
+                    while (time.time() - inv_retry_start) < 6.0:
+                        if stop_handler.is_stopped():
+                            return False
+                        capt = self._get_capturer()
+                        try:
+                            last_screen = capt.capture()
+                        except Exception:
+                            last_screen = None
+                        if self.is_inventory_open(screen=last_screen):
+                            open_confirmed = True
+                            break
+                        time.sleep(0.15)
+
+            if open_confirmed:
+                _log("  [STASH SUCCESS] Stash and Inventory windows confirmed OPEN in hideout!")
+                self.status_message = "Stash & Inventory Open!"
+                self.save_inventory_screenshot(screen=last_screen)
+                return True
+            else:
+                _log("  [STASH WARNING] Clicked STASH, but Inventory window open confirmation timed out.")
+                return False
+
+        return True
+
+    def stash_inventory_items(
+        self,
+        screen: Optional[np.ndarray] = None,
+        exclude_last_columns: int = 3,
+        dry_run: bool = False,
+        close_after: bool = False,
+    ) -> int:
+        """
+        Scans the open player inventory grid (5 rows x 12 columns).
+        For every non-empty cell in columns 0..(12 - exclude_last_columns - 1),
+        presses CTRL + Left Click to quick-deposit items into the active Stash tab.
+        Uses dynamic row center detection and resolution scaling to support both Screen 2 (1080p)
+        and Screen 1 (1800p OLED) seamlessly.
+        If dry_run=True, scans and reports detected items without sending clicks or keystrokes.
+        If close_after=True, presses Escape after depositing to close all open windows.
+        """
+        self.release_all_keys()
+        self.disable_persistent_combat()
+        self.status_message = "Stashing Inventory Items (Ctrl+Click)..."
+        _log(f"\n[STASH DEPOSIT] Scanning inventory grid for non-empty items (excluding last {exclude_last_columns} columns)...")
+
+        # Auto-detect if game window is currently on Monitor 1 or Monitor 2
+        try:
+            bounds = window_focuser.get_game_window_bounds()
+            if bounds:
+                center_x = (bounds[0] + bounds[2]) // 2
+                capt = self._get_capturer()
+                if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+                    for idx in [1, 2]:
+                        if idx < len(capt._sct.monitors):
+                            m = capt._sct.monitors[idx]
+                            if m["left"] <= center_x < m["left"] + m["width"]:
+                                if self.monitor_idx != idx:
+                                    _log(f"  [MONITOR DETECT] Game window detected on Monitor {idx} ({m['width']}x{m['height']}). Adapting monitor_idx.")
+                                    self.monitor_idx = idx
+                                    if capt.monitor_idx != idx:
+                                        capt.monitor_idx = idx
+                                break
+        except Exception:
+            pass
+
+        if screen is None:
+            capt = self._get_capturer()
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            _log("  [WARNING] Unable to capture screen for inventory stashing.")
+            return 0
+
+        mon_left = 0
+        mon_top = 0
+        capt = self._get_capturer()
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                mon_left = monitors[self.monitor_idx].get("left", 0)
+                mon_top = monitors[self.monitor_idx].get("top", 0)
+
+        inv_info = self.locate_inventory_window(screen=screen)
+        if inv_info is None:
+            _log("  [WARNING] Inventory window not detected on screen.")
+            return 0
+
+        row_centers = inv_info["row_centers"]
+        col_centers = inv_info["col_centers"]
+        scale = inv_info["scale"]
+        row_method = inv_info["row_method"]
+        _log(f"  [STASH DEPOSIT] Inventory window located (conf={inv_info['confidence']:.3f}, scale={scale:.2f}, rows={row_method}).")
+
+        sh, sw = screen.shape[:2]
+        max_col = max(0, min(12, 12 - exclude_last_columns))
+        half_box = max(8, int(14 * scale))
+        candidates = []
+
+        for r, cy in enumerate(row_centers):
+            for c in range(max_col):
+                cx = col_centers[c]
+                cx_i = int(round(cx))
+                cy_i = int(round(cy))
+
+                # Bounds check inside screen
+                if cy_i - half_box < 0 or cy_i + half_box > sh or cx_i - half_box < 0 or cx_i + half_box > sw:
+                    continue
+
+                patch = screen[cy_i - half_box : cy_i + half_box, cx_i - half_box : cx_i + half_box]
+                is_non_empty = bool(patch.mean() > 16.0 or patch.max() > 40)
+                if is_non_empty:
+                    desktop_x = cx_i + mon_left
+                    desktop_y = cy_i + mon_top
+                    candidates.append((r, c, desktop_x, desktop_y))
+
+        _log(f"  [STASH DEPOSIT] Found {len(candidates)} non-empty item cell(s) in columns 1..{max_col} (rows detected via {row_method}).")
+        if not candidates:
+            _log("  [STASH DEPOSIT] No items found to deposit. Stashing complete.")
+            return 0
+
+        if dry_run:
+            _log(f"  [STASH DRY-RUN] Dry run enabled. Found {len(candidates)} items (no clicks performed):")
+            for r, c, dx, dy in candidates:
+                _log(f"    - Cell (Row {r+1}, Col {c+1}) at screen ({dx}, {dy})")
+            return len(candidates)
+
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+        stashed_count = 0
+
+        try:
+            if pydirectinput:
+                pydirectinput.keyDown("ctrl")
+                time.sleep(0.06)
+
+            for r, c, dx, dy in candidates:
+                if stop_handler.is_stopped():
+                    break
+                self.move_mouse_inside_game(dx, dy)
+                time.sleep(0.04)
+                if pydirectinput:
+                    pydirectinput.click()
+                    time.sleep(0.06)
+                stashed_count += 1
+                self.status_message = f"Stashed item {stashed_count}/{len(candidates)} (R{r+1}C{c+1})"
+        finally:
+            if pydirectinput:
+                pydirectinput.keyUp("ctrl")
+                time.sleep(0.08)
+
+        _log(f"  [STASH DEPOSIT] Successfully deposited {stashed_count} item(s) into Stash!")
+        self.status_message = f"Deposited {stashed_count} items to Stash!"
+
+        if close_after and not dry_run:
+            self.close_all_hideout_windows()
+
+        return stashed_count
+
+    def test_hideout_sequence(
+        self,
+        dry_run: bool = False,
+        deposit_only: bool = False,
+        screen: Optional[np.ndarray] = None,
+        full_cycle: bool = False,
+        traverse_and_enter: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Executes a targeted test of the complete hideout flow:
+        1. Checks hideout arrival confirmation via minimap (hideout_layout.png).
+        2. Locates and clicks STASH in the hideout (if not deposit_only).
+        3. Verifies Stash and Inventory windows are open.
+        4. Saves an inventory screenshot to inventory_screenshots/.
+        5. Scans 5x12 inventory grid and Ctrl+Clicks non-empty items (excluding last 3 columns).
+        6. If full_cycle=True: closes windows (Escape), clicks Map Device, selects Simulacrum map circle,
+           verifies Delusion popup, transfers Tier 15 map into popup, and optionally clicks TRAVERSE & portal.
+
+        :param dry_run: If True, detects and reports all elements without sending clicks or keystrokes.
+        :param deposit_only: If True, assumes stash and inventory are already open, only runs screenshot & stashing.
+        :param screen: Optional screen frame to test on.
+        :param full_cycle: If True, continues sequence through Escape, Map Device, and Simulacrum map insertion.
+        :param traverse_and_enter: If True (with full_cycle), continues through TRAVERSE click and Portal click.
+        :return: Diagnostic results dictionary.
+        """
+        self.in_hideout = True
+        self.disable_persistent_combat()
+        self.release_all_keys()
+        self.ensure_loot_labels_visible()
+        self._load_stash_and_inventory_templates(force_reload=True)
+        report: Dict[str, Any] = {
+            "dry_run": dry_run,
+            "deposit_only": deposit_only,
+            "in_hideout": False,
+            "stash_pos": None,
+            "stash_clicked": False,
+            "inventory_open": False,
+            "screenshot_path": None,
+            "items_detected": 0,
+            "items_stashed": 0,
+            "traverse_clicked": False,
+            "portal_clicked": False,
+            "success": False,
+            "messages": [],
+        }
+
+        def _step_log(msg: str):
+            _log(f"  [TEST HIDEOUT] {msg}")
+            report["messages"].append(msg)
+
+        _log("\n========================================================")
+        _log(" [TEST HIDEOUT] Starting Hideout Functionality Test")
+        _log(f" Mode: {'DRY RUN (No Clicks)' if dry_run else 'LIVE EXECUTION'} | Stash: {'SKIP (Deposit Only)' if deposit_only else 'FIND & CLICK'}")
+        _log("========================================================")
+
+        capt = self._get_capturer()
+        if screen is None:
+            try:
+                screen = capt.capture()
+            except Exception as e:
+                _step_log(f"Screen capture failed: {e}")
+                return report
+
+        if screen is None or screen.size == 0:
+            _step_log("Screen capture returned empty image.")
+            return report
+
+        # Step 1: Check Hideout Minimap & Stash Presence
+        if not deposit_only:
+            _step_log("Step 1/5: Checking Hideout Arrival (Minimap Layout & Stash)...")
+            in_ho = self.is_in_hideout(screen=screen)
+            report["in_hideout"] = in_ho
+            if not in_ho:
+                _step_log("Minimap does not match hideout_layout.png and STASH not visible! Character may not be in hideout.")
+                if not dry_run:
+                    _step_log("Aborting live test because hideout layout was not verified.")
+                    return report
+            else:
+                _step_log("Hideout arrival confirmed (minimap / stash verified).")
+        else:
+            report["in_hideout"] = True
+            _step_log("Step 1/5: Skipping hideout minimap check (deposit_only=True).")
+
+        # Step 2: Locate and Click Stash
+        if not deposit_only:
+            _step_log("Step 2/5: Locating STASH on screen...")
+            stash_pos = self.locate_stash(screen=screen)
+            report["stash_pos"] = stash_pos
+            if not stash_pos:
+                _step_log("Could not locate STASH label or chest on screen!")
+                if not dry_run:
+                    return report
+            else:
+                _step_log(f"STASH located at screen ({stash_pos[0]}, {stash_pos[1]}).")
+                if not dry_run:
+                    _step_log("Clicking STASH chest/label...")
+                    window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+                    self.move_mouse_inside_game(stash_pos[0], stash_pos[1])
+                    time.sleep(0.10)
+                    if pydirectinput:
+                        pydirectinput.mouseDown(button="left")
+                        time.sleep(0.08)
+                        pydirectinput.mouseUp(button="left")
+                    report["stash_clicked"] = True
+                    time.sleep(1.0)
+                    # Re-capture screen after stash click
+                    try:
+                        screen = capt.capture()
+                    except Exception:
+                        pass
+                else:
+                    _step_log(f"[DRY RUN] Would click STASH at ({stash_pos[0]}, {stash_pos[1]}).")
+        else:
+            _step_log("Step 2/5: Skipping STASH click (deposit_only=True).")
+
+        # Step 3: Verify Inventory Open
+        _step_log("Step 3/5: Verifying Inventory & Stash window open...")
+        inv_open = self.is_inventory_open(screen=screen)
+        if not inv_open and not dry_run:
+            # Poll for up to 8 seconds in case character is walking across hideout to stash
+            poll_start = time.time()
+            while (time.time() - poll_start) < 8.0:
+                time.sleep(0.2)
+                try:
+                    screen = capt.capture()
+                except Exception:
+                    pass
+                if self.is_inventory_open(screen=screen):
+                    inv_open = True
+                    break
+
+        report["inventory_open"] = inv_open
+        if not inv_open:
+            if dry_run:
+                _step_log("[DRY RUN] Inventory window is currently closed.")
+            else:
+                _step_log("Inventory window is not open after clicking stash.")
+                return report
+        else:
+            _step_log("Confirmed Inventory window is OPEN.")
+
+        # Step 4: Save Inventory Screenshot
+        _step_log("Step 4/5: Saving Inventory Screenshot to dedicated folder...")
+        saved_path = self.save_inventory_screenshot(screen=screen)
+        report["screenshot_path"] = saved_path
+        if saved_path:
+            _step_log(f"Saved inventory screenshot to '{saved_path}'.")
+        else:
+            _step_log("Unable to save inventory screenshot.")
+
+        # Step 5: Scan & Stash Items
+        _step_log("Step 5/5: Scanning 5x12 inventory grid (excluding last 3 columns)...")
+        stashed_items = self.stash_inventory_items(
+            screen=screen,
+            exclude_last_columns=3,
+            dry_run=dry_run,
+        )
+        report["items_detected"] = stashed_items
+        report["items_stashed"] = 0 if dry_run else stashed_items
+        if dry_run:
+            _step_log(f"[DRY RUN] Found {stashed_items} non-empty item(s) to deposit.")
+        else:
+            _step_log(f"Successfully deposited {stashed_items} item(s) into Stash!")
+        # Steps 6..9: Full Cycle Continuation (Escape -> Map Device -> Simulacrum Map -> Insert Map)
+        if full_cycle and not deposit_only:
+            # Step 6: Press Escape to close all open windows
+            _step_log("Step 6/9: Pressing Escape to close all windows...")
+            if not dry_run:
+                closed = self.close_all_hideout_windows()
+                report["windows_closed"] = closed
+            else:
+                report["windows_closed"] = True
+                _step_log("[DRY RUN] Would press Escape to close windows.")
+
+            # Step 7: Locate and Click Map Device
+            _step_log("Step 7/9: Locating & Clicking Map Device...")
+            if not dry_run:
+                md_ok = self.click_map_device()
+                report["map_device_clicked"] = md_ok
+                if not md_ok:
+                    _step_log("Failed to locate or click Map Device.")
+                    report["success"] = False
+                    return report
+            else:
+                report["map_device_clicked"] = True
+                _step_log("[DRY RUN] Would click Map Device.")
+
+            # Step 8: Select Accessible Simulacrum Map Circle
+            _step_log("Step 8/9: Finding and clicking accessible Simulacrum map circle...")
+            sim_node = self.select_accessible_simulacrum_map(max_attempts=5, dry_run=dry_run)
+            if sim_node is None and not dry_run:
+                _step_log("No accessible Simulacrum map found.")
+                report["success"] = False
+                return report
+            report["simulacrum_selected"] = True
+
+            # Step 9: Transfer Tier 15 Map from last 3 columns into Delusion Popup
+            _step_log("Step 9/9: Transferring Tier 15 map into Simulacrum of Delusion popup...")
+            map_ok = self.insert_map_into_simulacrum_popup(target_slot_idx=0, method="drag", dry_run=dry_run)
+            report["map_transferred"] = map_ok
+            if not map_ok and not dry_run:
+                _step_log("Failed to transfer Tier 15 map into Delusion popup.")
+                report["success"] = False
+                return report
+
+            if traverse_and_enter:
+                # Step 10: Find and Click TRAVERSE Button
+                _step_log("Step 10/11: Locating and clicking TRAVERSE button...")
+                trav_ok = self.click_traverse_button(dry_run=dry_run)
+                report["traverse_clicked"] = trav_ok
+                if not trav_ok and not dry_run:
+                    _step_log("Failed to click TRAVERSE button.")
+                    report["success"] = False
+                    return report
+
+                # Step 11: Locate and Click Hideout Portal to enter Simulacrum danger zone
+                _step_log("Step 11/11: Locating and clicking hideout portal into Simulacrum danger zone...")
+                portal_ok = self.click_hideout_portal(dry_run=dry_run, auto_start_route=False)
+                report["portal_clicked"] = portal_ok
+                if not portal_ok and not dry_run:
+                    _step_log("Failed to enter hideout portal.")
+                    report["success"] = False
+                    return report
+
+        if full_cycle and not deposit_only:
+            if traverse_and_enter:
+                report["success"] = bool(report.get("simulacrum_selected") and report.get("map_transferred") and report.get("traverse_clicked") and report.get("portal_clicked")) if not dry_run else True
+            else:
+                report["success"] = bool(report.get("simulacrum_selected") and report.get("map_transferred")) if not dry_run else True
+        else:
+            report["success"] = True
+        _log("========================================================")
+        _log(f" [TEST HIDEOUT] Hideout Functionality Test COMPLETE ({'SUCCESS' if report['success'] else 'FAILED'})")
+        _log("========================================================\n")
+        return report
+
+    def close_all_hideout_windows(
+        self,
+        wait_seconds: float = 0.35,
+        verify_close: bool = True,
+        max_attempts: int = 2,
+    ) -> bool:
+        """
+        Presses the Escape key to close all open game windows (Stash, Inventory, Atlas, etc.).
+        Verifies closure via is_inventory_open() and retries if necessary.
+        """
+        self.status_message = "Closing windows (Escape)..."
+        _log("\n[ESCAPE] Closing all open windows via Escape key...")
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+
+        for attempt in range(1, max_attempts + 1):
+            if pydirectinput:
+                pydirectinput.keyDown("escape")
+                time.sleep(0.08)
+                pydirectinput.keyUp("escape")
+                time.sleep(wait_seconds)
+
+            if not verify_close:
+                return True
+
+            if not self.is_inventory_open():
+                _log("  [ESCAPE] Confirmed all windows closed successfully.")
+                self.status_message = "Windows Closed (Escape)"
+                return True
+
+            _log(f"  [ESCAPE] Windows still detected open after attempt {attempt}/{max_attempts}. Retrying...")
+            time.sleep(0.15)
+
+        _log("  [ESCAPE WARNING] Windows remained open after Escape attempts.")
+        return False
+
+    def locate_map_device(
+        self,
+        screen: Optional[np.ndarray] = None,
+        threshold: Optional[float] = None,
+    ) -> Optional[Tuple[int, int]]:
+        """
+        Locates the Map Device in the hideout using multi-scale template matching.
+        Prioritizes the 'MAP DEVICE' label banner, falling back to full map device template.
+        Returns desktop absolute (x, y) coordinates of the click target, or None if not found.
+        """
+        if self.map_device_label_tpl is None and self.map_device_full_tpl is None:
+            self._load_stash_and_inventory_templates()
+
+        if screen is None:
+            capt = self._get_capturer()
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            return None
+
+        eff_thresh = threshold if threshold is not None else self.map_device_match_threshold
+
+        mon_left = 0
+        mon_top = 0
+        capt = self._get_capturer()
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                mon_left = monitors[self.monitor_idx].get("left", 0)
+                mon_top = monitors[self.monitor_idx].get("top", 0)
+
+        sh, sw = screen.shape[:2]
+        scale_est = (sh / 1080.0) if sh >= 720 else 1.0
+        scales = sorted(list(set([
+            1.0,
+            round(scale_est * 0.90, 3),
+            round(scale_est * 0.95, 3),
+            round(scale_est * 1.0, 3),
+            round(scale_est * 1.05, 3),
+            round(scale_est * 1.10, 3),
+        ])))
+
+        # 1. Search for 'MAP DEVICE' label banner
+        if self.map_device_label_tpl is not None:
+            lh, lw = self.map_device_label_tpl.shape[:2]
+            best_lbl_val = -1.0
+            best_lbl_loc = None
+            best_lbl_scale = 1.0
+
+            for s in scales:
+                tw = int(lw * s)
+                th = int(lh * s)
+                if sh < th or sw < tw:
+                    continue
+                scaled_tpl = self.map_device_label_tpl if abs(s - 1.0) < 0.01 else cv2.resize(
+                    self.map_device_label_tpl, (tw, th), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR
+                )
+                res = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val > best_lbl_val:
+                    best_lbl_val = max_val
+                    best_lbl_loc = max_loc
+                    best_lbl_scale = s
+
+            if best_lbl_val >= eff_thresh and best_lbl_loc is not None:
+                cur_w = int(lw * best_lbl_scale)
+                cur_h = int(lh * best_lbl_scale)
+                cx = int(best_lbl_loc[0] + cur_w // 2)
+                # When portals are open right beneath the Map Device, clicking near the bottom edge
+                # can hit the portal label (e.g. 'BLUFF (COMPLETED)').
+                # Click directly on the upper/center text of the label banner, or slightly above.
+                if lh <= 26:
+                    cy = int(best_lbl_loc[1] + int(cur_h * 0.35))
+                else:
+                    cy = int(best_lbl_loc[1] + int(cur_h * 0.22))
+                cy += getattr(self, "map_device_click_y_offset_px", 0)
+                _log(f"  [MAP DEVICE MATCH] Found Map Device label (conf={best_lbl_val:.3f} >= {eff_thresh:.2f}, scale={best_lbl_scale:.2f}) at screen ({cx}, {cy})")
+                return (cx + mon_left, cy + mon_top)
+
+        # 2. Search for Map Device full structure
+        if self.map_device_full_tpl is not None:
+            dh, dw = self.map_device_full_tpl.shape[:2]
+            best_dev_val = -1.0
+            best_dev_loc = None
+            best_dev_scale = 1.0
+            dev_thresh = max(0.50, eff_thresh - 0.05)
+
+            for s in scales:
+                tw = int(dw * s)
+                th = int(dh * s)
+                if sh < th or sw < tw:
+                    continue
+                scaled_tpl = self.map_device_full_tpl if abs(s - 1.0) < 0.01 else cv2.resize(
+                    self.map_device_full_tpl, (tw, th), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR
+                )
+                res = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val > best_dev_val:
+                    best_dev_val = max_val
+                    best_dev_loc = max_loc
+                    best_dev_scale = s
+
+            if best_dev_val >= dev_thresh and best_dev_loc is not None:
+                cur_w = int(dw * best_dev_scale)
+                cur_h = int(dh * best_dev_scale)
+                cx = int(best_dev_loc[0] + cur_w // 2)
+                # Click top-middle (golden dome) to guarantee clicking above open portals
+                cy = int(best_dev_loc[1] + int(cur_h * 0.25)) + getattr(self, "map_device_click_y_offset_px", 0)
+                _log(f"  [MAP DEVICE MATCH] Found Map Device (conf={best_dev_val:.3f} >= {dev_thresh:.2f}, scale={best_dev_scale:.2f}) at screen ({cx}, {cy})")
+                return (cx + mon_left, cy + mon_top)
+
+        return None
+
+    def click_map_device(
+        self,
+        search_attempts: int = 8,
+        timeout: float = 12.0,
+        approach_wait: float = 1.5,
+    ) -> bool:
+        """
+        Locates the Map Device in the hideout, moves mouse to it, and left-clicks.
+        Waits for character to approach and for the Atlas / Map Device screen to open.
+        Includes robust fallbacks for opening Atlas via hotkey 'g' and hideout center click.
+        """
+        self.release_all_keys()
+        self.status_message = "Locating Map Device..."
+        _log("\n[MAP DEVICE] Locating and interacting with Map Device in hideout...")
+
+        # 1. Locate Map Device via template matching (banner label or structure)
+        start_t = time.time()
+        map_device_pos = None
+
+        while (time.time() - start_t) < min(timeout, 6.0):
+            if stop_handler.is_stopped():
+                return False
+            map_device_pos = self.locate_map_device()
+            if map_device_pos is not None:
+                break
+            time.sleep(0.3)
+
+        if map_device_pos is not None:
+            self.last_map_device_pos = map_device_pos
+            _log(f"  [MAP DEVICE] Left-clicking Map Device at desktop ({map_device_pos[0]}, {map_device_pos[1]})...")
+            self.status_message = "Clicking Map Device..."
+            window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+            rx, ry = self.move_mouse_inside_game(map_device_pos[0], map_device_pos[1])
+            time.sleep(0.08)
+            if pydirectinput:
+                pydirectinput.click()
+                time.sleep(0.08)
+                pydirectinput.mouseUp(button="left")
+            time.sleep(0.3)
+            if approach_wait > 0:
+                self._wait_for_approach(approach_wait, reason="MAP DEVICE")
+        else:
+            # 3. Fallback: Press 'G' (PoE Atlas Hotkey)
+            _log("  [MAP DEVICE] Map Device template not found. Pressing 'G' hotkey to open Atlas...")
+            self.status_message = "Opening Atlas ('G')..."
+            window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+            if pydirectinput:
+                pydirectinput.press("g")
+                time.sleep(0.6)
+
+            # Check if Atlas opened via 'G'
+            nodes = self.detect_simulacrum_map_nodes()
+            if nodes:
+                _log(f"  [MAP DEVICE SUCCESS] Atlas opened via 'G' hotkey ({len(nodes)} Simulacrum node(s) visible)!")
+                return True
+
+            # 4. Fallback: Click hideout center (where Map Device is standardly situated)
+            _log("  [MAP DEVICE] 'G' key didn't reveal nodes yet. Clicking hideout center as fallback...")
+            capt = self._get_capturer()
+            screen = capt.capture() if capt else None
+            if screen is not None and screen.size > 0:
+                sh, sw = screen.shape[:2]
+                mon_left = 0
+                mon_top = 0
+                if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+                    monitors = capt._sct.monitors
+                    if 0 <= self.monitor_idx < len(monitors):
+                        mon_left = monitors[self.monitor_idx].get("left", 0)
+                        mon_top = monitors[self.monitor_idx].get("top", 0)
+                cx = sw // 2 + mon_left
+                cy = int(sh * 0.38) + mon_top
+                self.move_mouse_inside_game(cx, cy)
+                time.sleep(0.08)
+                if pydirectinput:
+                    pydirectinput.click()
+                    time.sleep(0.08)
+                    pydirectinput.mouseUp(button="left")
+                time.sleep(approach_wait)
+
+        # Wait for Atlas screen to open (verify by detecting Simulacrum icon or open map)
+        self.status_message = "Waiting for Map Screen..."
+        atlas_open = False
+        verify_start = time.time()
+        while (time.time() - verify_start) < 4.0:
+            if stop_handler.is_stopped():
+                return False
+            nodes = self.detect_simulacrum_map_nodes()
+            if nodes:
+                atlas_open = True
+                _log(f"  [MAP DEVICE SUCCESS] Atlas map screen confirmed open ({len(nodes)} Simulacrum node(s) visible)!")
+                break
+            time.sleep(0.3)
+
+        if not atlas_open:
+            _log("  [MAP DEVICE INFO] Map Device interacted. Proceeding to Simulacrum search...")
+
+        return True
+
+    def detect_green_completed_nodes(
+        self,
+        screen: Optional[np.ndarray] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Detects all completed (green) map nodes across the Atlas map screen.
+        Completed nodes appear as vibrant emerald orbs with a gold border and circular shape.
+        All maps linked by a stripped/dashed line to ANY green location are accessible to the player.
+        """
+        if screen is None:
+            capt = self._get_capturer()
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            return []
+
+        sh, sw = screen.shape[:2]
+        scale = (sh / 1080.0) if sh >= 720 else (sh / 563.0 * 0.52)
+        b_ch, g_ch, r_ch = cv2.split(screen)
+        hsv_img = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV)
+
+        # 1. Emerald green color dominance with neon brightness & morphological closing
+        neon = (g_ch >= 160) & (g_ch.astype(np.int32) >= r_ch.astype(np.int32) * 1.25) & (g_ch.astype(np.int32) >= b_ch.astype(np.int32) * 1.05)
+        neon = neon & (hsv_img[:, :, 0] >= 35) & (hsv_img[:, :, 0] <= 85) & (hsv_img[:, :, 1] >= 65) & (hsv_img[:, :, 2] >= 85)
+        neon_u8 = neon.astype(np.uint8) * 255
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        closed = cv2.morphologyEx(neon_u8, cv2.MORPH_CLOSE, kernel)
+
+        cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        min_a = max(10, int(15 * (scale ** 2)))
+        max_a = max(80, int(250 * (scale ** 2)))
+
+        greens = []
+        for c in cnts:
+            area = cv2.contourArea(c)
+            if min_a <= area <= max_a:
+                peri = cv2.arcLength(c, True)
+                if peri > 0:
+                    circ = 4 * np.pi * area / (peri * peri)
+                    if circ >= 0.20:
+                        M = cv2.moments(c)
+                        if M["m00"] > 0:
+                            cx = int(M["m10"] / M["m00"])
+                            cy = int(M["m01"] / M["m00"])
+                            # Exclude map legend in top-left
+                            if cx < int(180 * scale) and cy < int(240 * scale):
+                                continue
+                            # Exclude inventory panel on right (x > 0.66 * sw)
+                            if cx > int(0.66 * sw):
+                                continue
+                            # Exclude bottom HUD / top menu bar
+                            if cy > int(0.85 * sh) or cy < int(40 * scale):
+                                continue
+                            # Exclude pure foliage by checking surrounding annular neighborhood
+                            r_ring = max(6, int(14 * scale))
+                            ring_roi = screen[max(0, cy - r_ring) : cy + r_ring + 1, max(0, cx - r_ring) : cx + r_ring + 1]
+                            if ring_roi.size > 0:
+                                _, rg, rr = cv2.split(ring_roi)
+                                if np.mean(rg > rr * 1.25) < 0.65:
+                                    greens.append({"center": (cx, cy), "area": area, "circularity": circ})
+        return greens
+
+    def check_node_accessibility(
+        self,
+        circle_pos: Tuple[int, int],
+        green_nodes: List[Dict[str, Any]],
+        screen: np.ndarray,
+        max_dist: int = 180,
+        medal_pos: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Determines whether a map node circle is ACCESSIBLE to the player:
+        1. Checks whether the node is connected by a dashed/stripped line to any completed GREEN location.
+        2. Checks whether the node's circle exhibits the 'MAP NODE (ACCESSIBLE)' bright white core and glowing blue ring.
+        Assigns an accessibility score:
+            3: Connected to green node AND has glowing blue portal core (highest accessibility)
+            2: Connected to green node via dashed/stripped line
+            1: Glowing blue portal core with white center
+            0: Inaccessible (dark circle, not connected to any green node)
+        """
+        sh, sw = screen.shape[:2]
+        scale = (sh / 1080.0) if sh >= 720 else (sh / 563.0 * 0.52)
+        cx, cy = circle_pos
+
+        # Check circle appearance (white core + blue glow)
+        # Check vertical strip between medal_pos and circle to reliably detect glowing blue portal core
+        if medal_pos is not None:
+            mx, my = medal_pos
+            patch = screen[max(0, my + int(12 * scale)) : min(sh, my + int(32 * scale)), max(0, mx - int(8 * scale)) : min(sw, mx + int(8 * scale))]
+        else:
+            r_patch = max(3, int(8 * scale))
+            patch = screen[max(0, cy - r_patch) : cy + r_patch + 1, max(0, cx - r_patch) : cx + r_patch + 1]
+        has_blue_glow = False
+        has_white_core = False
+        if patch.size > 0:
+            b_p, g_p, r_p = cv2.split(patch)
+            blue_excess = int(np.mean(b_p)) - int(np.mean(r_p))
+            max_lum = int(np.max(patch))
+            has_blue_glow = (blue_excess >= 12)
+            has_white_core = (max_lum >= 220)
+
+        # Check dashed line connectivity
+        hsv_local = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV)
+        line_mask = (
+            ((hsv_local[:, :, 0] >= 12) & (hsv_local[:, :, 0] <= 42) & (hsv_local[:, :, 1] >= 28) & (hsv_local[:, :, 2] >= 85))
+            | (hsv_local[:, :, 2] >= 150)
+        )
+        line_mask_u8 = line_mask.astype(np.uint8) * 255
+
+        scaled_max_dist = min(220, int(max_dist * (scale / 0.52 if scale < 0.7 else scale)))
+        margin = max(4, int(8 * scale))
+        connected_greens = []
+
+        for g in green_nodes:
+            gx, gy = g["center"] if isinstance(g, dict) and "center" in g else g
+            # Disregard green noise that overlaps the candidate medal itself
+            if medal_pos is not None:
+                if math.hypot(gx - medal_pos[0], gy - medal_pos[1]) < int(40 * scale):
+                    continue
+            dist = float(np.hypot(gx - cx, gy - cy))
+            if dist < int(10 * scale) or dist > scaled_max_dist:
+                continue
+            num_pts = max(5, int(dist))
+            t_vals = np.linspace(margin / dist, 1.0 - margin / dist, max(5, num_pts - 2 * margin))
+            xs = (cx + t_vals * (gx - cx)).astype(int)
+            ys = (cy + t_vals * (gy - cy)).astype(int)
+            hits = 0
+            box = max(1, int(1.5 * scale))
+            for x, y in zip(xs, ys):
+                if 0 <= y < sh and 0 <= x < sw:
+                    if np.any(line_mask_u8[max(0, y - box) : y + box + 1, max(0, x - box) : x + box + 1] > 0):
+                        hits += 1
+            hit_ratio = hits / float(len(xs))
+            if hit_ratio >= 0.22:
+                connected_greens.append({"green_pos": (gx, gy), "dist": float(dist), "hit_ratio": float(hit_ratio)})
+
+        has_green_link = bool(len(connected_greens) > 0)
+        has_portal = bool(has_blue_glow and has_white_core)
+
+        if has_green_link and has_portal:
+            acc_score = 3
+        elif has_green_link:
+            acc_score = 2
+        elif has_portal:
+            acc_score = 1
+        else:
+            acc_score = 0
+
+        is_accessible = bool(acc_score > 0)
+        return {
+            "is_accessible": is_accessible,
+            "acc_score": acc_score,
+            "connected_greens": connected_greens,
+            "has_blue_glow": has_blue_glow,
+            "has_white_core": has_white_core,
+        }
+
+    def detect_simulacrum_map_nodes(
+        self,
+        screen: Optional[np.ndarray] = None,
+        threshold: Optional[float] = None,
+        nms_distance: float = 28.0,
+    ) -> List[Dict[str, Any]]:
+        """
+        Scans the active Atlas map screen for Simulacrum nodes using multi-scale template matching.
+        Uses simulacrum_node_v1.png, simulacrum_node_v2.png, simulacrum_node_v3.png,
+        simulacrum_medal.png, simulacrum_icon.png, and simulacrum_node_full.png.
+        For each detected medal/icon at (cx, cy), computes the exact map circle coordinate:
+            circle_x = cx
+            circle_y = cy + simulacrum_click_y_offset * scale (default +26px)
+        Evaluates accessibility to verify if linked by stripped/dashed line to ANY green location.
+        Returns a sorted list of candidate nodes with accessible nodes prioritized first!
+        """
+        if (
+            self.simulacrum_icon_tpl is None
+            and self.simulacrum_medal_tpl is None
+            and self.simulacrum_node_tpl is None
+            and getattr(self, "simulacrum_node_v1_tpl", None) is None
+        ):
+            self._load_stash_and_inventory_templates()
+
+        templates_to_try = []
+        if getattr(self, "simulacrum_node_v1_tpl", None) is not None:
+            templates_to_try.append(("node_v1", self.simulacrum_node_v1_tpl, 0, 0))
+        if getattr(self, "simulacrum_node_v2_tpl", None) is not None:
+            templates_to_try.append(("node_v2", self.simulacrum_node_v2_tpl, 0, 0))
+        if getattr(self, "simulacrum_node_v3_tpl", None) is not None:
+            templates_to_try.append(("node_v3", self.simulacrum_node_v3_tpl, 0, 0))
+        if self.simulacrum_medal_tpl is not None:
+            templates_to_try.append(("medal", self.simulacrum_medal_tpl, 0, 0))
+        if self.simulacrum_icon_tpl is not None:
+            templates_to_try.append(("icon", self.simulacrum_icon_tpl, 0, 0))
+        if self.simulacrum_node_tpl is not None:
+            templates_to_try.append(("node_full", self.simulacrum_node_tpl, 0, -10))
+
+        if not templates_to_try:
+            return []
+
+        if screen is None:
+            capt = self._get_capturer()
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            return []
+
+        eff_thresh = threshold if threshold is not None else max(0.75, self.simulacrum_match_threshold)
+
+        mon_left = 0
+        mon_top = 0
+        capt = self._get_capturer()
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                mon_left = monitors[self.monitor_idx].get("left", 0)
+                mon_top = monitors[self.monitor_idx].get("top", 0)
+
+        sh, sw = screen.shape[:2]
+        scale_est = sh / 1080.0
+        scales = sorted(set([
+            round(scale_est * f, 3) for f in [0.92, 0.96, 1.0, 1.04, 1.08]
+        ]))
+
+        # Check if inventory panel is visible on right to constrain map search area
+        inv_open = False
+        try:
+            inv_open = self.is_inventory_open(screen=screen)
+        except Exception:
+            inv_open = False
+        max_map_x = int(0.58 * sw) if inv_open else int(0.66 * sw)
+
+        raw_candidates = []
+
+        for tname, tpl, x_off, y_off in templates_to_try:
+            th, tw = tpl.shape[:2]
+            for s in scales:
+                scaled_w = int(tw * s)
+                scaled_h = int(th * s)
+                if sh < scaled_h or sw < scaled_w:
+                    continue
+                scaled_tpl = tpl if abs(s - 1.0) < 0.01 else cv2.resize(
+                    tpl, (scaled_w, scaled_h), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR
+                )
+                res = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                locs = np.where(res >= eff_thresh)
+                for pt_y, pt_x in zip(locs[0], locs[1]):
+                    conf = float(res[pt_y, pt_x])
+                    cx = int(pt_x + scaled_w // 2 + x_off * s)
+                    cy = int(pt_y + (scaled_h // 2 if tname != "node_full" else 17 * s) + y_off * s)
+
+                    # Exclude HUD, inventory area, and borders
+                    if cx > max_map_x or cx < int(0.12 * sw) or cy < int(0.08 * sh) or cy > int(0.85 * sh):
+                        continue
+
+                    raw_candidates.append({
+                        "cx": cx,
+                        "cy": cy,
+                        "conf": conf,
+                        "scale": s,
+                        "template": tname,
+                    })
+
+        if not raw_candidates:
+            return []
+
+        # Non-Maximum Suppression (NMS) to merge overlapping detections
+        raw_candidates.sort(key=lambda c: c["conf"], reverse=True)
+        filtered = []
+
+        for cand in raw_candidates:
+            cx, cy = cand["cx"], cand["cy"]
+            eff_dist = nms_distance * cand["scale"]
+            is_dup = False
+            for kept in filtered:
+                dist = math.hypot(cx - kept["cx"], cy - kept["cy"])
+                if dist < eff_dist:
+                    is_dup = True
+                    break
+            if not is_dup:
+                filtered.append(cand)
+
+        # Detect green completed map nodes on the Atlas map
+        green_nodes = self.detect_green_completed_nodes(screen=screen)
+
+        results = []
+        screen_center = (sw // 2, sh // 2)
+
+        for f in filtered:
+            s = f["scale"]
+            medal_x = f["cx"]
+            medal_y = f["cy"]
+            # Circle is located below the medal at delta_y = +simulacrum_click_y_offset * scale (default +26px)
+            circle_x = medal_x
+            circle_y = int(round(medal_y + getattr(self, "simulacrum_click_y_offset", 26.0) * s))
+
+            desktop_medal_x = medal_x + mon_left
+            desktop_medal_y = medal_y + mon_top
+            desktop_circle_x = circle_x + mon_left
+            desktop_circle_y = circle_y + mon_top
+
+            dist_from_center = math.hypot(circle_x - screen_center[0], circle_y - screen_center[1])
+
+            # Check accessibility: connected to green location via stripped line and/or blue accessible glow
+            acc_info = self.check_node_accessibility((circle_x, circle_y), green_nodes, screen=screen, medal_pos=(medal_x, medal_y))
+
+            results.append({
+                "screen_medal_pos": (medal_x, medal_y),
+                "screen_circle_pos": (circle_x, circle_y),
+                "medal_pos": (desktop_medal_x, desktop_medal_y),
+                "circle_pos": (desktop_circle_x, desktop_circle_y),
+                "confidence": f["conf"],
+                "scale": s,
+                "template": f["template"],
+                "dist_from_center": dist_from_center,
+                "is_accessible": acc_info["is_accessible"],
+                "acc_score": acc_info.get("acc_score", 0),
+                "connected_greens": acc_info["connected_greens"],
+                "has_blue_glow": acc_info["has_blue_glow"],
+                "has_white_core": acc_info["has_white_core"],
+            })
+
+        # Sort candidates:
+        # 1. Highest accessibility score (connected to green & blue portal first)
+        # 2. Highest template matching confidence
+        # 3. Distance from screen center
+        results.sort(key=lambda r: (-r["acc_score"], -r["confidence"], r["dist_from_center"]))
+
+        _log(f"  [SIMULACRUM DETECT] Found {len(results)} distinct Simulacrum node(s) on screen (thresh={eff_thresh:.2f}, green_nodes={len(green_nodes)}):")
+        for idx, r in enumerate(results):
+            score = r.get("acc_score", 0)
+            if score == 3:
+                acc_str = f"ACCESSIBLE (Connected to {len(r['connected_greens'])} green node(s) & glowing blue portal)"
+            elif score == 2:
+                acc_str = f"ACCESSIBLE (Connected to {len(r['connected_greens'])} green node(s))"
+            elif score == 1:
+                acc_str = "ACCESSIBLE (Glowing blue portal core)"
+            else:
+                acc_str = "INACCESSIBLE (Not connected to any green node)"
+            _log(f"    - Node #{idx+1}: medal={r['screen_medal_pos']}, circle={r['screen_circle_pos']}, conf={r['confidence']:.3f}, scale={r['scale']:.2f} [{acc_str}]")
+
+        return results
+
+        return results
+
+    def is_simulacrum_popup_visible(
+        self,
+        screen: Optional[np.ndarray] = None,
+        threshold: Optional[float] = None,
+        save_debug: bool = True,
+    ) -> bool:
+        """
+        Detects whether the 'SIMULACRUM OF DELUSION' popup window is currently open and
+        AVAILABLE to the player (i.e. contains the 2x2 square split in 4 empty spaces for maps
+        and/or the TRAVERSE button).
+
+        If ONLY the 'SIMULACRUM OF DELUSION' title banner is visible without the 4-square
+        split below, it means this particular map node is NOT available to the player from here,
+        so this function returns False, allowing the caller to iterate to the next map circle.
+        """
+        if self.delusion_popup_tpl is None and getattr(self, "delusion_4square_tpl", None) is None:
+            self._load_stash_and_inventory_templates()
+
+        if screen is None:
+            capt = self._get_capturer()
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            return False
+
+        eff_thresh = threshold if threshold is not None else self.delusion_popup_match_threshold
+        sh, sw = screen.shape[:2]
+        scale_est = (sh / 1080.0) if sh >= 720 else 1.0
+        scales = [round(scale_est * f, 3) for f in [0.85, 0.90, 0.95, 1.0, 1.05, 1.10, 1.15]]
+
+        mon_left = 0
+        mon_top = 0
+        capt = self._get_capturer()
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                mon_left = monitors[self.monitor_idx].get("left", 0)
+                mon_top = monitors[self.monitor_idx].get("top", 0)
+
+        best_device_val = -1.0
+        best_device_loc = None
+        best_device_scale = 1.0
+
+        # Fast-path: Check scale 1.0 on delusion_4square_tpl or delusion_traverse_tpl
+        if getattr(self, "delusion_4square_tpl", None) is not None:
+            res_fast = cv2.matchTemplate(screen, self.delusion_4square_tpl, cv2.TM_CCOEFF_NORMED)
+            _, max_fast, _, max_loc_fast = cv2.minMaxLoc(res_fast)
+            if max_fast >= max(0.65, eff_thresh):
+                lx, ly = max_loc_fast
+                self.delusion_detected_slots = [
+                    (lx + int(63) + mon_left, ly + int(63) + mon_top),
+                    (lx + int(131) + mon_left, ly + int(63) + mon_top),
+                    (lx + int(63) + mon_left, ly + int(131) + mon_top),
+                    (lx + int(131) + mon_left, ly + int(131) + mon_top),
+                ]
+                self.delusion_detected_traverse = (lx + int(95) + mon_left, ly + int(247) + mon_top)
+                _log(f"  [DELUSION POPUP SUCCESS] Confirmed 'SIMULACRUM OF DELUSION' popup visible with 4-square slots (fast conf={max_fast:.3f})!")
+                _log("  [DELUSION POPUP SUCCESS] Map IS AVAILABLE for player! 4 empty slots detected.")
+                if save_debug:
+                    os.makedirs(self.inventory_screenshots_dir, exist_ok=True)
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    debug_path = os.path.join(self.inventory_screenshots_dir, f"delusion_popup_available_{ts}.png")
+                    cv2.imwrite(debug_path, screen)
+                return True
+
+        if getattr(self, "delusion_traverse_tpl", None) is not None:
+            res_trav = cv2.matchTemplate(screen, self.delusion_traverse_tpl, cv2.TM_CCOEFF_NORMED)
+            _, max_trav, _, max_loc_trav = cv2.minMaxLoc(res_trav)
+            if max_trav >= 0.70:
+                tx, ty = max_loc_trav
+                th, tw = self.delusion_traverse_tpl.shape[:2]
+                self.delusion_detected_traverse = (tx + tw // 2 + mon_left, ty + th // 2 + mon_top)
+                lx = tx - 30
+                ly = ty - 222
+                self.delusion_detected_slots = [
+                    (lx + int(63) + mon_left, ly + int(63) + mon_top),
+                    (lx + int(131) + mon_left, ly + int(63) + mon_top),
+                    (lx + int(63) + mon_left, ly + int(131) + mon_top),
+                    (lx + int(131) + mon_left, ly + int(131) + mon_top),
+                ]
+                _log(f"  [DELUSION POPUP SUCCESS] Confirmed 'SIMULACRUM OF DELUSION' popup visible via TRAVERSE button (fast conf={max_trav:.3f})!")
+                _log("  [DELUSION POPUP SUCCESS] Map IS AVAILABLE for player!")
+                if save_debug:
+                    os.makedirs(self.inventory_screenshots_dir, exist_ok=True)
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    debug_path = os.path.join(self.inventory_screenshots_dir, f"delusion_popup_available_{ts}.png")
+                    cv2.imwrite(debug_path, screen)
+                return True
+
+        # 1. Match against delusion_popup_tpl (full popup: banner + 4-square grid + traverse)
+        if self.delusion_popup_tpl is not None:
+            ph, pw = self.delusion_popup_tpl.shape[:2]
+            for s in scales:
+                tw = int(pw * s)
+                th = int(ph * s)
+                if sh < th or sw < tw:
+                    continue
+                scaled_tpl = self.delusion_popup_tpl if abs(s - 1.0) < 0.01 else cv2.resize(
+                    self.delusion_popup_tpl, (tw, th), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR
+                )
+                res = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val > best_device_val:
+                    best_device_val = max_val
+                    best_device_loc = max_loc
+                    best_device_scale = s
+
+        # 2. Match against 4-square slots template (the 2x2 empty map spaces grid)
+        best_4sq_val = -1.0
+        best_4sq_loc = None
+        best_4sq_scale = 1.0
+        if getattr(self, "delusion_4square_tpl", None) is not None:
+            qh, qw = self.delusion_4square_tpl.shape[:2]
+            for s in scales:
+                tw = int(qw * s)
+                th = int(qh * s)
+                if sh < th or sw < tw:
+                    continue
+                scaled_tpl = self.delusion_4square_tpl if abs(s - 1.0) < 0.01 else cv2.resize(
+                    self.delusion_4square_tpl, (tw, th), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR
+                )
+                res = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val > best_4sq_val:
+                    best_4sq_val = max_val
+                    best_4sq_loc = max_loc
+                    best_4sq_scale = s
+
+        # 3. Match against TRAVERSE button template
+        best_trav_val = -1.0
+        best_trav_loc = None
+        best_trav_scale = 1.0
+        if getattr(self, "delusion_traverse_tpl", None) is not None:
+            th_btn, tw_btn = self.delusion_traverse_tpl.shape[:2]
+            for s in scales:
+                tw = int(tw_btn * s)
+                th = int(th_btn * s)
+                if sh < th or sw < tw:
+                    continue
+                scaled_tpl = self.delusion_traverse_tpl if abs(s - 1.0) < 0.01 else cv2.resize(
+                    self.delusion_traverse_tpl, (tw, th), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR
+                )
+                res = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, max_loc = cv2.minMaxLoc(res)
+                if max_val > best_trav_val:
+                    best_trav_val = max_val
+                    best_trav_loc = max_loc
+                    best_trav_scale = s
+
+        # Has the 4-square map device or traverse button been confirmed?
+        has_device = (best_device_val >= eff_thresh) or (best_4sq_val >= eff_thresh) or (best_trav_val >= max(0.55, eff_thresh))
+
+        if has_device:
+            # Map is available! Compute exact slot pixel coordinates
+            if best_device_val >= eff_thresh and best_device_loc is not None:
+                s = best_device_scale
+                lx, ly = best_device_loc
+                self.delusion_detected_slots = [
+                    (lx + int(173 * s) + mon_left, ly + int(153 * s) + mon_top),
+                    (lx + int(241 * s) + mon_left, ly + int(153 * s) + mon_top),
+                    (lx + int(173 * s) + mon_left, ly + int(221 * s) + mon_top),
+                    (lx + int(241 * s) + mon_left, ly + int(221 * s) + mon_top),
+                ]
+                self.delusion_detected_traverse = (lx + int(207 * s) + mon_left, ly + int(337 * s) + mon_top)
+            elif best_4sq_val >= eff_thresh and best_4sq_loc is not None:
+                s = best_4sq_scale
+                lx, ly = best_4sq_loc
+                self.delusion_detected_slots = [
+                    (lx + int(63 * s) + mon_left, ly + int(63 * s) + mon_top),
+                    (lx + int(131 * s) + mon_left, ly + int(63 * s) + mon_top),
+                    (lx + int(63 * s) + mon_left, ly + int(131 * s) + mon_top),
+                    (lx + int(131 * s) + mon_left, ly + int(131 * s) + mon_top),
+                ]
+                self.delusion_detected_traverse = (lx + int(97 * s) + mon_left, ly + int(247 * s) + mon_top)
+
+            # If TRAVERSE button was directly detected on screen, prioritize its exact coordinate
+            if best_trav_val >= max(0.55, eff_thresh) and best_trav_loc is not None and getattr(self, "delusion_traverse_tpl", None) is not None:
+                th_btn, tw_btn = self.delusion_traverse_tpl.shape[:2]
+                s = best_trav_scale
+                tw = int(tw_btn * s)
+                th = int(th_btn * s)
+                self.delusion_detected_traverse = (best_trav_loc[0] + tw // 2 + mon_left, best_trav_loc[1] + th // 2 + mon_top)
+
+            conf_str = f"popup={best_device_val:.3f}, 4sq={best_4sq_val:.3f}, trav={best_trav_val:.3f}"
+            _log(f"  [DELUSION POPUP SUCCESS] Confirmed 'SIMULACRUM OF DELUSION' popup visible with 4-square slots ({conf_str})!")
+            _log("  [DELUSION POPUP SUCCESS] Map IS AVAILABLE for player! 4 empty slots detected.")
+            if save_debug:
+                os.makedirs(self.inventory_screenshots_dir, exist_ok=True)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                debug_path = os.path.join(self.inventory_screenshots_dir, f"delusion_popup_available_{ts}.png")
+                cv2.imwrite(debug_path, screen)
+            return True
+
+        # 4. Check if ONLY the title banner is visible without the 4-square device below it
+        best_title_val = -1.0
+        if getattr(self, "delusion_title_tpl", None) is not None:
+            bh, bw = self.delusion_title_tpl.shape[:2]
+            for s in scales:
+                tw = int(bw * s)
+                th = int(bh * s)
+                if sh < th or sw < tw:
+                    continue
+                scaled_tpl = self.delusion_title_tpl if abs(s - 1.0) < 0.01 else cv2.resize(
+                    self.delusion_title_tpl, (tw, th), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR
+                )
+                res = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                _, max_val, _, _ = cv2.minMaxLoc(res)
+                if max_val > best_title_val:
+                    best_title_val = max_val
+
+        if best_title_val >= eff_thresh:
+            _log(f"  [DELUSION POPUP UNAVAILABLE] 'SIMULACRUM OF DELUSION' title banner is visible (conf={best_title_val:.3f} >= {eff_thresh:.2f}), BUT the square split in 4 below is NOT present!")
+            _log("  [DELUSION POPUP UNAVAILABLE] This particular map is NOT accessible for the player from here.")
+            return False
+
+        # 5. Heuristic fallback when templates are missing (e.g., bare test environment)
+        if self.delusion_popup_tpl is None and getattr(self, "delusion_4square_tpl", None) is None:
+            center_roi = screen[int(sh * 0.20):int(sh * 0.75), int(sw * 0.25):int(sw * 0.75)]
+            if center_roi.size > 0:
+                gray = cv2.cvtColor(center_roi, cv2.COLOR_BGR2GRAY)
+                edges = cv2.Canny(gray, 50, 150)
+                edge_density = float(np.count_nonzero(edges)) / float(edges.size)
+                has_dialog_structure = bool(0.035 <= edge_density <= 0.25)
+                if has_dialog_structure:
+                    hsv = cv2.cvtColor(center_roi, cv2.COLOR_BGR2HSV)
+                    gold_mask = cv2.inRange(hsv, np.array([12, 70, 70]), np.array([35, 255, 255]))
+                    gold_px = np.count_nonzero(gold_mask)
+                    if gold_px > int(80 * scale_est):
+                        _log(f"  [DELUSION POPUP HEURISTIC] Detected central dialog with golden banner (gold_px={gold_px}, edge_density={edge_density:.3f}).")
+                        return True
+
+        return False
+
+    def select_accessible_simulacrum_map(
+        self,
+        max_attempts: int = 6,
+        candidates: Optional[List[Dict[str, Any]]] = None,
+        screen: Optional[np.ndarray] = None,
+        dry_run: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Iterates through detected Simulacrum map circles:
+        1. Dynamically detects candidate nodes on the live Atlas screen.
+        2. Prioritizes accessible candidates linked to green locations and glowing blue portals.
+        3. Clicks the candidate node with a rock-solid, fixed mouse-down/up sequence to prevent map panning.
+        4. Polls for up to 1.5s to verify if the 'SIMULACRUM OF DELUSION' popup is visible.
+        5. If the popup does NOT open (e.g. map slightly moved or clicked slightly low), immediately captures
+           a fresh screen, re-detects the live candidate coordinates, and retries with vertical target adjustment.
+        6. Proceeds across candidate nodes until the Delusion popup is confirmed open.
+        """
+        passed_explicit_candidates = bool(candidates is not None and len(candidates) > 0)
+        self.status_message = "Finding Simulacrum Map..."
+        _log("\n[SIMULACRUM SELECTION] Searching for accessible Simulacrum map on Atlas...")
+
+        capt = self._get_capturer()
+
+        if candidates is None:
+            poll_start = time.time()
+            while (time.time() - poll_start) < 3.5:
+                if stop_handler.is_stopped():
+                    return None
+                candidates = self.detect_simulacrum_map_nodes(screen=screen)
+                if candidates:
+                    break
+                time.sleep(0.4)
+                screen = None
+
+        if not candidates:
+            eff_thresh = getattr(self, "simulacrum_match_threshold", 0.78)
+            relaxed_thresh = max(0.72, eff_thresh - 0.08)
+            _log(f"  [SIMULACRUM RETRY] Retrying detection with safe relaxed threshold {relaxed_thresh:.2f}...")
+            candidates = self.detect_simulacrum_map_nodes(screen=None, threshold=relaxed_thresh)
+
+        if not candidates:
+            _log("  [SIMULACRUM WARNING] No Simulacrum map nodes found on screen.")
+            return None
+
+        # Prioritize candidates confirmed accessible via connection to a GREEN location
+        if getattr(self, "sim_require_green_connection", True):
+            accessible_candidates = [c for c in candidates if c.get("is_accessible", False)]
+            if accessible_candidates:
+                _log(f"  [SIMULACRUM FILTER] Found {len(accessible_candidates)} accessible Simulacrum map(s) linked to GREEN location(s). Prioritizing strictly accessible nodes!")
+                candidates = accessible_candidates
+            else:
+                _log("  [SIMULACRUM FILTER WARNING] None of the detected Simulacrum nodes are connected to a GREEN location. Testing detected nodes as fallback...")
+
+        _log(f"  [SIMULACRUM SELECTION] Found {len(candidates)} candidate node(s). Testing accessibility with fresh-capture retry...")
+
+        failed_nodes: List[Tuple[int, int]] = []
+
+        for idx in range(max_attempts):
+            if stop_handler.is_stopped():
+                return None
+
+            # On dynamic attempts (when candidates weren't manually passed by caller):
+            # Take a fresh screen capture on EVERY attempt after idx > 0 so that if the map
+            # slightly moved or panned during the click, all coordinates are freshly resynchronized!
+            if idx > 0 and not passed_explicit_candidates:
+                time.sleep(0.3)
+                fresh_screen = None
+                try:
+                    fresh_screen = capt.capture() if capt else None
+                except Exception:
+                    pass
+                if fresh_screen is not None and fresh_screen.size > 0:
+                    fresh_candidates = self.detect_simulacrum_map_nodes(screen=fresh_screen)
+                    if fresh_candidates:
+                        if getattr(self, "sim_require_green_connection", True):
+                            fresh_acc = [c for c in fresh_candidates if c.get("is_accessible", False)]
+                            if fresh_acc:
+                                fresh_candidates = fresh_acc
+                        candidates = fresh_candidates
+                        _log(f"  [SIMULACRUM RESYNC] Captured fresh screen: detected {len(candidates)} live node(s) on Atlas map.")
+
+            if not candidates:
+                _log("  [SIMULACRUM EXHAUSTED] No candidate circles detected on screen.")
+                break
+
+            # Pick which candidate to click:
+            cand_idx = 0
+            if passed_explicit_candidates:
+                cand_idx = idx if idx < len(candidates) else len(candidates) - 1
+            else:
+                # Find the first candidate that hasn't exceeded 2 failed attempts
+                chosen_cand_idx = 0
+                for c_i, c in enumerate(candidates):
+                    c_pt = c["screen_circle_pos"]
+                    attempts_for_c = sum(1 for fp in failed_nodes if math.hypot(c_pt[0] - fp[0], c_pt[1] - fp[1]) < 45)
+                    if attempts_for_c < 2:
+                        chosen_cand_idx = c_i
+                        break
+                else:
+                    chosen_cand_idx = idx % len(candidates)
+                cand_idx = chosen_cand_idx
+
+            node = candidates[cand_idx]
+            circ_x, circ_y = node["circle_pos"]
+            screen_x, screen_y = node["screen_circle_pos"]
+            medal_x, medal_y = node["medal_pos"]
+            acc_score = node.get("acc_score", 0)
+            acc_tag = "[ACCESSIBLE - GREEN LINK]" if acc_score >= 2 or node.get("is_accessible") else "[UNCONFIRMED / INACCESSIBLE]"
+
+            # Check if this node was already tried once: if so, retry by clicking slightly higher on the medal icon
+            past_attempts_here = sum(1 for fp in failed_nodes if math.hypot(screen_x - fp[0], screen_y - fp[1]) < 45)
+            target_x = circ_x
+            target_y = circ_y
+            if past_attempts_here >= 1:
+                # Retry: click directly on the medal icon
+                target_x = medal_x
+                target_y = medal_y + int(5 * node.get("scale", 1.0))
+                _log(f"\n  [SIMULACRUM ATTEMPT {idx+1}/{max_attempts}] Retrying {acc_tag} node #{cand_idx+1} at medal icon desktop ({target_x}, {target_y})...")
+            else:
+                _log(f"\n  [SIMULACRUM ATTEMPT {idx+1}/{max_attempts}] Clicking {acc_tag} node #{cand_idx+1} map circle at desktop ({target_x}, {target_y}) [screen ({screen_x}, {screen_y})]...")
+
+            self.status_message = f"Testing Simulacrum Map #{idx+1}..."
+
+            if dry_run:
+                _log(f"    [DRY RUN] Would click circle #{idx+1} at ({target_x}, {target_y}).")
+                return node
+
+            window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+            rx, ry = self.move_mouse_inside_game(target_x, target_y)
+            time.sleep(0.15)
+            if pydirectinput:
+                pydirectinput.mouseDown(button="left")
+                time.sleep(0.08)
+                pydirectinput.mouseUp(button="left")
+            time.sleep(0.40)
+
+            # Check if popup is visible
+            verify_screen = None
+            try:
+                verify_screen = capt.capture() if capt else None
+            except Exception:
+                pass
+
+            popup_visible = self.is_simulacrum_popup_visible(screen=verify_screen, save_debug=False)
+            if not popup_visible and not passed_explicit_candidates:
+                poll_popup_start = time.time()
+                while (time.time() - poll_popup_start) < 1.4:
+                    if stop_handler.is_stopped():
+                        return None
+                    time.sleep(0.2)
+                    try:
+                        verify_screen = capt.capture() if capt else None
+                    except Exception:
+                        pass
+                    if self.is_simulacrum_popup_visible(screen=verify_screen, save_debug=False):
+                        popup_visible = True
+                        break
+
+            # Save debug screenshot for this attempt
+            if verify_screen is not None and getattr(verify_screen, "size", 0) > 0:
+                os.makedirs(self.inventory_screenshots_dir, exist_ok=True)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                debug_p = os.path.join(self.inventory_screenshots_dir, f"sim_circle_attempt_{idx+1}_{'OPEN' if popup_visible else 'CLOSED'}_{ts}.png")
+                cv2.imwrite(debug_p, verify_screen)
+
+            if popup_visible:
+                self._last_selected_sim_circle = (target_x, target_y)
+                _log(f"  [SIMULACRUM SUCCESS] 'SIMULACRUM OF DELUSION' popup CONFIRMED OPEN on candidate #{cand_idx+1} (attempt {idx+1})!")
+                self.status_message = "Simulacrum of Delusion Open!"
+                return node
+            else:
+                _log(f"  [SIMULACRUM RETRY] Popup NOT visible after attempt #{idx+1}. Capturing fresh screen and retrying live coordinates...")
+                failed_nodes.append((screen_x, screen_y))
+                time.sleep(0.3)
+
+        _log("  [SIMULACRUM EXHAUSTED] None of the tested Simulacrum circles opened the Delusion popup.")
+        return None
+
+    def locate_tier15_maps_in_inventory(
+        self,
+        screen: Optional[np.ndarray] = None,
+        threshold: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Scans columns 10, 11, and 12 (0-indexed 9, 10, 11) of the player's open inventory
+        for Tier 15 maps (matching templates/ui/tier15_map.png or non-empty slot).
+        Returns a list of detected map items with row, column, desktop (x, y) coordinates, and confidence.
+        """
+        if self.tier15_map_tpl is None:
+            self._load_stash_and_inventory_templates()
+
+        if screen is None:
+            capt = self._get_capturer()
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            return []
+
+        inv_info = self.locate_inventory_window(screen=screen)
+        if inv_info is None:
+            _log("  [MAP SEARCH WARNING] Inventory window not detected on screen.")
+            return []
+
+        row_centers = inv_info["row_centers"]
+        col_centers = inv_info["col_centers"]
+        scale = inv_info["scale"]
+
+        mon_left = 0
+        mon_top = 0
+        capt = self._get_capturer()
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                mon_left = monitors[self.monitor_idx].get("left", 0)
+                mon_top = monitors[self.monitor_idx].get("top", 0)
+
+        sh, sw = screen.shape[:2]
+        eff_thresh = threshold if threshold is not None else self.tier15_map_match_threshold
+
+        map_items = []
+        target_cols = [9, 10, 11]  # Columns 10, 11, 12
+        half_box = max(10, int(22 * scale))
+
+        for r, cy in enumerate(row_centers):
+            for c in target_cols:
+                if c >= len(col_centers):
+                    continue
+                cx = col_centers[c]
+                cx_i = int(round(cx))
+                cy_i = int(round(cy))
+
+                if cy_i - half_box < 0 or cy_i + half_box > sh or cx_i - half_box < 0 or cx_i + half_box > sw:
+                    continue
+
+                patch = screen[cy_i - half_box : cy_i + half_box, cx_i - half_box : cx_i + half_box]
+                desktop_x = cx_i + mon_left
+                desktop_y = cy_i + mon_top
+
+                best_conf = 0.0
+                if self.tier15_map_tpl is not None and patch.shape[0] >= 20 and patch.shape[1] >= 20:
+                    mh, mw = self.tier15_map_tpl.shape[:2]
+                    scaled_mw = max(10, int(mw * scale))
+                    scaled_mh = max(10, int(mh * scale))
+                    if patch.shape[0] >= scaled_mh and patch.shape[1] >= scaled_mw:
+                        scaled_tpl = self.tier15_map_tpl if abs(scale - 1.0) < 0.01 else cv2.resize(
+                            self.tier15_map_tpl, (scaled_mw, scaled_mh), interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+                        )
+                        res = cv2.matchTemplate(patch, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+                        _, max_v, _, _ = cv2.minMaxLoc(res)
+                        best_conf = float(max_v)
+
+                is_map = best_conf >= eff_thresh or (best_conf >= 0.40 and patch.mean() > 20.0) or (patch.mean() > 25.0 and patch.max() > 70)
+
+                if is_map:
+                    map_items.append({
+                        "row": r,
+                        "col": c,
+                        "screen_pos": (cx_i, cy_i),
+                        "desktop_pos": (desktop_x, desktop_y),
+                        "confidence": best_conf,
+                    })
+
+        _log(f"  [MAP INVENTORY] Found {len(map_items)} Tier 15 map(s) in inventory columns 10..12.")
+        for m in map_items:
+            _log(f"    - Map at Row {m['row']+1}, Col {m['col']+1} (screen: {m['screen_pos']}, conf={m['confidence']:.3f})")
+
+        return map_items
+
+    def insert_map_into_simulacrum_popup(
+        self,
+        screen: Optional[np.ndarray] = None,
+        target_slot_idx: int = 0,
+        method: str = "drag",
+        dry_run: bool = False,
+    ) -> bool:
+        """
+        Transfers a Tier 15 map from one of the fields in the last 3 columns of inventory
+        into one of the 4 available fields in the 'Simulacrum of Delusion' popup.
+        Supports method='drag' (mouse down, drag, mouse up), method='click' (pick up & place),
+        and method='ctrl_click' (quick transfer).
+        """
+        self.status_message = "Transferring Map to Delusion Popup..."
+        _log(f"\n[MAP TRANSFER] Transferring Tier 15 map from inventory to Simulacrum of Delusion popup (method='{method}')...")
+
+        capt = self._get_capturer()
+        if screen is None:
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            _log("  [MAP TRANSFER WARNING] Unable to capture screen.")
+            return False
+
+        sh, sw = screen.shape[:2]
+        scale_est = sh / 1080.0
+
+        mon_left = 0
+        mon_top = 0
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                mon_left = monitors[self.monitor_idx].get("left", 0)
+                mon_top = monitors[self.monitor_idx].get("top", 0)
+
+        # 1. Ensure inventory is open
+        # NOTE: In PoE, when the Atlas / Simulacrum popup is open, the inventory is already open
+        # side-by-side on the right. Pressing 'I' while the Delusion popup is open would CLOSE it!
+        maps = self.locate_tier15_maps_in_inventory(screen=screen)
+        popup_already_open = self.is_simulacrum_popup_visible(screen=screen, save_debug=False)
+        if not maps and not self.is_inventory_open(screen=screen) and not popup_already_open:
+            _log("  [MAP TRANSFER] Inventory closed and Delusion popup not open. Pressing 'I' to open inventory...")
+            if not dry_run and pydirectinput:
+                window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+                pydirectinput.press("i")
+                time.sleep(0.40)
+            try:
+                screen = capt.capture()
+            except Exception:
+                pass
+            maps = self.locate_tier15_maps_in_inventory(screen=screen)
+
+        # 2. Re-check for Tier 15 maps if not found on first pass (poll up to 2.0s for UI render)
+        if not maps and not dry_run:
+            poll_map_start = time.time()
+            while (time.time() - poll_map_start) < 2.0:
+                if stop_handler.is_stopped():
+                    return False
+                time.sleep(0.3)
+                try:
+                    screen = capt.capture()
+                except Exception:
+                    pass
+                maps = self.locate_tier15_maps_in_inventory(screen=screen)
+                if maps:
+                    break
+
+        if not maps:
+            _log("  [MAP TRANSFER WARNING] No Tier 15 maps found in columns 10, 11, or 12!")
+            return False
+
+        src_map = maps[0]
+        src_x, src_y = src_map["desktop_pos"]
+        _log(f"  [MAP TRANSFER] Selected source map at Row {src_map['row']+1}, Col {src_map['col']+1} (desktop: {src_x}, {src_y}).")
+
+        # 3. Ensure Delusion popup is open before transferring map; if closed, re-click the circle to reopen
+        if not dry_run and not self.is_simulacrum_popup_visible(screen=screen, save_debug=False):
+            last_circ = getattr(self, "_last_selected_sim_circle", None)
+            if last_circ:
+                lc_x, lc_y = last_circ
+                _log(f"  [MAP TRANSFER RECOVER] Delusion popup closed. Re-clicking map circle at ({lc_x}, {lc_y}) to reopen...")
+                self.move_mouse_inside_game(lc_x, lc_y)
+                time.sleep(0.10)
+                if pydirectinput:
+                    pydirectinput.click()
+                    time.sleep(0.55)
+                try:
+                    screen = capt.capture()
+                except Exception:
+                    pass
+                self.is_simulacrum_popup_visible(screen=screen, save_debug=False)
+
+        # 4. Compute target slot position in the Simulacrum of Delusion popup
+        if getattr(self, "delusion_detected_slots", None) and len(self.delusion_detected_slots) > (target_slot_idx % 4):
+            dst_x, dst_y = self.delusion_detected_slots[target_slot_idx % 4]
+            dst_screen_x = dst_x - mon_left
+            dst_screen_y = dst_y - mon_top
+            _log(f"  [MAP TRANSFER] Using detected 4-square popup Slot #{target_slot_idx+1} at desktop ({dst_x}, {dst_y}) [screen: ({dst_screen_x}, {dst_screen_y})].")
+        else:
+            popup_cx = sw // 2
+            popup_cy = int(sh * 0.48)
+            slot_delta = int(32 * scale_est)
+            slot_offsets = [
+                (-slot_delta, -slot_delta),  # Slot 0: Top-Left
+                (slot_delta, -slot_delta),   # Slot 1: Top-Right
+                (-slot_delta, slot_delta),   # Slot 2: Bottom-Left
+                (slot_delta, slot_delta),    # Slot 3: Bottom-Right
+            ]
+            target_off = slot_offsets[target_slot_idx % len(slot_offsets)]
+            dst_screen_x = popup_cx + target_off[0]
+            dst_screen_y = popup_cy + target_off[1]
+            dst_x = dst_screen_x + mon_left
+            dst_y = dst_screen_y + mon_top
+            _log(f"  [MAP TRANSFER] Target Delusion popup Slot #{target_slot_idx+1} at desktop ({dst_x}, {dst_y}) [screen: ({dst_screen_x}, {dst_screen_y})].")
+
+        if dry_run:
+            _log(f"  [DRY RUN] Would transfer map from ({src_x}, {src_y}) to popup slot ({dst_x}, {dst_y}) using method='{method}'.")
+            return True
+
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+
+        # 4. Perform the transfer
+        if method == "ctrl_click":
+            _log(f"  [MAP TRANSFER] Quick-transferring via Ctrl+Click at ({src_x}, {src_y})...")
+            self.move_mouse_inside_game(src_x, src_y)
+            time.sleep(0.06)
+            if pydirectinput:
+                pydirectinput.keyDown("ctrl")
+                time.sleep(0.06)
+                pydirectinput.click()
+                time.sleep(0.06)
+                pydirectinput.keyUp("ctrl")
+                time.sleep(0.15)
+        elif method == "click":
+            _log(f"  [MAP TRANSFER] Picking up map at ({src_x}, {src_y}) and placing into ({dst_x}, {dst_y})...")
+            self.move_mouse_inside_game(src_x, src_y)
+            time.sleep(0.08)
+            if pydirectinput:
+                pydirectinput.click()
+                time.sleep(0.12)
+            self.move_mouse_inside_game(dst_x, dst_y)
+            time.sleep(0.08)
+            if pydirectinput:
+                pydirectinput.click()
+                time.sleep(0.15)
+        else:
+            _log(f"  [MAP TRANSFER] Dragging map from ({src_x}, {src_y}) to ({dst_x}, {dst_y})...")
+            self.move_mouse_inside_game(src_x, src_y)
+            time.sleep(0.08)
+            if pydirectinput:
+                pydirectinput.mouseDown(button="left")
+                time.sleep(0.10)
+                mid_x = (src_x + dst_x) // 2
+                mid_y = (src_y + dst_y) // 2
+                self.move_mouse_inside_game(mid_x, mid_y)
+                time.sleep(0.05)
+                self.move_mouse_inside_game(dst_x, dst_y)
+                time.sleep(0.10)
+                pydirectinput.mouseUp(button="left")
+                time.sleep(0.20)
+
+        _log("  [MAP TRANSFER SUCCESS] Map successfully transferred to Simulacrum of Delusion popup!")
+        self.status_message = "Map Inserted into Delusion Popup!"
+        return True
+
+    def locate_traverse_button(
+        self,
+        screen: Optional[np.ndarray] = None,
+        threshold: Optional[float] = None,
+    ) -> Optional[Tuple[int, int]]:
+        """
+        Locates the 'TRAVERSE' button at the bottom of the Simulacrum of Delusion popup.
+        Returns desktop absolute (x, y) coordinates of the button center, or None if not found.
+        """
+        # If already detected and no custom screen was passed, return cached position
+        if screen is None and getattr(self, "delusion_detected_traverse", None) is not None:
+            return self.delusion_detected_traverse
+
+        if getattr(self, "delusion_traverse_tpl", None) is None:
+            self._load_stash_and_inventory_templates()
+        if getattr(self, "delusion_traverse_tpl", None) is None:
+            return None
+
+        capt = self._get_capturer()
+        if screen is None:
+            try:
+                screen = capt.capture()
+            except Exception:
+                screen = None
+        if screen is None or screen.size == 0:
+            return None
+
+        sh, sw = screen.shape[:2]
+        mon_left = 0
+        mon_top = 0
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                mon_left = monitors[self.monitor_idx].get("left", 0)
+                mon_top = monitors[self.monitor_idx].get("top", 0)
+
+        eff_thresh = threshold if threshold is not None else getattr(self, "traverse_match_threshold", 0.60)
+        btn_h, btn_w = self.delusion_traverse_tpl.shape[:2]
+        scales = [0.85, 0.90, 0.95, 1.0, 1.05, 1.10]
+        best_val = -1.0
+        best_loc = None
+        best_scale = 1.0
+
+        for s in scales:
+            tw = int(btn_w * s)
+            th = int(btn_h * s)
+            if sh < th or sw < tw:
+                continue
+            scaled_tpl = self.delusion_traverse_tpl if abs(s - 1.0) < 0.01 else cv2.resize(
+                self.delusion_traverse_tpl, (tw, th), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR
+            )
+            res = cv2.matchTemplate(screen, scaled_tpl, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            if max_val > best_val:
+                best_val = max_val
+                best_loc = max_loc
+                best_scale = s
+
+        if best_val >= eff_thresh and best_loc is not None:
+            tw = int(btn_w * best_scale)
+            th = int(btn_h * best_scale)
+            cx = best_loc[0] + tw // 2
+            cy = best_loc[1] + th // 2
+            desktop_x = cx + mon_left
+            desktop_y = cy + mon_top
+            self.delusion_detected_traverse = (desktop_x, desktop_y)
+            _log(f"  [TRAVERSE MATCH] Located TRAVERSE button (conf={best_val:.3f} >= {eff_thresh:.2f}, scale={best_scale:.2f}) at screen ({desktop_x}, {desktop_y})")
+            return desktop_x, desktop_y
+
+        # Fallback: check if is_simulacrum_popup_visible can locate it
+        if self.is_simulacrum_popup_visible(screen=screen, save_debug=False):
+            if getattr(self, "delusion_detected_traverse", None) is not None:
+                return self.delusion_detected_traverse
+
+        return None
+
+    def click_traverse_button(
+        self,
+        timeout: float = 5.0,
+        verify_close: bool = False,
+        dry_run: bool = False,
+    ) -> bool:
+        """
+        Locates and left-clicks the 'TRAVERSE' button in the Simulacrum of Delusion popup.
+        Once clicked, the popup and Atlas windows close automatically in Path of Exile.
+        No Escape key is needed (Escape would open the game settings menu).
+        Clears popup tracking state and prepares character for portal detection.
+        """
+        self.status_message = "Locating TRAVERSE Button..."
+        _log("\n[TRAVERSE] Locating and clicking TRAVERSE button...")
+
+        poll_start = time.time()
+        trav_pos = None
+        while (time.time() - poll_start) < timeout:
+            if stop_handler.is_stopped():
+                return False
+            trav_pos = self.locate_traverse_button()
+            if trav_pos is not None:
+                break
+            time.sleep(0.25)
+
+        if trav_pos is None:
+            _log(f"  [TRAVERSE WARNING] TRAVERSE button not detected on screen after {timeout:.1f}s.")
+            return False
+
+        tx, ty = trav_pos
+        _log(f"  [TRAVERSE] Left-clicking TRAVERSE button at desktop ({tx}, {ty})...")
+        self.status_message = "Clicking TRAVERSE..."
+
+        if dry_run:
+            _log(f"    [DRY RUN] Would click TRAVERSE button at ({tx}, {ty}).")
+            self.delusion_detected_traverse = None
+            self.delusion_detected_slots = []
+            return True
+
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+        self.move_mouse_inside_game(tx, ty)
+        time.sleep(0.10)
+        if pydirectinput:
+            pydirectinput.mouseDown(button="left")
+            time.sleep(0.08)
+            pydirectinput.mouseUp(button="left")
+        time.sleep(0.55)
+
+        # Clear popup state after clicking TRAVERSE
+        self.delusion_detected_traverse = None
+        self.delusion_detected_slots = []
+
+        # In PoE, clicking TRAVERSE automatically activates the map and closes all Atlas / Delusion popup dialogs.
+        # No Escape key is needed (pressing Escape would open the PoE options menu).
+        _log("  [TRAVERSE SUCCESS] TRAVERSE button clicked successfully. No Escape needed.")
+        self.status_message = "TRAVERSE Clicked - Spawning Portals..."
+        return True
+
+    def locate_hideout_portal(
+        self,
+        screen: Optional[np.ndarray] = None,
+        threshold: Optional[float] = None,
+        preferred_pos: Optional[Tuple[int, int]] = None,
+    ) -> Optional[Tuple[int, int]]:
+        """
+        Locates a spawned Map Device portal in the hideout using template matching with portal.png.
+        Supports multi-scale matching and picks the best portal closest to preferred_pos (or last Map Device pos).
+        Returns desktop absolute (x, y) coordinates of the portal center, or None if not found.
+        """
+        if self.portal_template_img is None or self.portal_mask is None:
+            self._load_delirium_and_portal_templates()
+        if self.portal_template_img is None or self.portal_mask is None:
+            return None
+
+        eff_threshold = threshold if threshold is not None else getattr(self, "hideout_portal_match_threshold", 0.65)
+
+        capt = self._get_capturer()
+        if screen is None:
+            try:
+                screen = capt.capture()
+            except Exception as e:
+                _log(f"  [WARNING] Screen capture failed during hideout portal search: {e}")
+                return None
+        if screen is None or screen.size == 0:
+            return None
+
+        sh, sw = screen.shape[:2]
+        mon_left = 0
+        mon_top = 0
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                mon_left = monitors[self.monitor_idx].get("left", 0)
+                mon_top = monitors[self.monitor_idx].get("top", 0)
+
+        pth, ptw = self.portal_template_img.shape[:2]
+        scales = [0.75, 0.85, 0.95, 1.0, 1.10]
+        candidates = []
+
+        anchor_pos = preferred_pos or getattr(self, "last_map_device_pos", None)
+
+        for s in scales:
+            sc_w = int(ptw * s)
+            sc_h = int(pth * s)
+            if sc_w > sw or sc_h > sh or sc_w < 40 or sc_h < 40:
+                continue
+            r_tpl = self.portal_template_img if abs(s - 1.0) < 0.01 else cv2.resize(
+                self.portal_template_img, (sc_w, sc_h), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR
+            )
+            r_mask = self.portal_mask if abs(s - 1.0) < 0.01 else cv2.resize(
+                self.portal_mask, (sc_w, sc_h), interpolation=cv2.INTER_NEAREST
+            )
+
+            try:
+                res = cv2.matchTemplate(screen, r_tpl, cv2.TM_SQDIFF_NORMED, mask=r_mask)
+                res = np.where(np.isnan(res) | (res < 0.0) | (res > 1.0), 1.0, res)
+                min_v, _, min_l, _ = cv2.minMaxLoc(res)
+                conf = 1.0 - float(min_v)
+                if conf >= eff_threshold and min_l is not None:
+                    cx = min_l[0] + sc_w // 2
+                    cy = min_l[1] + sc_h // 2
+                    desktop_x = mon_left + cx
+                    desktop_y = mon_top + cy
+                    candidates.append({
+                        "desktop_pos": (desktop_x, desktop_y),
+                        "screen_pos": (cx, cy),
+                        "confidence": conf,
+                        "scale": s,
+                    })
+            except Exception as e:
+                _log(f"  [HIDEOUT PORTAL] Matching error at scale {s:.2f}: {e}")
+
+        if candidates:
+            # Sort candidates: if anchor_pos is known, prioritize portal closest to Map Device, then confidence
+            if anchor_pos:
+                ax, ay = anchor_pos
+                candidates.sort(key=lambda c: (math.hypot(c["desktop_pos"][0] - ax, c["desktop_pos"][1] - ay), -c["confidence"]))
+            else:
+                candidates.sort(key=lambda c: -c["confidence"])
+
+            best = candidates[0]
+            _log(f"  [HIDEOUT PORTAL MATCH] Found portal (conf={best['confidence']:.3f} >= {eff_threshold:.2f}, scale={best['scale']:.2f}) at screen {best['desktop_pos']}")
+            return best["desktop_pos"]
+
+        # Fallback to single-scale locate_portal()
+        std_portal = self.locate_portal(threshold=eff_threshold, screen=screen)
+        if std_portal is not None:
+            return std_portal
+
+        return None
+
+    def click_hideout_portal(
+        self,
+        search_attempts: int = 12,
+        timeout: float = 12.0,
+        approach_wait: float = 3.5,
+        verify_transition: bool = True,
+        auto_start_route: bool = True,
+        start_pink_dot: int = 1,
+        dry_run: bool = False,
+    ) -> bool:
+        """
+        Polls for spawned Map Device portal(s) in the hideout, left-clicks one of the visible
+        portals to enter the danger zone (Simulacrum), waits for area transition (loading screen),
+        and automatically starts the standard navigation routine towards Pink Dot #1 / Room 1.
+        """
+        self.release_all_keys()
+        self.status_message = "Looking for Portals..."
+        _log("\n[HIDEOUT PORTAL] Looking for spawned Map Device portal(s) in hideout...")
+
+        poll_start = time.time()
+        portal_pos = None
+        while (time.time() - poll_start) < timeout:
+            if stop_handler.is_stopped():
+                return False
+            portal_pos = self.locate_hideout_portal()
+            if portal_pos is not None:
+                break
+            time.sleep(0.4)
+
+        if portal_pos is None:
+            _log(f"  [HIDEOUT PORTAL WARNING] No spawned portals detected after {timeout:.1f}s.")
+            return False
+
+        if dry_run:
+            _log(f"  [DRY RUN] Would left-click hideout portal at {portal_pos}.")
+            if auto_start_route:
+                _log(f"  [DRY RUN] Would initialize route targeting Pink Dot #{start_pink_dot}.")
+                self.set_start_pink_dot(start_pink_dot)
+            return True
+
+        _log(f"  [HIDEOUT PORTAL] Left-clicking portal at desktop ({portal_pos[0]}, {portal_pos[1]})...")
+        self.status_message = "Entering Simulacrum Portal..."
+        window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
+        self.move_mouse_inside_game(portal_pos[0], portal_pos[1])
+        time.sleep(0.08)
+        if pydirectinput:
+            pydirectinput.mouseDown(button="left")
+            time.sleep(0.08)
+            pydirectinput.mouseUp(button="left")
+        time.sleep(0.3)
+
+        if approach_wait > 0:
+            time.sleep(approach_wait)
+
+        if verify_transition:
+            _log("  [ZONE TRANSITION] Waiting for area transition into danger zone (Simulacrum)...")
+            self.status_message = "Transitioning to Simulacrum..."
+            trans_start = time.time()
+            transition_confirmed = False
+            while (time.time() - trans_start) < 10.0:
+                if stop_handler.is_stopped():
+                    return False
+                in_ho = self.is_in_hideout()
+                if not in_ho:
+                    transition_confirmed = True
+                    break
+                time.sleep(0.5)
+
+            if transition_confirmed:
+                _log("  [DANGER ZONE ARRIVAL] Confirmed arrival in Simulacrum danger zone! (in_hideout = False)")
+            else:
+                _log("  [ZONE TRANSITION] Area transition timeout elapsed. Assuming character entered danger zone.")
+
+        self.in_hideout = False
+
+        if auto_start_route:
+            _log(f"  [ROUTINE START] Starting standard navigation routine targeting Pink Dot #{start_pink_dot}...")
+            self.set_start_pink_dot(start_pink_dot)
+            self.start()
+            self.status_message = f"Navigating to Pink Zone #{start_pink_dot}..."
+
+        return True
+
+    def run_hideout_full_cycle(
+        self,
+        dry_run: bool = False,
+        screen: Optional[np.ndarray] = None,
+        traverse_and_enter: bool = False,
+        auto_start_route: bool = True,
+        start_pink_dot: int = 1,
+    ) -> Dict[str, Any]:
+        """
+        Executes the complete end-to-end hideout sequence:
+        1. Confirm Hideout Arrival via minimap / stash.
+        2. Click Stash & Verify Inventory Open.
+        3. Stash Inventory Items (excluding last 3 columns).
+        4. Press Escape to close all open windows.
+        5. Click Map Device & Wait for Atlas Map screen.
+        6. Locate Simulacrum Node & Click Map Circle until Delusion Popup is visible.
+        7. Transfer Tier 15 Map from last 3 columns into the Delusion Popup.
+        8. (traverse_and_enter=True): Click TRAVERSE button.
+        9. (traverse_and_enter=True): Click Hideout Portal to enter Simulacrum danger zone & auto-start route!
+        """
+        self.in_hideout = True
+        self.disable_persistent_combat()
+        self.release_all_keys()
+        self.ensure_loot_labels_visible()
+        self._load_stash_and_inventory_templates(force_reload=True)
+
+        report: Dict[str, Any] = {
+            "dry_run": dry_run,
+            "in_hideout": False,
+            "stash_clicked": False,
+            "inventory_stashed": False,
+            "windows_closed": False,
+            "map_device_clicked": False,
+            "simulacrum_selected": False,
+            "map_transferred": False,
+            "traverse_clicked": False,
+            "portal_clicked": False,
+            "success": False,
+            "messages": [],
+        }
+
+        def _step_log(msg: str):
+            _log(f"  [FULL CYCLE] {msg}")
+            report["messages"].append(msg)
+
+        _log("\n========================================================")
+        _log(" [HIDEOUT FULL CYCLE] Starting Complete End-to-End Sequence")
+        _log(f" Mode: {'DRY RUN (No Clicks)' if dry_run else 'LIVE EXECUTION'}")
+        _log(f" Traverse & Enter: {traverse_and_enter} | Auto-Start Route: {auto_start_route} (Pink #{start_pink_dot})")
+        _log("========================================================")
+
+        capt = self._get_capturer()
+        if screen is None:
+            try:
+                screen = capt.capture()
+            except Exception as e:
+                _step_log(f"Screen capture failed: {e}")
+                return report
+
+        # Step 1: Check Hideout (poll up to 4.0s for confirmation to avoid capture lag)
+        _step_log("Step 1/7: Checking Hideout Arrival...")
+        in_ho = False
+        check_start = time.time()
+        while (time.time() - check_start) < 4.0:
+            if stop_handler.is_stopped():
+                return report
+            cur_scr = screen if (time.time() - check_start < 0.25) else None
+            in_ho = self.is_in_hideout(screen=cur_scr)
+            if in_ho:
+                break
+            time.sleep(0.35)
+
+        report["in_hideout"] = in_ho
+        if not in_ho and not dry_run:
+            _step_log("Character not confirmed in hideout. Aborting full cycle.")
+            return report
+
+        # Step 2: Click Stash
+        _step_log("Step 2/7: Locating & Clicking Stash...")
+        if not dry_run:
+            stash_ok = self.click_stash(search_attempts=8, timeout=10.0, verify_inventory=True)
+            report["stash_clicked"] = stash_ok
+            if not stash_ok:
+                _step_log("Failed to open Stash & Inventory.")
+                return report
+        else:
+            report["stash_clicked"] = True
+            _step_log("[DRY RUN] Would click Stash.")
+
+        # Step 3: Stash Items (cols 0..8)
+        _step_log("Step 3/7: Stashing inventory items (excluding last 3 columns)...")
+        stashed = self.stash_inventory_items(exclude_last_columns=3, dry_run=dry_run, close_after=False)
+        report["inventory_stashed"] = True
+        _step_log(f"Deposited {stashed} item(s) into Stash.")
+
+        # Step 4: Press Escape to close all windows
+        _step_log("Step 4/7: Pressing Escape to close all windows...")
+        if not dry_run:
+            closed = self.close_all_hideout_windows()
+            report["windows_closed"] = closed
+        else:
+            report["windows_closed"] = True
+            _step_log("[DRY RUN] Would press Escape to close windows.")
+
+        # Step 5: Click Map Device
+        _step_log("Step 5/7: Locating & Clicking Map Device...")
+        if not dry_run:
+            md_ok = self.click_map_device()
+            report["map_device_clicked"] = md_ok
+            if not md_ok:
+                _step_log("Failed to locate or click Map Device.")
+                return report
+        else:
+            report["map_device_clicked"] = True
+            _step_log("[DRY RUN] Would click Map Device.")
+
+        # Step 6: Select Accessible Simulacrum Map Circle
+        _step_log("Step 6/7: Finding and clicking accessible Simulacrum map circle...")
+        sim_node = self.select_accessible_simulacrum_map(max_attempts=5, dry_run=dry_run)
+        if sim_node is None and not dry_run:
+            _step_log("No accessible Simulacrum map found.")
+            return report
+        report["simulacrum_selected"] = True
+
+        # Step 7: Insert Tier 15 Map into Delusion Popup
+        _step_log("Step 7/7: Transferring Tier 15 map into Simulacrum of Delusion popup...")
+        map_ok = self.insert_map_into_simulacrum_popup(target_slot_idx=0, method="drag", dry_run=dry_run)
+        report["map_transferred"] = map_ok
+
+        if traverse_and_enter:
+            # Step 8: Click TRAVERSE button
+            _step_log("Step 8/9: Locating and clicking TRAVERSE button...")
+            trav_ok = self.click_traverse_button(dry_run=dry_run)
+            report["traverse_clicked"] = trav_ok
+            if not trav_ok and not dry_run:
+                _step_log("Failed to click TRAVERSE button.")
+                return report
+
+            # Step 9: Click Hideout Portal to enter Simulacrum danger zone
+            _step_log(f"Step 9/9: Locating & clicking hideout portal to enter Simulacrum danger zone (auto_start={auto_start_route})...")
+            portal_ok = self.click_hideout_portal(
+                dry_run=dry_run,
+                auto_start_route=auto_start_route,
+                start_pink_dot=start_pink_dot,
+            )
+            report["portal_clicked"] = portal_ok
+            if not portal_ok and not dry_run:
+                _step_log("Failed to enter hideout portal.")
+                return report
+
+            report["success"] = bool(report["simulacrum_selected"] and report["map_transferred"] and report.get("traverse_clicked") and report.get("portal_clicked")) if not dry_run else True
+        else:
+            report["success"] = bool(report["simulacrum_selected"] and report["map_transferred"]) if not dry_run else True
+
+        _log("========================================================")
+        _log(f" [HIDEOUT FULL CYCLE] Sequence Complete: {'SUCCESS' if report['success'] else 'FAILED'}")
+        _log("========================================================\n")
+        return report
 
     def locate_loot(
         self,
@@ -3676,16 +6980,17 @@ class RouteNavigator:
             except Exception:
                 pass
 
-    def ensure_loot_labels_visible(self):
+    def ensure_loot_labels_visible(self, force: bool = False):
         """
-        Ensures ground item/entity labels are visible (unhidden) so SIM templates
-        and encounter banners can be detected on screen.
-        If loot labels were previously hidden, presses 'Z' to unhide them.
+        Ensures ground item/entity labels are visible (unhidden) so SIM templates,
+        encounter banners, and Hideout STASH labels can be detected on screen.
+        If loot labels were previously hidden (or force=True), presses 'Z' to unhide them.
         """
         if not getattr(self, "loot_z_toggle_enabled", True):
             return
-        if getattr(self, "_loot_labels_hidden", False):
-            _log("  [LOOT] Unhiding ground labels for Sims / Encounter banner detection (Pressing [Z])...")
+        if force or getattr(self, "_loot_labels_hidden", False):
+            _log("  [LABELS] Unhiding labels / item highlights (Pressing [Z])...")
+            window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
             self._press_z_key()
             self._loot_labels_hidden = False
             time.sleep(getattr(self, "loot_z_toggle_delay_seconds", 0.3))
@@ -3827,7 +7132,9 @@ class RouteNavigator:
                     self._wait_for_approach(eff_app_wait, reason=f"LOOT #{picked_count}")
 
                 pick_delay = getattr(self.loot_detector, "pickup_delay_seconds", self.loot_pickup_wait_seconds)
+                self._trigger_persistent_combat_if_due()
                 time.sleep(pick_delay)
+                self._trigger_persistent_combat_if_due()
 
             self.status_message = f"Loot Check Complete ({picked_count} picked). Resuming route..."
             return picked_count
@@ -4096,6 +7403,10 @@ class RouteNavigator:
            - Click right mouse button once.
            - Press and hold middle mouse button for 4 seconds (middle_click_hold_seconds), then release.
         """
+        if getattr(self, "in_hideout", False):
+            _log("  [AUTOPILOT] Ignoring pink dot interaction: Character is in Hideout (Safe Zone).")
+            return False
+
         self.is_interacting = True
         self.stuck_counter = 0
         self.release_all_keys()
@@ -4521,6 +7832,11 @@ class RouteNavigator:
         """Background thread executing sustained WASD pulses into the game."""
         step_count = 0
         while self.is_active and not stop_handler.is_stopped():
+            if getattr(self, "in_hideout", False):
+                self.release_all_keys()
+                time.sleep(0.1)
+                continue
+
             now = time.time()
 
             # 0. Check if paused (F4 hotkey)
@@ -4836,6 +8152,12 @@ class RouteNavigator:
             self.last_known_pos = current_pos
             self.last_known_time = now
 
+        # Hideout Safety: Hideout is a safe zone. Never execute waypoint navigation, routines, or combat attacks
+        if self.in_hideout:
+            self.disable_persistent_combat()
+            self.release_all_keys()
+            return self.get_telemetry(None, 0.0, [])
+
         # Periodic right-click attack check on every live frame tick
         if self.persistent_right_click_active:
             self._trigger_persistent_right_click_if_due(now)
@@ -5051,7 +8373,9 @@ class RouteNavigator:
             rem_sec = max(0.0, self.orbit_duration - (time.time() - self.orbit_start_time))
 
         status_msg = self.status_message
-        if self.waiting_for_green_light:
+        if getattr(self, "in_hideout", False):
+            status_msg = "HIDEOUT (Safe Zone - Navigation & Combat Disabled)"
+        elif self.waiting_for_green_light:
             status_msg = "WAITING FOR GREEN LIGHT (Verify Loot - Press 'G' to Resume)"
         elif tracking_lost:
             status_msg = "Tracking Lost (Holding Position)"
@@ -5065,10 +8389,13 @@ class RouteNavigator:
             elapsed_sec = max(0.0, end_t - self.run_start_time)
 
         return {
+            "in_hideout": getattr(self, "in_hideout", False),
             "is_active": self.is_active,
             "is_paused": self.is_paused or is_paused,
             "is_completed": self.is_completed,
             "waiting_for_green_light": self.waiting_for_green_light,
+            "waiting_for_user_key": getattr(self, "waiting_for_user_key", False),
+            "waiting_user_key_name": getattr(self, "waiting_user_key_name", "f5"),
             "target": target,
             "target_index": target.get("index") if target else None,
             "target_name": target.get("name") if target else "None",

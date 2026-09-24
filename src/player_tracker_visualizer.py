@@ -8,6 +8,7 @@ Provides an interactive real-time dual-view window comparing:
 import os
 import sys
 import time
+import threading
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple, Union
 import cv2
@@ -45,6 +46,7 @@ class PlayerTrackerVisualizer:
         window_title: str = "Voices Visualizer - Player Position Tracker",
         history_len: int = 300,
         start_pink_dot: Optional[int] = None,
+        navigator: Optional[RouteNavigator] = None,
     ):
         self.classifier = classifier or RoomClassifier()
         self.world_map = world_map or WorldMapTracker()
@@ -52,7 +54,7 @@ class PlayerTrackerVisualizer:
         self.movement_path = movement_path or MovementPath()
         self.monitor_idx = monitor_idx
         self.capturer = capturer
-        self.navigator = RouteNavigator(movement_path=self.movement_path, monitor_idx=self.monitor_idx, capturer=self.capturer)
+        self.navigator = navigator or RouteNavigator(movement_path=self.movement_path, monitor_idx=self.monitor_idx, capturer=self.capturer)
         if start_pink_dot is not None:
             self.navigator.set_start_pink_dot(start_pink_dot)
         self.extractor = extractor or MinimapExtractor()
@@ -82,6 +84,10 @@ class PlayerTrackerVisualizer:
         self.btn_pink_dot_hover: bool = False
         self.btn_early_exit_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
         self.btn_early_exit_hover: bool = False
+        self.btn_hideout_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
+        self.btn_hideout_hover: bool = False
+        self.hideout_test_active: bool = False
+        self.hideout_routine_active: bool = False
         self.btn_green_light_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
         self.btn_green_light_hover: bool = False
         self.notification_msg: str = ""
@@ -109,6 +115,14 @@ class PlayerTrackerVisualizer:
         self.frame_idx: int = 0
         self.cached_room_res: Optional[Dict[str, Any]] = None
         self.cached_map_res: Optional[Dict[str, Any]] = None
+
+        # Current Area Detection State (ENEMY AREA vs HIDEOUT)
+        self.area_type: str = "UNKNOWN"  # "ENEMY_AREA" | "HIDEOUT" | "UNKNOWN"
+        self.area_label: str = "DETECTING..."
+        self.area_sublabel: str = "Scanning minimap..."
+        self.area_confidence: float = 0.0
+        self.last_hideout_check_time: float = 0.0
+        self.cached_hideout_match: bool = False
 
     def reload_route(self) -> bool:
         """Reloads route waypoints on demand (re-extracting from templates/route.png if present)."""
@@ -142,6 +156,108 @@ class PlayerTrackerVisualizer:
             self.notification_expiry = time.time() + 3.5
         return success
 
+    def start_hideout_full_routine(
+        self,
+        dry_run: bool = False,
+        start_pink_dot: int = 1,
+    ):
+        """
+        Launches the complete autonomous routine from Hideout in a background daemon thread:
+        1. Confirm Hideout & unhide labels (Z key).
+        2. Open Stash & deposit inventory loot (exclude last 3 columns).
+        3. Close windows with Escape.
+        4. Open Map Device / Atlas.
+        5. Select accessible Simulacrum map circle.
+        6. Transfer Tier 15 map into Delusion popup.
+        7. Click TRAVERSE button.
+        8. Click spawned Map Device portal to enter Simulacrum.
+        9. Automatically launch autopilot targeting Pink Dot #1 and run all rooms as usual!
+        """
+        if getattr(self, "hideout_routine_active", False) or getattr(self, "hideout_test_active", False):
+            self.notification_msg = "HIDEOUT ROUTINE ALREADY IN PROGRESS..."
+            self.notification_expiry = time.time() + 2.5
+            return
+
+        def _worker():
+            self.hideout_routine_active = True
+            self.hideout_test_active = True
+            self.navigator.in_hideout = True
+            self.navigator.is_active = False
+            self.navigator.disable_persistent_combat()
+            self.navigator.release_all_keys()
+            self.notification_msg = "STARTING BOT FROM HIDEOUT: UNLOAD -> MAP DEVICE -> SIM -> PORTAL..."
+            self.notification_expiry = time.time() + 60.0
+            print("\n[VISUALIZER] >>> Starting Bot Full Routine from Hideout...")
+            try:
+                rep = self.navigator.run_hideout_full_cycle(
+                    dry_run=dry_run,
+                    traverse_and_enter=True,
+                    auto_start_route=True,
+                    start_pink_dot=start_pink_dot,
+                )
+                if rep.get("success"):
+                    self.notification_msg = f"BOT ROUTINE ACTIVE: ENTERED SIMULACRUM -> TARGETING PINK #{start_pink_dot}"
+                    print(f"\n[VISUALIZER] >>> Hideout Routine Success! Bot entered Simulacrum and activated navigation targeting Pink #{start_pink_dot}.")
+                else:
+                    msgs = rep.get("messages", [])
+                    last_err = msgs[-1] if msgs else "Routine failed"
+                    self.notification_msg = f"HIDEOUT ROUTINE FAILED: {last_err}"
+                    print(f"\n[VISUALIZER] >>> Hideout Routine Failed: {last_err}")
+            except Exception as e:
+                self.notification_msg = f"HIDEOUT ROUTINE ERROR: {e}"
+                print(f"\n[VISUALIZER] >>> Hideout Routine Error: {e}")
+            finally:
+                self.hideout_routine_active = False
+                self.hideout_test_active = False
+                self.notification_expiry = time.time() + 6.0
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+    def trigger_hideout_test(self, dry_run: bool = False, full_cycle: bool = True):
+        """Launches hideout functionality test in a background thread."""
+        if getattr(self, "hideout_test_active", False):
+            self.notification_msg = "HIDEOUT TEST ALREADY IN PROGRESS..."
+            self.notification_expiry = time.time() + 2.5
+            return
+
+        def _worker():
+            self.hideout_test_active = True
+            self.navigator.in_hideout = True
+            self.navigator.is_active = False
+            self.navigator.disable_persistent_combat()
+            self.navigator.release_all_keys()
+            self.notification_msg = (
+                "RUNNING HIDEOUT FULL CYCLE... STASH -> ESCAPE -> MAP DEVICE -> SIMULACRUM"
+                if full_cycle
+                else "RUNNING HIDEOUT TEST... STASH DEPOSIT"
+            )
+            self.notification_expiry = time.time() + (45.0 if full_cycle else 20.0)
+            try:
+                rep = self.navigator.test_hideout_sequence(dry_run=dry_run, full_cycle=full_cycle)
+                if rep.get("success"):
+                    stashed = rep.get("items_stashed", 0)
+                    if rep.get("map_transferred"):
+                        self.notification_msg = f"HIDEOUT CYCLE COMPLETE: STASHED {stashed} & MAP INSERTED!"
+                    else:
+                        self.notification_msg = f"HIDEOUT TEST SUCCESS: STASHED {stashed} ITEMS!"
+                else:
+                    msgs = rep.get("messages", [])
+                    last_err = msgs[-1] if msgs else "Test failed"
+                    self.notification_msg = f"HIDEOUT TEST FAILED: {last_err}"
+            except Exception as e:
+                self.notification_msg = f"HIDEOUT TEST ERROR: {e}"
+            finally:
+                self.navigator.in_hideout = True
+                self.navigator.is_active = False
+                self.navigator.disable_persistent_combat()
+                self.navigator.release_all_keys()
+                self.hideout_test_active = False
+                self.notification_expiry = time.time() + 6.0
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
     def nudge_active_room_box(self, dx: int, dy: int, dw: int, dh: int):
         """Nudges or resizes the selected room bounding box."""
         cur_box = self.movement_path.get_room_bounding_box(self.selected_room_for_edit, margin=35.0)
@@ -171,6 +287,10 @@ class PlayerTrackerVisualizer:
         ee_x, ee_y, ee_w, ee_h = self.btn_early_exit_rect
         is_ee_inside = (ee_x <= x <= ee_x + ee_w and ee_y <= y <= ee_y + ee_h)
         self.btn_early_exit_hover = is_ee_inside
+
+        ho_x, ho_y, ho_w, ho_h = self.btn_hideout_rect
+        is_ho_inside = (ho_x <= x <= ho_x + ho_w and ho_y <= y <= ho_y + ho_h)
+        self.btn_hideout_hover = is_ho_inside
 
         gx, gy, gw, gh = self.btn_green_light_rect
         is_green_inside = (gx <= x <= gx + gw and gy <= y <= gy + gh)
@@ -238,6 +358,10 @@ class PlayerTrackerVisualizer:
                 min_sec = getattr(self.navigator, "minimap_early_exit_min_seconds", 25.0)
                 self.notification_msg = f"MINIMAP EARLY EXIT: {'ENABLED (Trigger >= ' + str(int(min_sec)) + 's on Loot Drop)' if new_state else 'DISABLED (Full 50s Orbit)'}"
                 self.notification_expiry = time.time() + 3.0
+                return
+
+            if is_ho_inside:
+                self.start_hideout_full_routine()
                 return
 
             if is_refresh_inside:
@@ -446,6 +570,9 @@ class PlayerTrackerVisualizer:
             self.notification_expiry = time.time() + 4.0
             self.navigator.latest_recovery_event = None
 
+        # 6. Current Area Detection (ENEMY AREA vs HIDEOUT)
+        area_info = self._update_current_area(frame_or_screenshot, minimap_crop, room_res)
+
         # Composite Result Dictionary
         result: Dict[str, Any] = {
             "minimap_player": {
@@ -458,6 +585,7 @@ class PlayerTrackerVisualizer:
             "world_map": map_res,
             "reference_map": loc_res,
             "navigation": nav_res,
+            "area": area_info,
         }
         self.last_result = result
 
@@ -481,6 +609,81 @@ class PlayerTrackerVisualizer:
         # Build Dashboard Image
         dashboard = self.render_dashboard(minimap_crop, result)
         return dashboard, result
+
+    def _update_current_area(
+        self,
+        frame_or_screenshot: np.ndarray,
+        minimap_crop: np.ndarray,
+        room_res: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Dynamically detects whether character is currently in an ENEMY AREA (Room 1-7 combat zone)
+        or in the HIDEOUT (safe zone).
+        """
+        room_rec = room_res.get("recognized", False)
+        room_conf = room_res.get("confidence", 0.0)
+        room_name = room_res.get("room_name", "Combat Zone")
+        now = time.time()
+
+        # 1. Strong Room Match (Room 1..7) -> Unambiguously ENEMY AREA
+        if room_rec and room_conf >= 0.38:
+            self.area_type = "ENEMY_AREA"
+            self.area_label = f"ENEMY AREA ({room_name.upper()})"
+            self.area_sublabel = f"Hostile Monsters Active | Room Conf: {room_conf:.0%}"
+            self.area_confidence = room_conf
+            self.cached_hideout_match = False
+            if getattr(self.navigator, "in_hideout", False):
+                self.navigator.in_hideout = False
+
+        # 2. Navigator already confirmed in_hideout (e.g. from stash interaction or hideout test)
+        elif getattr(self.navigator, "in_hideout", False) and not room_rec:
+            self.area_type = "HIDEOUT"
+            self.area_label = "HIDEOUT (SAFE ZONE)"
+            self.area_sublabel = "Stash & Rest Hub | No Hostiles"
+            self.area_confidence = max(0.85, getattr(self.navigator, "last_hideout_confidence", 0.85))
+            self.cached_hideout_match = True
+
+        # 3. Room not recognized: check Hideout minimap layout (throttled every 0.35s)
+        else:
+            if (now - self.last_hideout_check_time) >= 0.35:
+                self.last_hideout_check_time = now
+                is_ho = self.navigator.is_in_hideout(screen=frame_or_screenshot, verbose=False, set_state=False)
+                self.cached_hideout_match = is_ho
+
+            if self.cached_hideout_match:
+                self.area_type = "HIDEOUT"
+                self.area_label = "HIDEOUT (SAFE ZONE)"
+                self.area_sublabel = "Stash & Rest Hub | No Hostiles"
+                self.area_confidence = getattr(self.navigator, "last_hideout_confidence", 0.85)
+                self.navigator.in_hideout = True
+                self.navigator.disable_persistent_combat()
+                self.navigator.release_all_keys()
+            elif (
+                getattr(self.navigator, "is_active", False)
+                or room_res.get("character_position") is not None
+                or (now - getattr(self.navigator, "last_known_time", 0.0)) < 4.0
+                or room_conf >= 0.22
+            ):
+                self.area_type = "ENEMY_AREA"
+                self.area_label = f"ENEMY AREA ({room_name.upper()})"
+                self.area_sublabel = f"Combat Zone | Room Conf: {room_conf:.0%}"
+                self.area_confidence = room_conf
+                if getattr(self.navigator, "in_hideout", False):
+                    self.navigator.in_hideout = False
+            else:
+                self.area_type = "UNKNOWN"
+                self.area_label = "DETECTING AREA..."
+                self.area_sublabel = "Analyzing Minimap & Surroundings"
+                self.area_confidence = 0.0
+
+        return {
+            "type": self.area_type,
+            "label": self.area_label,
+            "sublabel": self.area_sublabel,
+            "confidence": self.area_confidence,
+            "is_hideout": (self.area_type == "HIDEOUT"),
+            "is_enemy_area": (self.area_type == "ENEMY_AREA"),
+        }
 
     def get_active_room_template_image(self, room_res: Dict[str, Any]) -> Optional[np.ndarray]:
         """Retrieves the active room template image matched by RoomClassifier."""
@@ -510,13 +713,14 @@ class PlayerTrackerVisualizer:
         cv2.rectangle(dashboard, (0, 0), (canvas_w, 54), (30, 34, 42), -1)
         cv2.line(dashboard, (0, 54), (canvas_w, 54), (55, 62, 74), 1)
 
+        # Title on left
         cv2.putText(
             dashboard,
-            "PLAYER POSITION TRACKER - PATH OF EXILE 2",
+            "POE2 TRACKER",
             (18, 35),
             cv2.FONT_HERSHEY_DUPLEX,
-            0.65,
-            (240, 242, 248),
+            0.56,
+            (235, 240, 250),
             1,
             cv2.LINE_AA,
         )
@@ -525,16 +729,70 @@ class PlayerTrackerVisualizer:
         loc_res = result.get("reference_map", {})
         map_res = result.get("world_map", {})
         nav_res = result.get("navigation", {})
+        area_info = result.get("area", {})
+        is_ho = area_info.get("is_hideout", False)
+        is_enemy = area_info.get("is_enemy_area", False)
         room_recognized = room_res.get("recognized", False)
         room_name = room_res.get("room_name", "Searching...")
         room_conf = room_res.get("confidence", 0.0)
 
-        # Status badge in header
+        # =========================================================================
+        # PROMINENT CURRENT AREA BADGE (ENEMY AREA vs HIDEOUT)
+        # =========================================================================
+        area_badge_x = 172
+        area_badge_y = 12
+        area_badge_w = 215
+        area_badge_h = 30
+
+        if is_ho:
+            # HIDEOUT: Sleek Emerald Safe Zone Badge
+            ab_bg = (24, 75, 34)
+            ab_border = (60, 225, 115)
+            ab_txt = "[SAFE] HIDEOUT (SAFE ZONE)"
+            ab_txt_col = (255, 255, 255)
+            ab_dot_col = (50, 255, 120)
+        elif is_enemy:
+            # ENEMY AREA: Vibrant Warning Crimson Badge
+            ab_bg = (18, 22, 135)
+            ab_border = (45, 60, 245)
+            ab_label = area_info.get("label", "ENEMY AREA")
+            ab_txt = f"[!] {ab_label}"
+            ab_txt_col = (255, 255, 255)
+            ab_dot_col = (0, 60, 255)
+        else:
+            # DETECTING: Dark Slate/Amber Badge
+            ab_bg = (38, 44, 52)
+            ab_border = (75, 150, 205)
+            ab_txt = "[?] AREA: DETECTING..."
+            ab_txt_col = (210, 225, 235)
+            ab_dot_col = (0, 215, 255)
+
+        cv2.rectangle(dashboard, (area_badge_x, area_badge_y), (area_badge_x + area_badge_w, area_badge_y + area_badge_h), ab_bg, -1)
+        cv2.rectangle(dashboard, (area_badge_x, area_badge_y), (area_badge_x + area_badge_w, area_badge_y + area_badge_h), ab_border, 1)
+        # Glowing status dot
+        cv2.circle(dashboard, (area_badge_x + 14, area_badge_y + 15), 5, ab_dot_col, -1, cv2.LINE_AA)
+        cv2.circle(dashboard, (area_badge_x + 14, area_badge_y + 15), 2, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.putText(
+            dashboard,
+            ab_txt,
+            (area_badge_x + 25, area_badge_y + 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.37,
+            ab_txt_col,
+            1,
+            cv2.LINE_AA,
+        )
+
+        # Autopilot / System Status badge on far right of header
         is_navigating = nav_res.get("is_active", False)
         is_nav_paused = nav_res.get("is_paused", False)
         held_keys_str = nav_res.get("held_keys_str", "None")
 
-        if is_nav_paused:
+        if is_ho:
+            badge_txt = "HIDEOUT | SAFE ZONE"
+            badge_bg = (140, 80, 20)
+            badge_w = 210
+        elif is_nav_paused:
             badge_txt = f"PAUSED: WP {nav_res.get('target_index', 0)} [F4 to Resume]"
             badge_bg = (0, 140, 230)
             badge_w = 280
@@ -544,13 +802,13 @@ class PlayerTrackerVisualizer:
             badge_w = 260
         elif self.is_paused:
             badge_txt, badge_bg = "FEED PAUSED", (140, 80, 20)
-            badge_w = 230
-        elif room_recognized and room_conf >= 0.50:
-            badge_txt, badge_bg = f"ROOM: {room_name.upper()}", (24, 130, 48)
-            badge_w = 230
+            badge_w = 210
+        elif room_recognized and room_conf >= 0.40:
+            badge_txt, badge_bg = f"AUTOPILOT: READY ({room_name.upper()})", (24, 130, 48)
+            badge_w = 240
         else:
-            badge_txt, badge_bg = "AUTO-DETECTING ROOM...", (30, 110, 180)
-            badge_w = 230
+            badge_txt, badge_bg = "AUTOPILOT: STANDBY", (30, 90, 140)
+            badge_w = 210
 
         badge_x = canvas_w - badge_w - 18
         cv2.rectangle(dashboard, (badge_x, 12), (badge_x + badge_w, 42), badge_bg, -1)
@@ -661,6 +919,59 @@ class PlayerTrackerVisualizer:
             cv2.LINE_AA,
         )
 
+        # Interactive Button: [H] START BOT ROUTINE (From Hideout)
+        ho_btn_w, ho_btn_h = 185, 30
+        if nav_res.get("waiting_for_green_light"):
+            gl_w = 180
+            ho_btn_x = ee_btn_x - gl_w - 12 - ho_btn_w - 12
+        else:
+            ho_btn_x = ee_btn_x - ho_btn_w - 12
+        ho_btn_y = 12
+        self.btn_hideout_rect = (ho_btn_x, ho_btn_y, ho_btn_w, ho_btn_h)
+
+        is_running = getattr(self, "hideout_routine_active", False) or getattr(self, "hideout_test_active", False)
+        if is_running:
+            pulse = int(50 * np.sin(now * 8.0))
+            c_val = min(255, max(140, 200 + pulse))
+            ho_label = "[H] RUNNING BOT..."
+            ho_bg = (18, 65, 110)
+            ho_border = (0, c_val, 255)
+            ho_text_col = (255, 255, 255)
+            ho_dot_col = (0, 255, 255)
+        elif self.btn_hideout_hover:
+            ho_label = "[H] START BOT ROUTINE"
+            ho_bg = (30, 85, 50)
+            ho_border = (80, 255, 160)
+            ho_text_col = (255, 255, 255)
+            ho_dot_col = (100, 255, 180)
+        elif is_ho:
+            ho_label = "[H] START BOT ROUTINE"
+            ho_bg = (20, 68, 38)
+            ho_border = (60, 215, 120)
+            ho_text_col = (255, 255, 255)
+            ho_dot_col = (50, 255, 130)
+        else:
+            ho_label = "[H] START BOT ROUTINE"
+            ho_bg = (32, 44, 38)
+            ho_border = (55, 140, 85)
+            ho_text_col = (200, 235, 215)
+            ho_dot_col = (60, 200, 110)
+
+        cv2.rectangle(dashboard, (ho_btn_x, ho_btn_y), (ho_btn_x + ho_btn_w, ho_btn_y + ho_btn_h), ho_bg, -1)
+        cv2.rectangle(dashboard, (ho_btn_x, ho_btn_y), (ho_btn_x + ho_btn_w, ho_btn_y + ho_btn_h), ho_border, 1)
+        cv2.circle(dashboard, (ho_btn_x + 14, ho_btn_y + 15), 5, ho_dot_col, -1, cv2.LINE_AA)
+        cv2.circle(dashboard, (ho_btn_x + 14, ho_btn_y + 15), 2, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.putText(
+            dashboard,
+            ho_label,
+            (ho_btn_x + 24, ho_btn_y + 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            ho_text_col,
+            1,
+            cv2.LINE_AA,
+        )
+
         # Interactive Button: [G] GREEN LIGHT (GO) when waiting for loot verification
         if nav_res.get("waiting_for_green_light"):
             gl_w, gl_h = 190, 30
@@ -731,6 +1042,36 @@ class PlayerTrackerVisualizer:
                 1,
                 cv2.LINE_AA,
             )
+        elif nav_res.get("waiting_for_user_key"):
+            notif_w = 660
+            notif_h = 36
+            notif_x = (canvas_w - notif_w) // 2
+            notif_y = 54
+            key_name = str(nav_res.get("waiting_user_key_name", "F5")).upper()
+            pulse = int(50 * np.sin(now * 5.5))
+            b_val = min(255, max(150, 200 + pulse))
+            cv2.rectangle(dashboard, (notif_x, notif_y), (notif_x + notif_w, notif_y + notif_h), (50, 30, 10), -1)
+            cv2.rectangle(dashboard, (notif_x, notif_y), (notif_x + notif_w, notif_y + notif_h), (0, b_val, 255), 2)
+            cv2.putText(
+                dashboard,
+                f">>> USER CONFIRMATION REQUIRED: PRESS [{key_name}] TO PROCEED <<<",
+                (notif_x + 20, notif_y + 16),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.38,
+                (0, 220, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            cv2.putText(
+                dashboard,
+                f"Press '{key_name}' or 'Enter' in game/visualizer to exit to hideout & click Stash",
+                (notif_x + 20, notif_y + 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.33,
+                (200, 230, 255),
+                1,
+                cv2.LINE_AA,
+            )
         elif now < self.notification_expiry and self.notification_msg:
             notif_w = 560
             notif_h = 30
@@ -778,13 +1119,23 @@ class PlayerTrackerVisualizer:
 
         cv2.rectangle(dashboard, (left_x, left_y), (left_x + left_w, left_y + 34), (38, 43, 52), -1)
         view_lbl = "EDGES" if self.show_edges else "RAW"
+        if is_ho:
+            mm_title = f"1. MINIMAP: HIDEOUT (SAFE) [{view_lbl}]"
+            mm_title_col = (110, 255, 160)
+        elif is_enemy:
+            mm_title = f"1. MINIMAP: ENEMY AREA [{view_lbl}]"
+            mm_title_col = (110, 150, 255)
+        else:
+            mm_title = f"1. MINIMAP [{view_lbl}]"
+            mm_title_col = (210, 220, 240)
+
         cv2.putText(
             dashboard,
-            f"1. MINIMAP [{view_lbl}]",
+            mm_title,
             (left_x + 10, left_y + 23),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
-            (210, 220, 240),
+            0.40,
+            mm_title_col,
             1,
             cv2.LINE_AA,
         )
@@ -853,12 +1204,15 @@ class PlayerTrackerVisualizer:
         # Right Panel Header Toolbar (y: right_y .. right_y + 36)
         cv2.rectangle(dashboard, (right_x, right_y), (right_x + right_w, right_y + 36), (36, 42, 52), -1)
 
-        mode_names = {
-            self.VIEW_ROOM_TEMPLATE: "ACTIVE ROOM TEMPLATE",
-            self.VIEW_WORLD_MAP: "STITCHED WORLD MAP",
-            self.VIEW_REFERENCE_MAP: "FULL REFERENCE MAP",
-        }
-        mode_str = mode_names.get(self.view_mode, "ACTIVE ROOM TEMPLATE")
+        if is_ho and self.view_mode == self.VIEW_ROOM_TEMPLATE:
+            mode_str = "HIDEOUT (SAFE ZONE)"
+        else:
+            mode_names = {
+                self.VIEW_ROOM_TEMPLATE: "ACTIVE ROOM TEMPLATE",
+                self.VIEW_WORLD_MAP: "STITCHED WORLD MAP",
+                self.VIEW_REFERENCE_MAP: "FULL REFERENCE MAP",
+            }
+            mode_str = mode_names.get(self.view_mode, "ACTIVE ROOM TEMPLATE")
         cv2.putText(
             dashboard,
             f"2. MASTER MAP [{mode_str}]",
@@ -957,14 +1311,18 @@ class PlayerTrackerVisualizer:
         matched_info_txt = ""
 
         if self.view_mode == self.VIEW_ROOM_TEMPLATE:
-            tmpl_img = self.get_active_room_template_image(room_res)
-            if tmpl_img is not None:
-                right_view_img = tmpl_img.copy()
+            if is_ho and getattr(self.navigator, "hideout_layout_tpl", None) is not None:
+                right_view_img = self.navigator.hideout_layout_tpl.copy()
+                matched_info_txt = f"Hideout Layout (Safe Zone) | Conf: {area_info.get('confidence', 0.85):.0%}"
             else:
-                right_view_img = np.zeros((581, 794, 3), dtype=np.uint8)
-            player_map_pos = room_res.get("character_position") or loc_res.get("player_position")
-            variant = room_res.get("matched_variant", "N/A")
-            matched_info_txt = f"Room: {room_res.get('room_name')} ({variant}) | Conf: {room_res.get('confidence', 0):.0%}"
+                tmpl_img = self.get_active_room_template_image(room_res)
+                if tmpl_img is not None:
+                    right_view_img = tmpl_img.copy()
+                else:
+                    right_view_img = np.zeros((581, 794, 3), dtype=np.uint8)
+                player_map_pos = room_res.get("character_position") or loc_res.get("player_position")
+                variant = room_res.get("matched_variant", "N/A")
+                matched_info_txt = f"Room: {room_res.get('room_name')} ({variant}) | Conf: {room_res.get('confidence', 0):.0%}"
 
         elif self.view_mode == self.VIEW_WORLD_MAP:
             if hasattr(self.world_map, "render_map_view"):
@@ -1278,18 +1636,37 @@ class PlayerTrackerVisualizer:
             rpos_str = "SEARCHING..."
         cv2.putText(dashboard, rpos_str, (rpos_x, telemetry_y + 48), cv2.FONT_HERSHEY_DUPLEX, 0.65, (0, 255, 255), 1, cv2.LINE_AA)
 
-        # Col 3: Active Room & Confidence
+        # Col 3: Current Area & Location Card
         room_col_x = left_x + 560
-        cv2.putText(dashboard, "ACTIVE ROOM IDENTIFICATION", (room_col_x, telemetry_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
-        room_disp = f"{room_name} ({room_conf:.0%})" if room_recognized else "Unknown Room"
-        cv2.putText(dashboard, room_disp, (room_col_x, telemetry_y + 48), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (230, 230, 235), 1, cv2.LINE_AA)
+        cv2.putText(dashboard, "CURRENT AREA & LOCATION", (room_col_x, telemetry_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
+        if is_ho:
+            primary_loc = "[HIDEOUT] Safe Zone"
+            primary_col = (60, 245, 130)
+            sub_loc = "Stash & Rest Hub | No Hostiles"
+            sub_col = (160, 235, 190)
+        elif is_enemy:
+            primary_loc = f"[ENEMY AREA] {room_name}"
+            primary_col = (50, 110, 255)
+            sub_loc = f"Combat Zone | Room Conf: {room_conf:.0%}" if room_recognized else "Combat Zone | Hostiles Active"
+            sub_col = (160, 195, 250)
+        else:
+            primary_loc = "SCANNING LOCATION..."
+            primary_col = (0, 215, 255)
+            sub_loc = "Analyzing Minimap & Surroundings"
+            sub_col = (160, 175, 190)
+
+        cv2.putText(dashboard, primary_loc, (room_col_x, telemetry_y + 40), cv2.FONT_HERSHEY_SIMPLEX, 0.46, primary_col, 1, cv2.LINE_AA)
+        cv2.putText(dashboard, sub_loc, (room_col_x, telemetry_y + 55), cv2.FONT_HERSHEY_SIMPLEX, 0.33, sub_col, 1, cv2.LINE_AA)
 
         # Col 4: Autopilot / Navigation Status
         nav_col_x = left_x + 890
         cv2.putText(dashboard, "AUTOPILOT / ROUTE PROGRESS", (nav_col_x, telemetry_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (150, 160, 175), 1, cv2.LINE_AA)
         wp_target = nav_res.get("target_index", 0)
         total_wps = len(self.movement_path.waypoints) if self.movement_path else 0
-        nav_status_str = f"WP {wp_target}/{total_wps} | Keys: [{held_keys_str}]"
+        if getattr(self.navigator, "in_hideout", False) or nav_res.get("in_hideout", False):
+            nav_status_str = "HIDEOUT (SAFE ZONE) | Inactive"
+        else:
+            nav_status_str = f"WP {wp_target}/{total_wps} | Keys: [{held_keys_str}]"
         cv2.putText(dashboard, nav_status_str, (nav_col_x, telemetry_y + 38), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (120, 220, 255), 1, cv2.LINE_AA)
         run_timer_str = nav_res.get("run_elapsed_str", "0.0s")
         sims_c = nav_res.get("run_sims_count", 0)
@@ -1329,10 +1706,10 @@ class PlayerTrackerVisualizer:
             shortcuts = "[1-7] Select Room  |  [Drag / Arrows] Move Box  |  [+/-] Expand/Shrink  |  [S] Save Boxes  |  [B/E] Exit Editor  |  [Q] Exit"
             shortcut_color = (0, 255, 255)
         elif nav_res.get("waiting_for_green_light"):
-            shortcuts = "[G / CLICK] GREEN LIGHT (RESUME)  |  [F3 / X] Attack  |  [P] Pink Dot  |  [F4] Pause  |  [B] Edit Boxes  |  [N] Skip WP  |  [R] Reload  |  [Q] Exit"
+            shortcuts = "[G / CLICK] GREEN LIGHT (RESUME)  |  [H] Hideout Test  |  [F3 / X] Attack  |  [P] Pink Dot  |  [F4] Pause  |  [Q] Exit"
             shortcut_color = (0, 255, 160)
         else:
-            shortcuts = "[A / G] Autopilot  |  [E] Early Exit  |  [P] Pink Dot  |  [B] Edit Boxes  |  [F3 / X] Attack  |  [F4] Pause  |  [V] View  |  [Q] Exit"
+            shortcuts = "[A / G] Autopilot  |  [H] Test Hideout  |  [E] Early Exit  |  [P] Pink Dot  |  [B] Edit Boxes  |  [F3 / X] Attack  |  [Q] Exit"
             shortcut_color = (140, 150, 165)
         cv2.putText(
             dashboard,
@@ -1375,6 +1752,7 @@ class PlayerTrackerVisualizer:
         print(" PLAYER POSITION TRACKER - LIVE COMPARISON WINDOW")
         print(f" Target Display:  Monitor {self.monitor_idx} (Path of Exile 2)")
         print(" Controls:")
+        print("   [H]     Start Bot from Hideout (Stash -> Map Device -> SIM -> Portal -> Route)")
         print("   [A / G] Toggle Autopilot Navigation (WASD along route)")
         print("   [B / E] Toggle Room Bounding Box Editor (interactive drag/resize)")
         print("   [1 .. 7] Select Room 1..7 for Bounding Box editing")
@@ -1469,6 +1847,17 @@ class PlayerTrackerVisualizer:
                         self.navigator.give_green_light()
                         self.notification_msg = "GREEN LIGHT GIVEN -> RESUMING ROUTE!"
                         self.notification_expiry = time.time() + 3.0
+                    elif getattr(self.navigator, "waiting_for_user_key", False):
+                        self.navigator.confirm_user_key()
+                        self.notification_msg = "CONFIRMATION RECEIVED -> PROCEEDING TO HIDEOUT!"
+                        self.notification_expiry = time.time() + 3.0
+                elif key in [ord("5"), 116]:  # F5 or '5' key
+                    if getattr(self.navigator, "waiting_for_user_key", False):
+                        self.navigator.confirm_user_key()
+                        self.notification_msg = "F5 RECEIVED -> PROCEEDING TO HIDEOUT!"
+                        self.notification_expiry = time.time() + 3.0
+                elif key in [ord("h"), ord("H")]:
+                    self.start_hideout_full_routine()
                 elif key in [ord("a"), ord("A")]:
                     if self.navigator.is_simulating_key or "a" in self.navigator.held_keys or "A" in self.navigator.held_keys:
                         pass

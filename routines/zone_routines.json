@@ -535,23 +535,6 @@
           "description": "Click encounter banner to start encounter"
         },
         {
-          "action": "press_key",
-          "key": "t",
-          "clicks": 1,
-          "delay": 0.15,
-          "description": "Press 'T' key skill"
-        },
-        {
-          "action": "hold_key",
-          "key": "q",
-          "duration": 3.5,
-          "combat_interval": 0.65,
-          "combat_action": "key",
-          "combat_key": "t",
-          "right_click_interval": 0.65,
-          "description": "Hold 'Q' key for 3.5 seconds"
-        },
-        {
           "action": "orbit_yellow_zone",
           "duration": 50.0,
           "right_click_interval": 0.75,
@@ -559,7 +542,7 @@
           "rolling_interval": 2.0,
           "portal_early_exit": true,
           "portal_early_exit_min_seconds": 30.0,
-          "description": "Orbit inside yellow zone for 50s (portal early exit after 30s)"
+          "description": "Orbit inside yellow zone for 50s (portal early exit after 30s) with continuous 'T' combat"
         },
         {
           "action": "navigate_to_loot_location",
@@ -583,6 +566,74 @@
           "approach_wait": 1.1,
           "wait_for_green_light": false,
           "description": "Collect loot with approach wait and wait for manual green light confirmation"
+        },
+        {
+          "action": "navigate_to_loot_location",
+          "timeout": 10.0,
+          "arrival_threshold": 15.0,
+          "description": "Walk back to LOOT location (portal anchor) after looting before F5 confirmation"
+        },
+        {
+          "action": "wait_for_user_key",
+          "key": "f5",
+          "prompt": "Press [F5] to confirm exiting to hideout via portal",
+          "description": "Wait for user to press F5 before exiting to hideout"
+        },
+        {
+          "action": "click_exit_portal",
+          "search_attempts": 5,
+          "approach_wait": 2.0,
+          "description": "Click exit portal to return to hideout"
+        },
+        {
+          "action": "click_stash",
+          "search_attempts": 10,
+          "timeout": 15.0,
+          "verify_inventory_open": true,
+          "description": "Click STASH in hideout, verify Stash & Inventory open, and capture inventory screenshot"
+        },
+        {
+          "action": "stash_inventory_items",
+          "exclude_last_columns": 3,
+          "description": "Ctrl+click all non-empty inventory items into Stash (excluding last 3 columns)"
+        },
+        {
+          "action": "close_all_hideout_windows",
+          "wait_seconds": 0.35,
+          "description": "Press Escape button to close all open windows after stashing loot"
+        },
+        {
+          "action": "click_map_device",
+          "search_attempts": 8,
+          "timeout": 12.0,
+          "description": "Click MAP DEVICE in hideout to open Atlas map interface"
+        },
+        {
+          "action": "select_simulacrum_map",
+          "max_attempts": 5,
+          "description": "Find icon of SIMULACRUM, click map circle below it, and verify SIMULACRUM OF DELUSION popup is visible"
+        },
+        {
+          "action": "insert_simulacrum_map",
+          "target_slot": 0,
+          "method": "drag",
+          "description": "Drag Tier 15 map from last 3 columns into one of the 4 fields in Simulacrum of Delusion popup"
+        },
+        {
+          "action": "click_traverse_button",
+          "timeout": 5.0,
+          "verify_close": true,
+          "description": "Find and click TRAVERSE button to activate Map Device and close all open windows"
+        },
+        {
+          "action": "click_hideout_portal",
+          "search_attempts": 12,
+          "timeout": 12.0,
+          "approach_wait": 3.5,
+          "verify_transition": true,
+          "auto_start_route": true,
+          "start_pink_dot": 1,
+          "description": "Look for spawned Map Device portal(s), left-click portal to enter Simulacrum danger zone, and start standard routine to Pink Zone #1"
         }
       ]
     }

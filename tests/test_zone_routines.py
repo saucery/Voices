@@ -1267,5 +1267,1220 @@ def test_delirium_statue_fresh_screen_detection_and_hidden_loot_labels():
     nav.stop()
 
 
+def test_wait_for_user_key_f5():
+    """Verifies that wait_for_user_key sets status and waits until key pressed or confirmed."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    # 1. Test timeout path
+    res = nav.wait_for_user_key(key="f5", prompt="Press F5", timeout=0.05)
+    assert res is True
+    assert nav.waiting_for_user_key is False
+
+    # 2. Test manual confirmation via confirm_user_key()
+    nav.waiting_for_user_key = True
+    assert nav.confirm_user_key() is True
+    assert nav.waiting_for_user_key is False
+
+    # 3. Test step execution
+    step = {"action": "wait_for_user_key", "key": "f5", "timeout": 0.05}
+    res_step = nav._execute_zone_routine_step(step, {}, zone_label="PINK DOT #7")
+    assert res_step is True
+    nav.stop()
+
+
+def test_locate_stash_template_matching():
+    """Verifies that locate_stash matches templates on user uploaded screenshot."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    import cv2
+    stash_crop = cv2.imread(r"templates/ui/stash_full.png")
+    assert stash_crop is not None
+
+    pos = nav.locate_stash(screen=stash_crop)
+    assert pos is not None
+    assert isinstance(pos, tuple)
+    assert len(pos) == 2
+    # Target should be inside crop
+    assert 0 <= pos[0] <= stash_crop.shape[1]
+    assert 0 <= pos[1] <= stash_crop.shape[0]
+    nav.stop()
+
+
+def test_is_inventory_open_matching():
+    """Verifies that is_inventory_open returns True when inventory title banner is present."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    import cv2
+    title_img = cv2.imread(r"templates/ui/inventory_title.png")
+    assert title_img is not None
+
+    # Embed title inside a blank canvas
+    canvas = np.zeros((600, 800, 3), dtype=np.uint8)
+    th, tw = title_img.shape[:2]
+    canvas[50:50+th, 200:200+tw] = title_img
+
+    assert nav.is_inventory_open(screen=canvas) is True
+
+    # Blank canvas without inventory should return False
+    blank = np.zeros((600, 800, 3), dtype=np.uint8)
+    assert nav.is_inventory_open(screen=blank) is False
+    nav.stop()
+
+
+def test_click_exit_portal_routine_step():
+    """Verifies click_exit_portal locates portal and dispatches left click."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    with patch.object(nav, "locate_portal", return_value=(1140, 344)) as mock_loc, \
+         patch.object(nav, "move_mouse_inside_game", return_value=(1140, 344)), \
+         patch("src.route_navigator.pydirectinput") as mock_pdi, \
+         patch.object(nav, "_wait_for_approach"):
+
+        step = {"action": "click_exit_portal", "search_attempts": 2, "approach_wait": 0.0}
+        res = nav._execute_zone_routine_step(step, {}, zone_label="PINK DOT #7")
+        assert res is True
+        mock_loc.assert_called()
+        mock_pdi.click.assert_called_once()
+        mock_pdi.mouseUp.assert_called_with(button="left")
+    nav.stop()
+
+
+def test_click_stash_routine_step():
+    """Verifies click_stash locates stash, clicks it, and confirms inventory is open."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    with patch.object(nav, "locate_stash", return_value=(960, 480)) as mock_loc, \
+         patch.object(nav, "move_mouse_inside_game", return_value=(960, 480)), \
+         patch.object(nav, "is_inventory_open", side_effect=[False, True, True]) as mock_inv, \
+         patch("src.route_navigator.pydirectinput") as mock_pdi:
+
+        step = {
+            "action": "click_stash",
+            "search_attempts": 2,
+            "timeout": 2.0,
+            "verify_inventory_open": True,
+        }
+        res = nav._execute_zone_routine_step(step, {}, zone_label="PINK DOT #7")
+        assert res is True
+        mock_loc.assert_called()
+        assert (mock_pdi.mouseDown.call_count == 1 and mock_pdi.mouseUp.call_count == 1) or mock_pdi.click.call_count == 1
+        mock_inv.assert_called()
+    nav.stop()
+
+
+def test_click_stash_skips_click_when_inventory_already_open():
+    """Verifies click_stash skips clicking when inventory is already open."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    with patch.object(nav, "locate_stash") as mock_loc, \
+         patch.object(nav, "is_inventory_open", return_value=True), \
+         patch("src.route_navigator.pydirectinput") as mock_pdi:
+
+        res = nav.click_stash(timeout=2.0)
+        assert res is True
+        mock_loc.assert_not_called()
+        assert mock_pdi.mouseDown.call_count == 0
+        assert mock_pdi.click.call_count == 0
+    nav.stop()
+
+
+def test_pink_7_full_routine_includes_portal_and_stash():
+    """Verifies that routines/zone_routines.json pink_7 includes the complete sequence through stash."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    p7 = nav.zone_routines["pink_zones"]["pink_7"]
+    actions = [s["action"] for s in p7["steps"]]
+
+    assert "wait_for_user_key" in actions
+    assert "click_exit_portal" in actions
+    assert "click_stash" in actions
+    assert "stash_inventory_items" in actions
+
+    idx_loot = actions.index("pickup_loot")
+    idx_loot_return = [i for i, a in enumerate(actions) if a == "navigate_to_loot_location"][-1]
+    idx_f5 = actions.index("wait_for_user_key")
+    idx_portal = actions.index("click_exit_portal")
+    idx_stash = actions.index("click_stash")
+    idx_stash_items = actions.index("stash_inventory_items")
+
+    assert idx_loot < idx_loot_return < idx_f5 < idx_portal < idx_stash < idx_stash_items
+    nav.stop()
+
+
+def test_is_in_hideout_matching():
+    """Verifies that is_in_hideout matches hideout_layout.png against screen."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    import cv2
+    layout = cv2.imread(r"templates/ui/hideout_layout.png")
+    assert layout is not None
+
+    # Place layout in upper-right quadrant of a 1080p canvas
+    canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    lh, lw = layout.shape[:2]
+    canvas[20:20+lh, 1920-lw-20:1920-20] = layout
+
+    assert nav.is_in_hideout(screen=canvas) is True
+
+    # Blank screen should return False
+    blank = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    assert nav.is_in_hideout(screen=blank) is False
+    nav.stop()
+
+
+def test_save_inventory_screenshot():
+    """Verifies that save_inventory_screenshot writes an image file to inventory_screenshots."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    dummy_screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    path = nav.save_inventory_screenshot(screen=dummy_screen)
+    assert path is not None
+    assert os.path.exists(path)
+    # Clean up test artifact
+    try:
+        os.remove(path)
+    except Exception:
+        pass
+    nav.stop()
+
+
+def test_stash_inventory_items_detection_and_ctrl_click():
+    """Verifies stash_inventory_items detects items in columns 0..9 and ctrl+clicks them, excluding cols 10..11."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    import cv2
+    title_img = cv2.imread(r"templates/ui/inventory_title.png")
+    assert title_img is not None
+
+    # Construct test screen with inventory title at (1200, 100)
+    screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    th, tw = title_img.shape[:2]
+    screen[100:100+th, 1200:1200+tw] = title_img
+
+    # Locate inventory to get exact slot coordinates
+    inv_info = nav.locate_inventory_window(screen=screen)
+    assert inv_info is not None
+
+    # Paint an item in row 0, col 2 (should be stashed)
+    c2_x = int(round(inv_info["col_centers"][2]))
+    c2_y = int(round(inv_info["row_centers"][0]))
+    screen[c2_y-10:c2_y+10, c2_x-10:c2_x+10] = 180
+
+    # Paint an item in row 0, col 9 (10th column, should be EXCLUDED with exclude_last_columns=3)
+    c9_x = int(round(inv_info["col_centers"][9]))
+    c9_y = int(round(inv_info["row_centers"][0]))
+    screen[c9_y-10:c9_y+10, c9_x-10:c9_x+10] = 200
+
+    # Paint an item in row 0, col 11 (last column, should be EXCLUDED)
+    c11_x = int(round(inv_info["col_centers"][11]))
+    c11_y = int(round(inv_info["row_centers"][0]))
+    screen[c11_y-10:c11_y+10, c11_x-10:c11_x+10] = 220
+
+    clicked_positions = []
+    def mock_move(x, y):
+        clicked_positions.append((x, y))
+        return (x, y)
+
+    with patch("src.route_navigator.pydirectinput") as mock_pdi, \
+         patch.object(nav, "move_mouse_inside_game", side_effect=mock_move):
+
+        stashed = nav.stash_inventory_items(screen=screen, exclude_last_columns=3)
+
+        assert stashed == 1  # Only col 2 was stashed, col 9 and 11 were excluded!
+        mock_pdi.keyDown.assert_any_call("ctrl")
+        mock_pdi.click.assert_called_once()
+        mock_pdi.keyUp.assert_any_call("ctrl")
+        assert len(clicked_positions) == 1
+        assert clicked_positions[0] == (c2_x, c2_y)
+
+    nav.stop()
+
+
+def test_locate_inventory_window_dynamic_row_detection():
+    """Verifies that horizontal grid lines trigger dynamic edge detection and accurate Row 5 centering."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    import cv2
+    title_img = cv2.imread(r"templates/ui/inventory_title.png")
+    assert title_img is not None
+
+    screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    th, tw = title_img.shape[:2]
+    screen[100:100+th, 1200:1200+tw] = title_img
+
+    inv_origin_y = 100 - 45
+    inv_origin_x = 1200 - 200
+
+    # Draw 6 strong horizontal lines for the grid rows (PoE grid lines: ~54px spacing)
+    line_ys = [580, 638, 692, 745, 798, 854]
+    for rel_y in line_ys:
+        gy = inv_origin_y + rel_y
+        screen[gy-1:gy+2, inv_origin_x+20:inv_origin_x+600] = 220
+
+    inv_info = nav.locate_inventory_window(screen=screen)
+    assert inv_info is not None
+    assert inv_info["found"] is True
+    assert inv_info["row_method"] == "dynamic_edges"
+    assert len(inv_info["row_centers"]) == 5
+
+    # Verify row 5 center is midpoint of lines 798 and 854 -> 826.0 (approx inv_origin_y + 826)
+    expected_row5_y = inv_origin_y + (798 + 854) / 2.0
+    assert abs(inv_info["row_centers"][4] - expected_row5_y) <= 1.5
+
+    nav.stop()
+
+
+def test_locate_inventory_window_multi_resolution_screen1_1800p():
+    """Verifies multi-scale inventory window detection and scaling on Screen 1 (2880x1800 OLED)."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    import cv2
+    title_img = cv2.imread(r"templates/ui/inventory_title.png")
+    assert title_img is not None
+
+    # Screen 1 is 2880x1800 -> scale factor ~1.667
+    target_h, target_w = 1800, 2880
+    scale = target_h / 1080.0  # 1.6666...
+    scaled_title = cv2.resize(title_img, (int(title_img.shape[1] * scale), int(title_img.shape[0] * scale)))
+
+    screen_1800p = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+    sth, stw = scaled_title.shape[:2]
+    # Place on right side of 1800p screen
+    t_y = int(100 * scale)
+    t_x = int(2000)
+    screen_1800p[t_y:t_y+sth, t_x:t_x+stw] = scaled_title
+
+    inv_info = nav.locate_inventory_window(screen=screen_1800p)
+    assert inv_info is not None
+    assert inv_info["found"] is True
+    assert abs(inv_info["scale"] - scale) <= 0.05
+    assert len(inv_info["row_centers"]) == 5
+    assert len(inv_info["col_centers"]) == 12
+
+    # Check that Row 5 center is scaled by ~scale
+    inv_origin_y = t_y - int(45 * inv_info["scale"])
+    expected_row5_y = inv_origin_y + 825.5 * inv_info["scale"]
+    assert abs(inv_info["row_centers"][4] - expected_row5_y) <= 5.0
+
+    nav.stop()
+
+
+def test_click_exit_portal_loot_dot_retry():
+    """Verifies click_exit_portal walks to LOOT dot if portal not initially on screen."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    locate_attempts = 0
+    def mock_locate(screen=None):
+        nonlocal locate_attempts
+        locate_attempts += 1
+        # Fails on initial attempts, succeeds after walk to LOOT dot
+        if locate_attempts > 2:
+            return (1140, 344)
+        return None
+
+    with patch.object(nav, "locate_portal", side_effect=mock_locate), \
+         patch.object(nav, "_resolve_target_loot_pos", return_value=(131.0, 62.0)), \
+         patch.object(nav, "_walk_to_coordinate", return_value=True) as mock_walk, \
+         patch.object(nav, "move_mouse_inside_game", return_value=(1140, 344)), \
+         patch("src.route_navigator.pydirectinput") as mock_pdi, \
+         patch.object(nav, "_wait_for_approach"):
+
+        step = {"action": "click_exit_portal", "search_attempts": 2, "approach_wait": 0.0}
+        res = nav._execute_zone_routine_step(step, {}, zone_label="PINK DOT #7")
+        assert res is True
+        mock_walk.assert_called_once()
+        mock_pdi.click.assert_called_once()
+    nav.stop()
+
+
+def test_hideout_sequence_live_and_dry_run():
+    """Verifies test_hideout_sequence runs the complete hideout flow in live and dry_run modes."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    dummy_screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    with patch.object(nav, "is_in_hideout", return_value=True), \
+         patch.object(nav, "locate_stash", return_value=(850, 420)), \
+         patch.object(nav, "move_mouse_inside_game", return_value=(850, 420)), \
+         patch("src.route_navigator.pydirectinput") as mock_pdi, \
+         patch.object(nav, "is_inventory_open", return_value=True), \
+         patch.object(nav, "save_inventory_screenshot", return_value="inventory_screenshots/test.png"), \
+         patch.object(nav, "stash_inventory_items", return_value=4):
+
+        # 1. Test Dry Run mode (no clicks, items_stashed is 0)
+        rep_dry = nav.test_hideout_sequence(dry_run=True, screen=dummy_screen)
+        assert rep_dry["success"] is True
+        assert rep_dry["in_hideout"] is True
+        assert rep_dry["stash_pos"] == (850, 420)
+        assert rep_dry["stash_clicked"] is False
+        assert rep_dry["inventory_open"] is True
+        assert rep_dry["screenshot_path"] == "inventory_screenshots/test.png"
+        assert rep_dry["items_detected"] == 4
+        assert rep_dry["items_stashed"] == 0
+        mock_pdi.click.assert_not_called()
+
+        # 2. Test Live Execution mode
+        rep_live = nav.test_hideout_sequence(dry_run=False, screen=dummy_screen)
+        assert rep_live["success"] is True
+        assert rep_live["stash_clicked"] is True
+        assert rep_live["items_stashed"] == 4
+        assert (mock_pdi.mouseDown.call_count == 1 and mock_pdi.mouseUp.call_count == 1) or mock_pdi.click.call_count == 1
+
+    nav.stop()
+
+
+def test_hideout_sequence_deposit_only():
+    """Verifies deposit_only=True bypasses hideout minimap and stash clicking."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    dummy_screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    with patch.object(nav, "is_in_hideout") as mock_ho, \
+         patch.object(nav, "locate_stash") as mock_locate, \
+         patch.object(nav, "is_inventory_open", return_value=True), \
+         patch.object(nav, "save_inventory_screenshot", return_value="inventory_screenshots/test.png"), \
+         patch.object(nav, "stash_inventory_items", return_value=3):
+
+        rep = nav.test_hideout_sequence(dry_run=False, deposit_only=True, screen=dummy_screen)
+        assert rep["success"] is True
+        assert rep["items_stashed"] == 3
+    nav.stop()
+
+
+def test_combat_stops_when_portal_detected_or_delirium_statue_pressed():
+    """Verifies that persistent combat attack ('T') stops as soon as exit portal is detected or Delirium statue is clicked."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+    nav.enable_persistent_combat(interval=0.05, key="t")
+    assert nav.persistent_combat_active is True
+
+    # 1. When Delirium statue is clicked and exit portal is NOT yet detected, combat remains ACTIVE for looting
+    with patch.object(nav, "locate_delirium_statue", return_value=(600, 300)), \
+         patch.object(nav, "locate_portal", return_value=None), \
+         patch.object(nav, "move_mouse_inside_game", return_value=(600, 300)), \
+         patch("src.route_navigator.pydirectinput"), \
+         patch.object(nav, "_wait_for_approach"):
+
+        nav.click_delirium_statue(loot_drop_delay=0.0, require_loot_proximity=False)
+        assert nav.persistent_combat_active is True
+
+    # 2. When exit portal in Room 7 is detected, persistent combat must be stopped
+    with patch.object(nav, "locate_delirium_statue", return_value=(600, 300)), \
+         patch.object(nav, "locate_portal", return_value=(1140, 344)), \
+         patch.object(nav, "move_mouse_inside_game", return_value=(600, 300)), \
+         patch("src.route_navigator.pydirectinput"), \
+         patch.object(nav, "_wait_for_approach"):
+
+        nav.click_delirium_statue(loot_drop_delay=0.0, require_loot_proximity=False)
+        assert nav.persistent_combat_active is False
+
+    # 3. When orbit loop detects portal (early exit), persistent combat must also be stopped
+    nav.enable_persistent_combat(interval=0.05, key="t")
+    assert nav.persistent_combat_active is True
+
+    zone = {"id": "zone_7", "center": [100.0, 100.0], "radius": 50.0}
+    with patch.object(nav, "locate_portal", return_value=(1140, 344)):
+        nav._run_orbit_loop(
+            duration=5.0,
+            best_zone=zone,
+            portal_early_exit=True,
+            portal_early_exit_min_seconds=0.0,
+            zone_label="pink_7",
+        )
+        assert nav.persistent_combat_active is False
+
+    nav.stop()
+
+
+def test_visualizer_trigger_hideout_test():
+    """Verifies that PlayerTrackerVisualizer.trigger_hideout_test launches without NameError and calls test_hideout_sequence."""
+    from src.player_tracker_visualizer import PlayerTrackerVisualizer
+
+    nav = RouteNavigator(movement_path=MovementPath())
+    vis = PlayerTrackerVisualizer()
+    vis.navigator = nav
+
+    with patch.object(nav, "test_hideout_sequence", return_value={"success": True, "items_stashed": 5}) as mock_hideout:
+        vis.trigger_hideout_test(dry_run=True)
+        # Wait briefly for worker thread to finish
+        time.sleep(0.15)
+        mock_hideout.assert_called_once()
+        assert "STASHED 5 ITEMS" in vis.notification_msg
+
+    nav.stop()
+
+
+def test_is_in_hideout_minimap_and_fallback():
+    """Verifies is_in_hideout detection: minimap match, map device confirmation, and prevention of false-positives from stash in enemy areas."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.hideout_layout_tpl = np.zeros((100, 100, 3), dtype=np.uint8)
+
+    # 1. Minimap matches directly
+    screen_match = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    with patch("src.route_navigator.cv2.matchTemplate", return_value=np.array([[0.85]])):
+        assert nav.is_in_hideout(screen=screen_match) is True
+
+    # 2. Minimap below threshold, and STASH alone is visible in enemy area (Simulacrum) -> MUST NOT be hideout!
+    screen_enemy_stash = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    with patch("src.route_navigator.cv2.matchTemplate", return_value=np.array([[0.30]])), \
+         patch.object(nav, "locate_stash", return_value=(800, 450)), \
+         patch.object(nav, "locate_map_device", return_value=None):
+        assert nav.is_in_hideout(screen=screen_enemy_stash, check_stash_fallback=True) is False
+
+    # 3. Minimap borderline (0.38) and Map Device is visible -> Confirmed hideout
+    screen_map_device = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    with patch("src.route_navigator.cv2.matchTemplate", return_value=np.array([[0.38]])), \
+         patch.object(nav, "locate_map_device", return_value=(960, 540)):
+        assert nav.is_in_hideout(screen=screen_map_device) is True
+
+    # 4. Neither minimap nor Map Device matches
+    screen_fail = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    with patch("src.route_navigator.cv2.matchTemplate", return_value=np.array([[0.20]])), \
+         patch.object(nav, "locate_map_device", return_value=None), \
+         patch.object(nav, "locate_stash", return_value=None):
+        assert nav.is_in_hideout(screen=screen_fail) is False
+
+    # 5. Dual confirmation mode (require_map_device=True)
+    with patch("src.route_navigator.cv2.matchTemplate", return_value=np.array([[0.85]])), \
+         patch.object(nav, "locate_map_device", return_value=None):
+        assert nav.is_in_hideout(screen=screen_match, require_map_device=True) is False
+
+    with patch("src.route_navigator.cv2.matchTemplate", return_value=np.array([[0.85]])), \
+         patch.object(nav, "locate_map_device", return_value=(960, 540)):
+        assert nav.is_in_hideout(screen=screen_match, require_map_device=True) is True
+
+    nav.stop()
+
+
+def test_hideout_safety_guards_prevent_combat_and_routines():
+    """Verifies that when in hideout (in_hideout=True), combat attacks, pink dot routines,
+    zone routines, and navigation are strictly blocked and disarmed."""
+    mp = MovementPath()
+    mp.waypoints = [
+        {"index": 0, "name": "Start", "x": 100, "y": 100, "action": "walk"},
+        {"index": 1, "name": "Pink Target", "x": 100, "y": 100, "action": "pink_encounter"},
+    ]
+    nav = RouteNavigator(movement_path=mp)
+    nav.in_hideout = True
+    nav.persistent_combat_active = True
+    nav.held_keys = {"w", "d"}
+
+    # 1. Combat pulse must return False immediately
+    with patch("src.route_navigator.pydirectinput.keyDown") as mock_down:
+        assert nav._trigger_persistent_combat_if_due() is False
+        mock_down.assert_not_called()
+
+    # 2. Pink dot interaction must abort immediately
+    assert nav.execute_pink_dot_interaction(mp.waypoints[1]) is False
+
+    # 3. Zone routine must abort immediately
+    dummy_routine = {"name": "Test Routine", "steps": [{"action": "stop", "duration": 1.0}]}
+    assert nav._execute_zone_routine(dummy_routine, zone_label="PINK DOT") is False
+
+    # 4. Starting route navigation must be refused
+    with patch.object(nav, "is_in_hideout", return_value=True):
+        nav.start()
+        assert nav.is_active is False
+        assert "Cannot start in Hideout" in nav.status_message
+
+    # 5. update() in hideout disarms combat, releases keys, and keeps is_active=False
+    telemetry = nav.update((100.0, 100.0))
+    assert telemetry["in_hideout"] is True
+    assert telemetry["is_active"] is False
+    assert nav.is_active is False
+    assert len(nav.held_keys) == 0
+    assert nav.persistent_combat_active is False
+    assert "HIDEOUT" in telemetry["status_message"]
+
+    nav.stop()
+
+
+def test_close_all_hideout_windows_escape():
+    """Verifies close_all_hideout_windows issues Escape keypress and confirms window closure."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    with patch("src.route_navigator.pydirectinput") as mock_pdi, \
+         patch.object(nav, "is_inventory_open", return_value=False):
+        closed = nav.close_all_hideout_windows(wait_seconds=0.01, verify_close=True)
+        assert closed is True
+        mock_pdi.keyDown.assert_any_call("escape")
+        mock_pdi.keyUp.assert_any_call("escape")
+
+    nav.stop()
+
+
+def test_detect_simulacrum_map_nodes_and_circle_offset():
+    """Verifies that Simulacrum icons are detected and circle coordinates are computed using configurable simulacrum_click_y_offset."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._load_stash_and_inventory_templates(force_reload=True)
+
+    # Use existing medal or icon template
+    tpl = nav.simulacrum_medal_tpl if nav.simulacrum_medal_tpl is not None else nav.simulacrum_icon_tpl
+    assert tpl is not None, "Simulacrum medal/icon template must be available in templates/ui/"
+
+    th, tw = tpl.shape[:2]
+    screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    place_x = 800
+    place_y = 450
+    screen[place_y:place_y + th, place_x:place_x + tw] = tpl
+
+    # 1. Test 15.0 px offset
+    nav.simulacrum_click_y_offset = 15.0
+    nodes = nav.detect_simulacrum_map_nodes(screen=screen, threshold=0.50)
+    assert len(nodes) >= 1
+
+    detected = nodes[0]
+    expected_medal_x = place_x + tw // 2
+    expected_medal_y = place_y + th // 2
+    expected_circle_y = int(round(expected_medal_y + nav.simulacrum_click_y_offset * detected["scale"]))
+
+    assert abs(detected["screen_medal_pos"][0] - expected_medal_x) <= 2
+    assert abs(detected["screen_medal_pos"][1] - expected_medal_y) <= 2
+    assert abs(detected["screen_circle_pos"][0] - expected_medal_x) <= 2
+    assert abs(detected["screen_circle_pos"][1] - expected_circle_y) <= 2
+
+    # 2. Test custom configurable offset (e.g. 25.0 px)
+    nav.simulacrum_click_y_offset = 25.0
+    nodes_custom = nav.detect_simulacrum_map_nodes(screen=screen, threshold=0.50)
+    assert len(nodes_custom) >= 1
+    expected_custom_circle_y = int(round(expected_medal_y + 25.0 * nodes_custom[0]["scale"]))
+    assert abs(nodes_custom[0]["screen_circle_pos"][1] - expected_custom_circle_y) <= 2
+
+    nav.stop()
+
+
+def test_select_accessible_simulacrum_map_iteration():
+    """Verifies that select_accessible_simulacrum_map iterates through candidate circles until popup is confirmed."""
+    nav = RouteNavigator(movement_path=MovementPath())
+
+    cand1 = {
+        "screen_medal_pos": (400, 300),
+        "screen_circle_pos": (400, 326),
+        "medal_pos": (400, 300),
+        "circle_pos": (400, 326),
+        "confidence": 0.85,
+        "scale": 1.0,
+    }
+    cand2 = {
+        "screen_medal_pos": (700, 500),
+        "screen_circle_pos": (700, 526),
+        "medal_pos": (700, 500),
+        "circle_pos": (700, 526),
+        "confidence": 0.90,
+        "scale": 1.0,
+    }
+
+    clicked_targets = []
+    def mock_move(x, y):
+        clicked_targets.append((x, y))
+        return (x, y)
+
+    # First candidate is inaccessible (popup=False), second candidate is accessible (popup=True)
+    popup_sequence = [False, True]
+    def mock_popup_visible(*args, **kwargs):
+        return popup_sequence.pop(0) if popup_sequence else True
+
+    with patch("src.route_navigator.pydirectinput") as mock_pdi, \
+         patch.object(nav, "move_mouse_inside_game", side_effect=mock_move), \
+         patch.object(nav, "is_simulacrum_popup_visible", side_effect=mock_popup_visible):
+
+        selected = nav.select_accessible_simulacrum_map(candidates=[cand1, cand2], max_attempts=5)
+        assert selected is not None
+        assert selected == cand2
+        # Verify both circles were clicked in sequence
+        assert (400, 326) in clicked_targets
+        assert (mock_pdi.mouseDown.call_count == 2 and mock_pdi.mouseUp.call_count == 2) or mock_pdi.click.call_count == 2
+
+    nav.stop()
+
+
+def test_select_accessible_simulacrum_map_never_clicks_inaccessible_when_accessible_exists():
+    """Verifies that select_accessible_simulacrum_map NEVER clicks inaccessible nodes when accessible nodes exist."""
+    nav = RouteNavigator(movement_path=MovementPath())
+
+    cand_accessible = {
+        "screen_medal_pos": (500, 300),
+        "screen_circle_pos": (500, 315),
+        "medal_pos": (500, 300),
+        "circle_pos": (500, 315),
+        "confidence": 0.88,
+        "scale": 1.0,
+        "is_accessible": True,
+        "acc_score": 2,
+    }
+    cand_inaccessible = {
+        "screen_medal_pos": (800, 600),
+        "screen_circle_pos": (800, 615),
+        "medal_pos": (800, 600),
+        "circle_pos": (800, 615),
+        "confidence": 0.95,
+        "scale": 1.0,
+        "is_accessible": False,
+        "acc_score": 0,
+    }
+
+    clicked_targets = []
+    def mock_move(x, y):
+        clicked_targets.append((x, y))
+        return (x, y)
+
+    with patch("src.route_navigator.pydirectinput"), \
+         patch.object(nav, "move_mouse_inside_game", side_effect=mock_move), \
+         patch.object(nav, "is_simulacrum_popup_visible", return_value=True):
+
+        selected = nav.select_accessible_simulacrum_map(candidates=[cand_accessible, cand_inaccessible], max_attempts=3)
+        assert selected == cand_accessible
+        # Ensure only the accessible node was clicked, never the inaccessible one
+        assert (500, 315) in clicked_targets
+        assert (800, 615) not in clicked_targets
+
+    nav.stop()
+
+
+def test_locate_tier15_maps_in_inventory_and_transfer():
+    """Verifies Tier 15 map detection in columns 10..12 and drag transfer into Delusion popup."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._load_stash_and_inventory_templates(force_reload=True)
+
+    title_img = nav.inventory_title_tpl
+    map_img = nav.tier15_map_tpl
+    assert title_img is not None
+    assert map_img is not None
+
+    screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    th, tw = title_img.shape[:2]
+    screen[100:100 + th, 1200:1200 + tw] = title_img
+
+    inv_info = nav.locate_inventory_window(screen=screen)
+    assert inv_info is not None
+
+    # Place Tier 15 map in Row 1, Column 10 (0-indexed col 9)
+    col9_x = int(round(inv_info["col_centers"][9]))
+    row1_y = int(round(inv_info["row_centers"][1]))
+    mh, mw = map_img.shape[:2]
+    screen[row1_y - mh//2 : row1_y - mh//2 + mh, col9_x - mw//2 : col9_x - mw//2 + mw] = map_img
+
+    # 1. Test locate_tier15_maps_in_inventory
+    found_maps = nav.locate_tier15_maps_in_inventory(screen=screen, threshold=0.50)
+    assert len(found_maps) >= 1
+    assert any(m["col"] == 9 and m["row"] == 1 for m in found_maps)
+
+    # 2. Test transfer to popup slot 0 via drag
+    with patch("src.route_navigator.pydirectinput") as mock_pdi, \
+         patch.object(nav, "is_inventory_open", return_value=True):
+        ok = nav.insert_map_into_simulacrum_popup(screen=screen, target_slot_idx=0, method="drag")
+        assert ok is True
+        mock_pdi.mouseDown.assert_called_once_with(button="left")
+        mock_pdi.mouseUp.assert_called_once_with(button="left")
+
+    nav.stop()
+
+
+def test_run_hideout_full_cycle_success():
+    """Verifies run_hideout_full_cycle executes all 7 steps end-to-end."""
+    nav = RouteNavigator(movement_path=MovementPath())
+
+    with patch.object(nav, "is_in_hideout", return_value=True), \
+         patch.object(nav, "click_stash", return_value=True), \
+         patch.object(nav, "stash_inventory_items", return_value=4), \
+         patch.object(nav, "close_all_hideout_windows", return_value=True), \
+         patch.object(nav, "click_map_device", return_value=True), \
+         patch.object(nav, "select_accessible_simulacrum_map", return_value={"screen_circle_pos": (600, 450)}), \
+         patch.object(nav, "insert_map_into_simulacrum_popup", return_value=True):
+
+        report = nav.run_hideout_full_cycle(dry_run=False, screen=np.zeros((1080, 1920, 3), dtype=np.uint8))
+        assert report["success"] is True
+        assert report["in_hideout"] is True
+        assert report["stash_clicked"] is True
+        assert report["inventory_stashed"] is True
+        assert report["windows_closed"] is True
+        assert report["map_device_clicked"] is True
+        assert report["simulacrum_selected"] is True
+        assert report["map_transferred"] is True
+
+    nav.stop()
+
+
+def test_is_simulacrum_popup_visible_with_4square_slots_and_title_only():
+    """Verifies that is_simulacrum_popup_visible confirms 4-square slots and rejects title-only unavailable maps."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._load_stash_and_inventory_templates(force_reload=True)
+
+    img_full = nav.delusion_popup_tpl
+    img_title = getattr(nav, "delusion_title_tpl", None)
+    assert img_full is not None, "delusion_popup_full template must be available"
+    assert img_title is not None, "delusion_title_banner template must be available"
+
+    # 1. Screen with full popup (available map with 4-square grid)
+    screen_avail = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    ph, pw = img_full.shape[:2]
+    pos_x = (1920 - pw) // 2
+    pos_y = (1080 - ph) // 2
+    screen_avail[pos_y:pos_y + ph, pos_x:pos_x + pw] = img_full
+
+    res_avail = nav.is_simulacrum_popup_visible(screen=screen_avail, save_debug=False)
+    assert res_avail is True
+    assert len(nav.delusion_detected_slots) == 4
+    assert nav.delusion_detected_traverse is not None
+
+    # 2. Screen with ONLY title banner (unavailable map without 4-square grid below)
+    screen_unavail = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    bh, bw = img_title.shape[:2]
+    screen_unavail[pos_y:pos_y + bh, pos_x:pos_x + bw] = img_title
+
+    res_unavail = nav.is_simulacrum_popup_visible(screen=screen_unavail, save_debug=False)
+    assert res_unavail is False
+
+    # 3. Blank screen
+    screen_blank = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    assert nav.is_simulacrum_popup_visible(screen=screen_blank, save_debug=False) is False
+
+    nav.stop()
+
+
+def test_simulacrum_accessibility_via_green_node_connection():
+    """Verifies that Simulacrum nodes connected by dashed lines to green completed nodes are recognized as accessible."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._load_stash_and_inventory_templates(force_reload=True)
+
+    # Synthetic canvas with:
+    # 1. A completed green map node at (400, 300)
+    # 2. An accessible Simulacrum circle at (500, 300) linked by a dashed line to the green node
+    # 3. An inaccessible Simulacrum circle at (800, 300) with no dashed line
+    screen = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    # Draw green completed node at (400, 300):
+    # Emerald green center (BGR: [60, 220, 70]) with dark/gold border
+    cv2.circle(screen, (400, 300), 12, (30, 100, 160), -1)  # outer gold border
+    cv2.circle(screen, (400, 300), 8, (60, 230, 70), -1)   # inner emerald green core
+
+    # Draw dashed yellow line from (400, 300) to (500, 300)
+    # Dash pattern: 5px on, 4px off
+    for x in range(415, 485, 9):
+        cv2.line(screen, (x, 300), (min(485, x + 5), 300), (40, 200, 240), 2)  # yellow/gold dash
+
+    # Draw blue accessible circle at (500, 300) with white core and blue halo
+    cv2.circle(screen, (500, 300), 12, (220, 140, 40), 2)  # blue ring
+    cv2.circle(screen, (500, 300), 5, (255, 255, 255), -1) # white core
+
+    # Draw inaccessible circle at (800, 300) (dark grey circle, no dashed line)
+    cv2.circle(screen, (800, 300), 12, (60, 60, 60), 2)
+    cv2.circle(screen, (800, 300), 5, (40, 40, 40), -1)
+
+    # 1. Test detect_green_completed_nodes
+    greens = nav.detect_green_completed_nodes(screen=screen)
+    assert len(greens) >= 1
+    assert any(np.hypot(g["center"][0] - 400, g["center"][1] - 300) < 5 for g in greens)
+
+    # 2. Test check_node_accessibility
+    acc_linked = nav.check_node_accessibility((500, 300), greens, screen=screen)
+    assert acc_linked["is_accessible"] is True
+    assert len(acc_linked["connected_greens"]) >= 1
+
+    acc_isolated = nav.check_node_accessibility((800, 300), greens, screen=screen)
+    assert acc_isolated["is_accessible"] is False
+    assert len(acc_isolated["connected_greens"]) == 0
+
+    nav.stop()
+
+
+def test_simulacrum_real_atlas_screen_ranking_and_accessibility():
+    """Verifies accessible vs inaccessible Simulacrum ranking on real 1080p Atlas screen."""
+    screenshot_path = "inventory_screenshots/sim_circle_attempt_1_CLOSED_20260924_100159.png"
+    if not os.path.exists(screenshot_path):
+        pytest.skip("Real atlas screenshot not found")
+
+    img = cv2.imread(screenshot_path)
+    assert img is not None
+
+    nav = RouteNavigator(movement_path=MovementPath())
+    nodes = nav.detect_simulacrum_map_nodes(screen=img, threshold=0.72)
+    assert len(nodes) >= 2, "Expected at least 2 detected Simulacrum nodes"
+
+    # Candidate #1 must be the accessible Simulacrum map circle
+    top_cand = nodes[0]
+    assert top_cand["is_accessible"] is True
+    assert top_cand.get("acc_score", 0) >= 2
+    assert top_cand["has_blue_glow"] is True
+    assert len(top_cand["connected_greens"]) >= 1
+    assert np.hypot(top_cand["screen_circle_pos"][0] - 858, top_cand["screen_circle_pos"][1] - 432) < 15
+
+    # Second candidate must be marked INACCESSIBLE
+    second_cand = nodes[1]
+    assert second_cand["is_accessible"] is False
+    assert second_cand.get("acc_score", 0) == 0
+    assert np.hypot(second_cand["screen_circle_pos"][0] - 710, second_cand["screen_circle_pos"][1] - 543) < 15
+
+    # Dry-run selection must select candidate #1
+    selected = nav.select_accessible_simulacrum_map(candidates=nodes, dry_run=True)
+    assert selected is not None
+    assert selected == top_cand
+
+    nav.stop()
+
+
+def test_locate_traverse_button_on_real_and_synthetic_screens():
+    """Verifies that locate_traverse_button identifies the button on real and synthetic screens."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._load_stash_and_inventory_templates(force_reload=True)
+
+    # 1. Real screenshot test
+    screenshot_path = "inventory_screenshots/sim_circle_attempt_1_OPEN_20260924_105433.png"
+    if os.path.exists(screenshot_path):
+        img = cv2.imread(screenshot_path)
+        pos = nav.locate_traverse_button(screen=img)
+        assert pos is not None
+        assert np.hypot(pos[0] - 880, pos[1] - 803) < 10
+
+    # 2. Synthetic screen test with placed template
+    btn_tpl = nav.delusion_traverse_tpl
+    assert btn_tpl is not None, "traverse_button template must be loaded"
+    canvas = np.zeros((1080, 1920, 3), dtype=np.uint8)
+    bh, bw = btn_tpl.shape[:2]
+    canvas[500:500 + bh, 700:700 + bw] = btn_tpl
+
+    nav.delusion_detected_traverse = None
+    pos_synth = nav.locate_traverse_button(screen=canvas)
+    assert pos_synth is not None
+    assert pos_synth == (700 + bw // 2, 500 + bh // 2)
+
+    nav.stop()
+
+
+def test_click_traverse_button_dry_run_and_live():
+    """Verifies click_traverse_button in dry_run and live execution modes."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._load_stash_and_inventory_templates(force_reload=True)
+
+    # 1. Dry run mode
+    with patch.object(nav, "locate_traverse_button", return_value=(880, 803)):
+        nav.delusion_detected_slots = [(100, 100), (200, 200)]
+        nav.delusion_detected_traverse = (880, 803)
+        ok_dry = nav.click_traverse_button(dry_run=True)
+        assert ok_dry is True
+        assert nav.delusion_detected_traverse is None
+        assert nav.delusion_detected_slots == []
+
+    # 2. Live mode with mocked inputs
+    with patch.object(nav, "locate_traverse_button", return_value=(880, 803)), \
+         patch.object(nav, "move_mouse_inside_game", return_value=(880, 803)), \
+         patch("src.route_navigator.pydirectinput") as mock_pdi, \
+         patch.object(nav, "is_simulacrum_popup_visible", return_value=False), \
+         patch.object(nav, "is_inventory_open", return_value=False):
+
+        ok_live = nav.click_traverse_button(dry_run=False, verify_close=True)
+        assert ok_live is True
+        mock_pdi.mouseDown.assert_called_once_with(button="left")
+        mock_pdi.mouseUp.assert_called_once_with(button="left")
+
+    nav.stop()
+
+
+def test_locate_hideout_portal_detection():
+    """Verifies that locate_hideout_portal detects portals on real and synthetic screens."""
+    nav = RouteNavigator(movement_path=MovementPath())
+
+    # 1. Real screenshot test
+    screenshot_path = "debug_logs/delirium_detected_20260924_110348_conf82.png"
+    if os.path.exists(screenshot_path):
+        img = cv2.imread(screenshot_path)
+        pos = nav.locate_hideout_portal(screen=img)
+        assert pos is not None
+        assert np.hypot(pos[0] - 1549, pos[1] - 487) < 15
+
+    # 2. Synthetic canvas test with clamped SQDIFF matching
+    canvas = np.full((1080, 1920, 3), 40, dtype=np.uint8)
+    p_img = nav.portal_template_img
+    p_mask = nav.portal_mask
+    assert p_img is not None and p_mask is not None
+    ph, pw = p_img.shape[:2]
+    canvas[400:400 + ph, 900:900 + pw] = np.where(p_mask[:, :, None] > 0, p_img, canvas[400:400 + ph, 900:900 + pw])
+
+    pos_synth = nav.locate_hideout_portal(screen=canvas)
+    assert pos_synth is not None
+    assert np.hypot(pos_synth[0] - (900 + pw // 2), pos_synth[1] - (400 + ph // 2)) < 5
+
+    nav.stop()
+
+
+def test_click_hideout_portal_and_zone_transition():
+    """Verifies that click_hideout_portal enters portal, verifies transition, and starts routine to Pink Dot #1."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.in_hideout = True
+
+    # 1. Dry run test
+    with patch.object(nav, "locate_hideout_portal", return_value=(950, 480)):
+        ok_dry = nav.click_hideout_portal(dry_run=True, auto_start_route=True, start_pink_dot=1)
+        assert ok_dry is True
+        assert nav.start_at_pink_dot == 1
+
+    # 2. Live mode test
+    # Mock is_in_hideout to return True first (in hideout), then False (entered Simulacrum)
+    hideout_states = [True, False]
+    with patch.object(nav, "locate_hideout_portal", return_value=(950, 480)), \
+         patch.object(nav, "move_mouse_inside_game", return_value=(950, 480)), \
+         patch("src.route_navigator.pydirectinput") as mock_pdi, \
+         patch.object(nav, "is_in_hideout", side_effect=lambda: hideout_states.pop(0) if hideout_states else False), \
+         patch.object(nav, "set_start_pink_dot") as mock_set_pink, \
+         patch.object(nav, "start") as mock_start:
+
+        ok_live = nav.click_hideout_portal(
+            dry_run=False,
+            approach_wait=0.01,
+            verify_transition=True,
+            auto_start_route=True,
+            start_pink_dot=1,
+        )
+        assert ok_live is True
+        assert nav.in_hideout is False
+        mock_pdi.mouseDown.assert_called_once_with(button="left")
+        mock_pdi.mouseUp.assert_called_once_with(button="left")
+        mock_set_pink.assert_called_once_with(1)
+        mock_start.assert_called_once()
+
+    nav.stop()
+
+
+def test_execute_custom_zone_action_traverse_and_portal():
+    """Verifies that _execute_zone_routine_step dispatches click_traverse_button and click_hideout_portal."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True
+
+    with patch.object(nav, "click_traverse_button", return_value=True) as mock_trav, \
+         patch.object(nav, "click_hideout_portal", return_value=True) as mock_portal:
+
+        # Step 1: click_traverse_button
+        s1 = {"action": "click_traverse_button", "timeout": 4.0, "verify_close": True}
+        res1 = nav._execute_zone_routine_step(s1, context={}, zone_label="TEST")
+        assert res1 is True
+        mock_trav.assert_called_once_with(timeout=4.0, verify_close=True)
+
+        # Step 2: click_hideout_portal
+        s2 = {
+            "action": "click_hideout_portal",
+            "search_attempts": 10,
+            "timeout": 8.0,
+            "approach_wait": 2.0,
+            "auto_start_route": True,
+            "start_pink_dot": 1,
+        }
+        res2 = nav._execute_zone_routine_step(s2, context={}, zone_label="TEST")
+        assert res2 is True
+        mock_portal.assert_called_once_with(
+            search_attempts=10,
+            timeout=8.0,
+            approach_wait=2.0,
+            verify_transition=True,
+            auto_start_route=True,
+            start_pink_dot=1,
+        )
+
+    nav.stop()
+
+
+def test_run_hideout_full_cycle_with_traverse_and_portal():
+    """Verifies that run_hideout_full_cycle executes traverse and portal steps when traverse_and_enter is True."""
+    nav = RouteNavigator(movement_path=MovementPath())
+
+    with patch.object(nav, "is_in_hideout", return_value=True), \
+         patch.object(nav, "click_stash", return_value=True), \
+         patch.object(nav, "stash_inventory_items", return_value=3), \
+         patch.object(nav, "close_all_hideout_windows", return_value=True), \
+         patch.object(nav, "click_map_device", return_value=True), \
+         patch.object(nav, "select_accessible_simulacrum_map", return_value={"screen_circle_pos": (600, 450)}), \
+         patch.object(nav, "insert_map_into_simulacrum_popup", return_value=True), \
+         patch.object(nav, "click_traverse_button", return_value=True) as mock_trav, \
+         patch.object(nav, "click_hideout_portal", return_value=True) as mock_portal:
+
+        report = nav.run_hideout_full_cycle(
+            dry_run=False,
+            screen=np.zeros((1080, 1920, 3), dtype=np.uint8),
+            traverse_and_enter=True,
+            auto_start_route=True,
+            start_pink_dot=1,
+        )
+        assert report["success"] is True
+        assert report["simulacrum_selected"] is True
+        assert report["map_transferred"] is True
+        assert report["traverse_clicked"] is True
+        assert report["portal_clicked"] is True
+        mock_trav.assert_called_once()
+        mock_portal.assert_called_once_with(dry_run=False, auto_start_route=True, start_pink_dot=1)
+
+    nav.stop()
+
+
+def test_click_stash_unhides_labels_with_z_in_hideout():
+    """Verifies that arriving in hideout ensures loot/object labels are unhidden with 'Z' key,
+    and fallback toggles 'Z' if stash is not immediately detected."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav._loot_labels_hidden = True  # Simulating post-loot state from Room 7
+
+    z_presses = []
+    with patch.object(nav, "_press_z_key", side_effect=lambda: z_presses.append("z")), \
+         patch.object(nav, "is_in_hideout", return_value=True), \
+         patch.object(nav, "locate_stash", return_value=(800, 450)), \
+         patch.object(nav, "move_mouse_inside_game", return_value=(800, 450)), \
+         patch.object(nav, "is_inventory_open", return_value=True), \
+         patch.object(nav, "save_inventory_screenshot", return_value="dummy.png"), \
+         patch("src.route_navigator.pydirectinput.click"):
+
+        ok = nav.click_stash(search_attempts=3, timeout=5.0, verify_inventory=True)
+        assert ok is True
+        assert len(z_presses) >= 1
+        assert nav._loot_labels_hidden is False
+
+    nav.stop()
+
+
+def test_hideout_arrival_preserves_is_active_for_routine_continuation():
+    """Verifies that confirming hideout arrival and executing click_stash does NOT reset
+    nav.is_active to False, ensuring step 14 (stash_inventory_items) and subsequent steps
+    execute without being aborted."""
+    nav = RouteNavigator(movement_path=MovementPath())
+    nav.is_active = True  # Bot is actively running autopilot / routine
+
+    with patch.object(nav, "is_in_hideout", return_value=True), \
+         patch.object(nav, "locate_stash", return_value=(800, 450)), \
+         patch.object(nav, "move_mouse_inside_game", return_value=(800, 450)), \
+         patch.object(nav, "is_inventory_open", return_value=True), \
+         patch.object(nav, "save_inventory_screenshot", return_value="dummy.png"), \
+         patch("src.route_navigator.pydirectinput.click"):
+
+        ok = nav.click_stash(search_attempts=3, timeout=5.0, verify_inventory=True)
+        assert ok is True
+        # nav.is_active MUST remain True so routine steps 14..20 are not aborted!
+        assert nav.is_active is True
+        assert nav.in_hideout is True
+
+    nav.stop()
+
+
+def test_select_accessible_simulacrum_map_fresh_capture_resync():
+    """Verifies that when selecting Simulacrum map dynamically, if the first click fails to open
+    the popup (e.g. map slightly moved), the bot captures a fresh screen, re-detects the live
+    coordinates, and retries the updated coordinates instead of using stale positions."""
+    nav = RouteNavigator(movement_path=MovementPath())
+
+    # Simulated screenshots: img1 has node at (922, 435), img2 has node shifted to (832, 379)
+    node1_initial = {
+        "medal_pos": (922, 409),
+        "circle_pos": (922, 435),
+        "screen_circle_pos": (922, 435),
+        "confidence": 0.88,
+        "scale": 1.0,
+        "is_accessible": True,
+    }
+    node1_shifted = {
+        "medal_pos": (832, 353),
+        "circle_pos": (832, 379),
+        "screen_circle_pos": (832, 379),
+        "confidence": 0.91,
+        "scale": 1.0,
+        "is_accessible": True,
+    }
+
+    detection_sequence = [[node1_initial], [node1_shifted]]
+    def mock_detect(*args, **kwargs):
+        return detection_sequence.pop(0) if detection_sequence else [node1_shifted]
+
+    attempt = [0]
+    clicked_targets = []
+    def mock_move(x, y):
+        attempt[0] += 1
+        clicked_targets.append((x, y))
+        return (x, y)
+
+    def mock_popup_visible(*args, **kwargs):
+        # Attempt 1 returns False, Attempt 2 returns True
+        return attempt[0] >= 2
+
+    capt_mock = MagicMock()
+    capt_mock.capture.return_value = np.zeros((1080, 1920, 3), dtype=np.uint8)
+
+    with patch.object(nav, "_get_capturer", return_value=capt_mock), \
+         patch.object(nav, "detect_simulacrum_map_nodes", side_effect=mock_detect), \
+         patch.object(nav, "move_mouse_inside_game", side_effect=mock_move), \
+         patch.object(nav, "is_simulacrum_popup_visible", side_effect=mock_popup_visible), \
+         patch("src.route_navigator.pydirectinput"):
+
+        selected = nav.select_accessible_simulacrum_map(candidates=None, max_attempts=4)
+        assert selected is not None
+        # Must return the shifted node from fresh capture
+        assert selected["circle_pos"] == (832, 379)
+        # Click 1 was at initial position, Click 2 resynchronized to the new position
+        assert (922, 435) in clicked_targets
+        assert any(pt[0] == 832 for pt in clicked_targets)
+
+    nav.stop()
+
+
+def test_start_hideout_full_routine_ui_integration():
+    """Verifies that the UI button and key [H] start the full hideout routine
+    (unload, open map device, insert Tier 15 map, traverse, enter portal, and start bot navigation at Pink Dot #1)."""
+    from src.player_tracker_visualizer import PlayerTrackerVisualizer
+
+    nav = RouteNavigator(movement_path=MovementPath())
+    vis = PlayerTrackerVisualizer(navigator=nav)
+
+    # 1. Test start_hideout_full_routine calls run_hideout_full_cycle with full cycle parameters
+    with patch.object(nav, "run_hideout_full_cycle", return_value={"success": True}) as mock_cycle:
+        vis.start_hideout_full_routine(dry_run=True, start_pink_dot=1)
+        time.sleep(0.1)  # Allow daemon thread worker to run
+        mock_cycle.assert_called_once_with(
+            dry_run=True,
+            traverse_and_enter=True,
+            auto_start_route=True,
+            start_pink_dot=1,
+        )
+
+    # 2. Test start_hideout_full_routine does not re-enter if already active
+    vis.hideout_routine_active = True
+    vis.start_hideout_full_routine()
+    assert "ALREADY IN PROGRESS" in vis.notification_msg
+    vis.hideout_routine_active = False
+
+    # 3. Test dashboard rendering of [H] START BOT ROUTINE button
+    dummy_crop = np.zeros((150, 150, 3), dtype=np.uint8)
+    dummy_result = {
+        "area": {"is_hideout": True, "label": "HIDEOUT (SAFE ZONE)"},
+        "room": {"recognized": False},
+        "navigation": {"is_active": False, "waiting_for_green_light": False},
+    }
+    dashboard = vis.render_dashboard(dummy_crop, dummy_result)
+    assert dashboard is not None
+    bx, by, bw, bh = vis.btn_hideout_rect
+    assert bw == 185
+    assert bh == 30
+    assert bx > 172 + 215  # Does not overlap area badge
+
+    # 4. Test mouse click on [H] button triggers start_hideout_full_routine
+    with patch.object(vis, "start_hideout_full_routine") as mock_start_btn:
+        vis._on_mouse(cv2.EVENT_LBUTTONDOWN, bx + 10, by + 10, 0, None)
+        mock_start_btn.assert_called_once()
+
+    nav.stop()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 

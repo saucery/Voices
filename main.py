@@ -152,10 +152,37 @@ def main():
         action="store_true",
         help="Launch interactive Loot Item Selector & Filter Builder UI to crop/name loot items from screenshots.",
     )
+    parser.add_argument(
+        "--hideout",
+        "--test-hideout",
+        action="store_true",
+        help="Run standalone hideout test (minimap check, stash click, screenshot, and 5x12 grid deposit).",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Run hideout test in dry-run mode (scan and diagnose without clicking or pressing keys).",
+    )
+    parser.add_argument(
+        "--deposit-only",
+        action="store_true",
+        help="Skip stash click and test inventory screenshot + quick-deposit only.",
+    )
 
     args = parser.parse_args()
 
-    # 0. Loot Item Selector UI Mode
+    # 0. Hideout Test Mode
+    if getattr(args, "hideout", False):
+        from tools.test_hideout import run_live_test, run_file_test, run_interactive_menu
+        if args.input:
+            run_file_test(image_path=args.input, monitor=args.monitor)
+        elif args.live or args.dry_run or args.deposit_only:
+            run_live_test(monitor=args.monitor, dry_run=args.dry_run, deposit_only=args.deposit_only)
+        else:
+            run_interactive_menu(monitor=args.monitor)
+        return
+
+    # 0.1 Loot Item Selector UI Mode
     if args.loot_ui:
         import tkinter as tk
         from tools.loot_item_selector_ui import LootItemSelectorUI
@@ -220,7 +247,10 @@ def main():
         print("   - Left:  Where it is in REAL (Live game minimap + orange icon)")
         print("   - Right: Where BOT THINKS it is (Room layout + route waypoints + trajectory)")
         print(" Controls:")
+        print("   [H]     Start Bot from Hideout (Stash -> Map Device -> SIM -> Portal -> Route)")
         print("   [A / G] Toggle Autonomous Navigation (WASD along route)")
+        print("   [P]     Cycle Target Pink Dot (or click [P] UI button)")
+        print("   [E]     Toggle Minimap Early Exit (or click [E] UI button)")
         print("   [R]     Refresh Route from route.png (or click UI button)")
         print("   [V]     Cycle Map View: Active Room Template <-> World Map <-> Ref Map")
         print("   [F2]    Emergency STOP (halts all movement immediately)")

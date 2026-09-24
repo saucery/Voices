@@ -253,6 +253,8 @@ def test_execute_yellow_zone_interaction_sequence(tmp_path, monkeypatch):
     nav.locate_sim_template = MagicMock(return_value=None)
     monkeypatch.setattr(nav, "locate_encounter_banner", lambda: (500, 350))
 
+    # Clear any residual actions recorded during initialization or prior threads
+    actions.clear()
     success = nav.execute_yellow_zone_interaction()
     assert success is True
 

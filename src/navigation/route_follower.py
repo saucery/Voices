@@ -245,6 +245,14 @@ class RouteFollowerMixin:
                                 time.sleep(0.04)
                                 continue
 
+                    # If route index was reset during interaction (e.g. portal entry to new map reset to WP 0)
+                    if getattr(self, "_route_reset_to_start", False):
+                        self._route_reset_to_start = False
+                        target = self.movement_path.get_current_target()
+                        if target is None:
+                            break
+                        continue
+
                     _log(f"\n[AUTOPILOT] Reached WP #{target.get('index', 0)} ({target.get('name', 'WP')}) at ({current_pos[0]:.0f}, {current_pos[1]:.0f})! Advancing...")
                     next_target = self.movement_path.advance()
                     if next_target is None:
@@ -545,17 +553,26 @@ class RouteFollowerMixin:
                         if self.is_orbiting:
                             return self.get_telemetry(target, dist, list(self.held_keys))
 
-                next_target = self.movement_path.advance()
-                if next_target is None:
-                    self.release_all_keys()
-                    self.is_active = False
-                    self.is_completed = True
-                    self.persistent_right_click_active = False
-                    self.status_message = "Route Finished!"
-                    return self.get_telemetry(None, 0.0, [])
-                target = next_target
-                target_pos = (target["x"], target["y"])
-                dist = math.hypot(target_pos[0] - current_pos[0], target_pos[1] - current_pos[1])
+                # If route index was reset during interaction (e.g. portal entry to new map reset to WP 0)
+                if getattr(self, "_route_reset_to_start", False):
+                    self._route_reset_to_start = False
+                    target = self.movement_path.get_current_target()
+                    if target is None:
+                        return self.get_telemetry(None, 0.0, [])
+                    target_pos = (target["x"], target["y"])
+                    dist = math.hypot(target_pos[0] - current_pos[0], target_pos[1] - current_pos[1])
+                else:
+                    next_target = self.movement_path.advance()
+                    if next_target is None:
+                        self.release_all_keys()
+                        self.is_active = False
+                        self.is_completed = True
+                        self.persistent_right_click_active = False
+                        self.status_message = "Route Finished!"
+                        return self.get_telemetry(None, 0.0, [])
+                    target = next_target
+                    target_pos = (target["x"], target["y"])
+                    dist = math.hypot(target_pos[0] - current_pos[0], target_pos[1] - current_pos[1])
 
         needed_keys = set(self.compute_wasd_keys(current_pos, target_pos))
         # Keep held_keys populated if worker thread is off (e.g. testing)

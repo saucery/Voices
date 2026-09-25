@@ -408,3 +408,170 @@ def test_collect_loot_integration_records_item(mock_movement_path, temp_log_dir)
     telem = nav.get_telemetry(target=None, dist=0.0, keys=[])
     assert telem["run_loot_count"] == 1
 
+
+def test_click_hideout_portal_starts_timer_and_resets_to_pink_1(mock_movement_path, temp_log_dir):
+    """Verify that entering hideout portal starts run timer and resets route to always start at Pink Dot 1 (WP 0)."""
+    nav = RouteNavigator(movement_path=mock_movement_path)
+    nav.run_history_file = str(temp_log_dir / "run_history.json")
+    nav.run_summary_file = str(temp_log_dir / "run_history.txt")
+
+    # Simulate dirty state from a previous map
+    nav.interacted_pink_dots.add(1)
+    nav.interacted_pink_dots.add(74)
+    nav.interacted_zones.add("zone_1")
+    nav.movement_path.current_idx = 74
+    nav.start_at_pink_dot = 3
+    nav.run_completed = True
+    nav.latest_pos = (400, 400)
+    nav.last_known_pos = (400, 400)
+
+    with patch.object(nav, "locate_hideout_portal", return_value=(960, 540)), \
+         patch.object(nav, "is_in_hideout", return_value=False), \
+         patch.object(nav, "move_mouse_inside_game"), \
+         patch("src.hideout.map_traverse.pydirectinput"):
+
+        ok = nav.click_hideout_portal(
+            timeout=1.0,
+            approach_wait=0.0,
+            verify_transition=True,
+            auto_start_route=True,
+            start_pink_dot=1,
+            hold_w_seconds=0.0,
+            settle_wait=0.0,
+        )
+
+    assert ok is True
+    # Verify timer started immediately upon entering portal
+    assert nav.run_start_time is not None
+    assert nav.run_completed is False
+    assert nav.run_id is not None
+
+    # Verify complete reset to start from first pink dot (WP 0)
+    assert len(nav.interacted_pink_dots) == 0
+    assert len(nav.interacted_zones) == 0
+    assert nav.movement_path.current_idx == 0
+    nav.stop()
+
+
+def test_room_7_looting_stops_timer_and_records_history(mock_movement_path, temp_log_dir):
+    """Verify that completing pickup_loot in Room 7 immediately stops the run timer and appends to run history."""
+    nav = RouteNavigator(movement_path=mock_movement_path)
+    json_path = str(temp_log_dir / "run_history.json")
+    txt_path = str(temp_log_dir / "run_history.txt")
+    nav.run_history_file = json_path
+    nav.run_summary_file = txt_path
+    nav.is_active = True
+    nav.loot_z_toggle_enabled = False
+    nav.wait_for_loot_confirmation = False
+
+    # Start run
+    nav._start_new_run()
+    assert nav.run_completed is False
+
+    # Set up Room 7 context
+    nav.current_room_key = "pink_7"
+    nav.zone_routines = {
+        "pink_zones": {
+            f"pink_{i}": {"name": f"Pink Dot #{i}"} for i in range(1, 8)
+        }
+    }
+
+    # Execute pickup_loot step in Room 7
+    loot_step = {
+        "action": "pickup_loot",
+        "max_items": 5,
+        "approach_wait": 0.0,
+        "wait_for_green_light": False,
+    }
+
+    with patch.object(nav, "collect_loot", return_value=2):
+        success = nav._execute_zone_routine_step(loot_step, context={}, zone_label="Pink Dot #7")
+
+    assert success is True
+    # Timer must have stopped
+    assert nav.run_completed is True
+    assert nav.run_end_time is not None
+    assert nav.run_last_room_cleared == "pink_7"
+
+    # Verify JSON file has the completed run
+    assert os.path.exists(json_path)
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    assert len(data) == 1
+    assert data[0]["completed"] is True
+    assert data[0]["completion_reason"] == "room_7_looting_completed"
+    assert data[0]["last_room_cleared"] == "pink_7"
+
+    # Verify TXT file contains summary
+    assert os.path.exists(txt_path)
+    with open(txt_path, "r", encoding="utf-8") as f:
+        txt = f.read()
+    assert "Last Room Cleared: pink_7" in txt
+    nav.stop()
+
+
+def test_multi_map_timer_lifecycle(mock_movement_path, temp_log_dir):
+    """Verify that multiple successive maps cleanly start on portal entry and finalize on Room 7 looting."""
+    nav = RouteNavigator(movement_path=mock_movement_path)
+    json_path = str(temp_log_dir / "run_history.json")
+    txt_path = str(temp_log_dir / "run_history.txt")
+    nav.run_history_file = json_path
+    nav.run_summary_file = txt_path
+    nav.is_active = True
+    nav.loot_z_toggle_enabled = False
+    nav.wait_for_loot_confirmation = False
+    nav.zone_routines = {
+        "pink_zones": {
+            f"pink_{i}": {"name": f"Pink Dot #{i}"} for i in range(1, 8)
+        }
+    }
+
+    loot_step = {"action": "pickup_loot", "max_items": 5, "approach_wait": 0.0, "wait_for_green_light": False}
+
+    # === MAP 1 ===
+    with patch.object(nav, "locate_hideout_portal", return_value=(960, 540)), \
+         patch.object(nav, "is_in_hideout", return_value=False), \
+         patch.object(nav, "move_mouse_inside_game"), \
+         patch("src.hideout.map_traverse.pydirectinput"):
+        nav.click_hideout_portal(timeout=1.0, approach_wait=0.0, auto_start_route=True, hold_w_seconds=0.0, settle_wait=0.0)
+
+    run_1_id = nav.run_id
+    assert nav.run_completed is False
+    assert nav.movement_path.current_idx == 0
+
+    # Loot Room 7
+    nav.current_room_key = "pink_7"
+    with patch.object(nav, "collect_loot", return_value=1):
+        nav._execute_zone_routine_step(loot_step, context={}, zone_label="Pink Dot #7")
+    assert nav.run_completed is True
+
+    # === MAP 2 ===
+    time.sleep(0.02)
+    with patch.object(nav, "locate_hideout_portal", return_value=(960, 540)), \
+         patch.object(nav, "is_in_hideout", return_value=False), \
+         patch.object(nav, "move_mouse_inside_game"), \
+         patch("src.hideout.map_traverse.pydirectinput"):
+        nav.click_hideout_portal(timeout=1.0, approach_wait=0.0, auto_start_route=True, hold_w_seconds=0.0, settle_wait=0.0)
+
+    run_2_id = nav.run_id
+    assert run_2_id != run_1_id
+    assert nav.run_completed is False
+    assert nav.movement_path.current_idx == 0
+
+    # Loot Room 7 in Map 2
+    nav.current_room_key = "pink_7"
+    with patch.object(nav, "collect_loot", return_value=1):
+        nav._execute_zone_routine_step(loot_step, context={}, zone_label="Pink Dot #7")
+    assert nav.run_completed is True
+
+    # Verify both runs persisted in run_history.json
+    with open(json_path, "r", encoding="utf-8") as f:
+        runs = json.load(f)
+    assert len(runs) == 2
+    assert runs[0]["run_id"] == run_1_id
+    assert runs[1]["run_id"] == run_2_id
+    assert runs[0]["completed"] is True
+    assert runs[1]["completed"] is True
+    nav.stop()
+
+

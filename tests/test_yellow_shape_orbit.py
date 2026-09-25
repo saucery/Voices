@@ -249,6 +249,7 @@ def test_execute_yellow_zone_interaction_sequence(tmp_path, monkeypatch):
     nav.middle_click_hold_seconds = 0.1
     nav.hold_q_enemy_reactive_enabled = False
     nav.banner_search_attempts = 1
+    nav.banner_approach_seconds = 0.0
     # Mock banner location and prevent desktop sim matching
     nav.locate_sim_template = MagicMock(return_value=None)
     monkeypatch.setattr(nav, "locate_encounter_banner", lambda: (500, 350))
@@ -267,11 +268,12 @@ def test_execute_yellow_zone_interaction_sequence(tmp_path, monkeypatch):
 
     # Check order: left click -> key t -> key q down -> key q up
     idx_left = action_names.index("click_left")
-    idx_t = action_names.index("keyDown_t")
-    idx_q_down = action_names.index("keyDown_q")
-    idx_q_up = action_names.index("keyUp_q")
+    idx_t = action_names.index("keyDown_t", idx_left)
+    idx_q_down = action_names.index("keyDown_q", idx_t)
+    idx_q_up = action_names.index("keyUp_q", idx_q_down)
 
     assert idx_left < idx_t < idx_q_down < idx_q_up
+    nav.stop()
 
 
 def test_yellow_zone_interaction_before_orbit(synthetic_route_with_yellow_shape, monkeypatch):

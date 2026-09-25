@@ -50,13 +50,10 @@ class NavigatorControlsMixin:
         if monitor_idx is not None:
             self.monitor_idx = monitor_idx
 
-        # If previously completed or at the end, reset back to closest waypoint
+        # If previously completed or at the end, reset back to starting waypoint (WP #0)
         if self.is_completed or self.movement_path.current_idx >= len(self.movement_path.waypoints) - 1:
             self.is_completed = False
-            if self.latest_pos is not None:
-                self.movement_path.current_idx = self.movement_path.find_nearest_waypoint_index(self.latest_pos)
-            else:
-                self.movement_path.current_idx = 0
+            self.movement_path.current_idx = 0
 
         now = time.time()
         self.last_known_pos = self.latest_pos
@@ -109,6 +106,12 @@ class NavigatorControlsMixin:
         self.release_all_keys()
         self.status_message = "Autopilot Paused (Press 'A' to resume)"
         _log("[NAVIGATOR] Autopilot Navigation STOPPED.")
+        if self._worker_thread and self._worker_thread.is_alive() and threading.current_thread() != self._worker_thread:
+            try:
+                self._worker_thread.join(timeout=0.5)
+            except Exception:
+                pass
+            self._worker_thread = None
         if self.run_start_time is not None and not self.run_completed and (self.run_rooms_cleared or self.run_sims_clicked):
             self._finalize_run(reason="stopped_by_user")
 
@@ -313,10 +316,10 @@ class NavigatorControlsMixin:
             prev_wp_idx, _ = pink_wps[pink_idx - 2]
             start_wp_idx = min(prev_wp_idx + 1, target_wp_idx)
 
-        # If live player position is known, find closest waypoint on the segment towards target
+        # If live player position is known and pink_idx > 1, find closest waypoint on the segment towards target
         wps = getattr(self.movement_path, "waypoints", None)
-        if self.latest_pos is not None and isinstance(wps, (list, tuple)):
-            min_s = 0 if pink_idx == 1 else prev_wp_idx
+        if pink_idx > 1 and self.latest_pos is not None and isinstance(wps, (list, tuple)):
+            min_s = prev_wp_idx
             best_s_idx = start_wp_idx
             best_s_d = float("inf")
             for s_i in range(min_s, min(len(wps), target_wp_idx + 1)):

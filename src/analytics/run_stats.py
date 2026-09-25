@@ -48,7 +48,11 @@ class RunStatsMixin:
         """Initializes tracking metrics for a new bot run session."""
         now = time.time()
         run_ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.run_id = f"run_{run_ts_str}"
+        base_id = f"run_{run_ts_str}"
+        if getattr(self, "run_id", None) == base_id:
+            self.run_id = f"{base_id}_{int(now * 1000) % 1000:03d}"
+        else:
+            self.run_id = base_id
         self.run_start_time = now
         self.run_end_time = None
         self.run_pause_time = None
@@ -284,7 +288,7 @@ class RunStatsMixin:
 
         run_summary = {
             "run_id": self.run_id or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            "completed": reason in ("last_room_cleared", "route_completed"),
+            "completed": reason in ("last_room_cleared", "route_completed", "room_7_looting_completed", "looting_completed"),
             "completion_reason": reason,
             "start_time": datetime.fromtimestamp(self.run_start_time).strftime("%Y-%m-%d %H:%M:%S"),
             "end_time": datetime.fromtimestamp(self.run_end_time).strftime("%Y-%m-%d %H:%M:%S"),

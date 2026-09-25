@@ -476,6 +476,18 @@ class ZoneStepExecutorMixin:
                         except Exception:
                             pass
                     time.sleep(0.05)
+
+            # If looting is completed in Room 7 (last room), stop run timer and finalize run immediately
+            current_room = getattr(self, "current_room_key", None)
+            is_last = self._is_last_room(current_room) if current_room else ("pink_7" in str(zone_label).lower())
+            if is_last and not getattr(self, "run_completed", False):
+                rk = current_room or "pink_7"
+                _log(f"\n[RUN TIMER] Room 7 looting completed! Stopping run timer and finalizing run...")
+                if not any(r.get("room") == rk for r in getattr(self, "run_rooms_cleared", [])):
+                    r_el = (time.time() - self.run_start_time) if self.run_start_time else 0.0
+                    self._record_room_cleared(rk, r_el)
+                self._finalize_run(last_room=rk, reason="room_7_looting_completed")
+
             return True
 
         elif action == "press_key":
@@ -550,16 +562,19 @@ class ZoneStepExecutorMixin:
             verify_trans = bool(step.get("verify_transition", True))
             auto_start = bool(step.get("auto_start_route", True))
             start_pink = int(step.get("start_pink_dot", 1))
-            return self.click_hideout_portal(
-                search_attempts=search_attempts,
-                timeout=timeout,
-                approach_wait=app_wait,
-                verify_transition=verify_trans,
-                auto_start_route=auto_start,
-                start_pink_dot=start_pink,
-                hold_w_seconds=step.get("hold_w_seconds"),
-                settle_wait=step.get("settle_wait"),
-            )
+            p_kwargs: Dict[str, Any] = {
+                "search_attempts": search_attempts,
+                "timeout": timeout,
+                "approach_wait": app_wait,
+                "verify_transition": verify_trans,
+                "auto_start_route": auto_start,
+                "start_pink_dot": start_pink,
+            }
+            if "hold_w_seconds" in step:
+                p_kwargs["hold_w_seconds"] = step["hold_w_seconds"]
+            if "settle_wait" in step:
+                p_kwargs["settle_wait"] = step["settle_wait"]
+            return self.click_hideout_portal(**p_kwargs)
 
         elif action in ("hideout_full_cycle", "run_hideout_full_cycle"):
             traverse_and_enter = bool(step.get("traverse_and_enter", False))

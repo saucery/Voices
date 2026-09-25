@@ -274,8 +274,9 @@ class ZoneRoutinesMixin:
             _log(f"[ROUTINE] <<< Finished custom routine '{routine_name}' for {zone_label}!\n")
             routine_elapsed = time.time() - routine_start_time
             if room_key:
-                self._record_room_cleared(room_key, routine_elapsed)
-                if self._is_last_room(room_key):
+                if not any(r.get("room") == room_key for r in getattr(self, "run_rooms_cleared", [])):
+                    self._record_room_cleared(room_key, routine_elapsed)
+                if self._is_last_room(room_key) and not getattr(self, "run_completed", False):
                     self._finalize_run(last_room=room_key, reason="last_room_cleared")
             return True
         finally:

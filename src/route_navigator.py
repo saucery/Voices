@@ -244,6 +244,7 @@ class RouteNavigator(
         self.target_pink_name: Optional[str] = None
         self.target_pink_pos: Optional[List[float]] = None
         self.interacted_pink_dots: Set[int] = set()
+        self._route_reset_to_start: bool = False
 
         # Delirium & Portal Encounter State (Room 7)
         self.portal_template_file: str = "templates/ui/portal.png"

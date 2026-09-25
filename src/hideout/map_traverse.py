@@ -601,6 +601,20 @@ class HideoutTraverseMixin:
 
         self.in_hideout = False
 
+        # Start run timer immediately the moment bot enters portal to ENEMY area
+        self._start_new_run()
+
+        # Clean reset: entering new enemy area must ALWAYS start from first pink dot (WP #0)
+        self.interacted_pink_dots.clear()
+        self.interacted_zones.clear()
+        self.latest_pos = None
+        self.last_known_pos = None
+        self.is_completed = False
+        self.start_at_pink_dot = 0
+        self._route_reset_to_start = True
+        if hasattr(self, "movement_path") and self.movement_path:
+            self.movement_path.current_idx = 0
+
         if stop_handler.is_stopped():
             return False
 
@@ -633,10 +647,13 @@ class HideoutTraverseMixin:
             _log(f"  [PORTAL ENTRY] 'W' key released after {eff_hold_w:.1f}s. Character clear of portal spawn.")
 
         if auto_start_route:
-            _log(f"  [ROUTINE START] Starting standard navigation routine targeting Pink Dot #{start_pink_dot}...")
-            self.set_start_pink_dot(start_pink_dot)
+            _log(f"  [ROUTINE START] Starting standard navigation routine targeting Pink Dot #1 from beginning...")
+            self.set_start_pink_dot(1)
+            if hasattr(self, "movement_path") and self.movement_path:
+                self.movement_path.current_idx = 0
+            self._route_reset_to_start = True
             self.start()
-            self.status_message = f"Navigating to Pink Zone #{start_pink_dot}..."
+            self.status_message = "Navigating to Pink Zone #1..."
 
         return True
 

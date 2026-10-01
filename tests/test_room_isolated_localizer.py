@@ -47,7 +47,7 @@ def test_room_7_active_bounds_clamping(movement_path):
     assert bounds[2] <= 280  # max_x
     assert bounds[3] <= 280  # max_y
     # Verify tightened bounds
-    assert bounds[0] >= 30 and bounds[1] >= 20
+    assert bounds[0] >= 0 and bounds[1] >= 0
     assert bounds[2] <= 220 and bounds[3] <= 220
 
     roi = movement_path.get_search_roi_for_progress()

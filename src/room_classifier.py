@@ -65,7 +65,7 @@ class RoomClassifier:
         self.jump_rejections_total: int = 0
         self.is_locked: bool = False
         self.lost_frame_count: int = 0
-        self.max_lost_frames: int = 8  # ~0.3s persistence buffer against transient frame drops
+        self.max_lost_frames: int = 18  # ~0.7-0.8s persistence buffer with dead reckoning
 
         # Diagnostics & Automated Loss Recorder
         self.debug_log_dir: str = "debug_logs/tracker_lost"
@@ -143,12 +143,8 @@ class RoomClassifier:
                 kp, des = self.orb.detectAndCompute(g_map, None)
 
             return {
-                "variant": v_name,
-                "path": p_name,
-                "img": img,
-                "edge_map": e_map,
-                "keypoints": kp,
-                "descriptors": des,
+                "variant": v_name, "path": p_name, "img": img,
+                "edge_map": e_map, "keypoints": kp, "descriptors": des,
             }
 
         if template_img is not None:
@@ -156,30 +152,19 @@ class RoomClassifier:
 
         if template_paths:
             for p in template_paths:
-                full_path = (
-                    p if os.path.isabs(p) else os.path.join(self.config_dir, p)
-                )
+                full_path = p if os.path.isabs(p) else os.path.join(self.config_dir, p)
                 if os.path.exists(full_path):
                     img = cv2.imread(full_path)
                     if img is not None:
                         variant = os.path.splitext(os.path.basename(p))[0]
                         loaded_templates.append(process_img(img, variant, p))
 
-        room_entry = {
-            "id": room_id,
-            "name": name,
-            "threshold": threshold,
-            "templates": loaded_templates,
-        }
-
+        room_entry = {"id": room_id, "name": name, "threshold": threshold, "templates": loaded_templates}
         for idx, r in enumerate(self.rooms):
             if r["id"] == room_id:
-                existing_tmpl = self.rooms[idx]["templates"]
-                combined = existing_tmpl + loaded_templates
-                room_entry["templates"] = combined
+                room_entry["templates"] = self.rooms[idx]["templates"] + loaded_templates
                 self.rooms[idx] = room_entry
                 return
-
         self.rooms.append(room_entry)
 
     def _init_room_7_specialized_template(self, map_path: str):
@@ -202,7 +187,7 @@ class RoomClassifier:
             print(f"[ROOM CLASSIFIER] Warning initializing Room 7 template: {e}")
 
     def _match_room_7_orb(self, minimap_crop: np.ndarray) -> Tuple[float, Optional[Tuple[float, float]], int]:
-        """Specialized ORB matcher for Room 7 thin purple walls using Canny edges and cross-check."""
+        """Specialized ORB matcher for Room 7 thin purple walls using Canny edges and consensus fallback."""
         if not self.r7_template_ready or self.r7_des is None:
             return 0.0, None, 0
         try:
@@ -214,76 +199,66 @@ class RoomClassifier:
             good = [m for m in sorted(matches, key=lambda x: x.distance) if m.distance < 65]
             if len(good) < 3:
                 return 0.0, None, len(good)
+            m_h, m_w = minimap_crop.shape[:2]
             src_pts = np.float32([self.r7_kp[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
             dst_pts = np.float32([kp_mini[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
             M, mask = cv2.estimateAffinePartial2D(src_pts, dst_pts, method=cv2.RANSAC, ransacReprojThreshold=3.5)
-            if M is None or mask is None:
-                return 0.0, None, len(good)
-            inliers = int(np.sum(mask))
-            min_inliers_required = 4 if self.is_locked else 5
-            if inliers < min_inliers_required:
-                return 0.0, None, inliers
-            theta = math.atan2(M[1, 0], M[0, 0])
-            scale = math.hypot(M[0, 0], M[0, 1])
-            if abs(theta) > math.radians(14) or abs(scale - 1.0) > 0.22:
-                return 0.0, None, inliers
-            m_h, m_w = minimap_crop.shape[:2]
-            center_pt = np.array([[[m_w / 2.0, m_h / 2.0]]], dtype=np.float32)
-            M_inv = cv2.invertAffineTransform(M)
-            transformed = cv2.transform(center_pt, M_inv)
-            char_pos = (round(float(transformed[0][0][0]), 1), round(float(transformed[0][0][1]), 1))
-            score = min(1.0, float(inliers) / 7.0)
-            return score, char_pos, inliers
+            aff_valid, aff_pos, aff_inliers = False, None, 0
+            if M is not None and mask is not None:
+                aff_inliers = int(np.sum(mask))
+                if aff_inliers >= (4 if self.is_locked else 5):
+                    theta, scale = math.atan2(M[1, 0], M[0, 0]), math.hypot(M[0, 0], M[0, 1])
+                    if abs(theta) <= math.radians(14) and abs(scale - 1.0) <= 0.22:
+                        M_inv = cv2.invertAffineTransform(M)
+                        t = cv2.transform(np.array([[[m_w / 2.0, m_h / 2.0]]], dtype=np.float32), M_inv)
+                        aff_pos = (round(float(t[0][0][0]), 1), round(float(t[0][0][1]), 1))
+                        aff_valid = True
+            # Translation consensus fallback
+            con_pos, con_inliers = None, 0
+            if not aff_valid or aff_inliers < 6:
+                cands = [
+                    (self.r7_kp[m.queryIdx].pt[0] - (kp_mini[m.trainIdx].pt[0] - m_w / 2.0),
+                     self.r7_kp[m.queryIdx].pt[1] - (kp_mini[m.trainIdx].pt[1] - m_h / 2.0))
+                    for m in good
+                ]
+                best_cl = []
+                for p in cands:
+                    cl = [q for q in cands if math.hypot(p[0] - q[0], p[1] - q[1]) <= 4.5]
+                    if len(cl) > len(best_cl):
+                        best_cl = cl
+                if len(best_cl) >= (3 if self.is_locked else 4):
+                    con_pos = (round(max(0.0, min(sum(c[0] for c in best_cl) / len(best_cl), 220.0)), 1),
+                               round(max(0.0, min(sum(c[1] for c in best_cl) / len(best_cl), 220.0)), 1))
+                    con_inliers = len(best_cl)
+            if aff_valid and (con_pos is None or aff_inliers >= con_inliers):
+                return min(1.0, float(aff_inliers) / 6.0), aff_pos, aff_inliers
+            elif con_pos is not None:
+                return min(1.0, float(con_inliers) / 6.0), con_pos, con_inliers
+            return 0.0, None, max(aff_inliers, con_inliers)
         except Exception:
             return 0.0, None, 0
 
     def _match_template_multiscale(
         self, target_img: np.ndarray, template_img: np.ndarray
     ) -> Tuple[float, Optional[Tuple[float, float]]]:
-        """Fallback multi-scale correlation matching with location estimation."""
+        """Fallback multi-scale correlation matching for small room templates."""
         t_h, t_w = template_img.shape[:2]
         m_h, m_w = target_img.shape[:2]
-
-        if t_w <= 0 or t_h <= 0 or m_w <= 0 or m_h <= 0:
+        if t_w <= 0 or t_h <= 0 or m_w <= 0 or m_h <= 0 or t_w > 350 or t_h > 350:
             return 0.0, None
-
-        canny_t1 = self.matching_cfg.get("canny_threshold1", 50)
-        canny_t2 = self.matching_cfg.get("canny_threshold2", 150)
-
-        e_target = self.extractor.preprocess(target_img, canny_t1, canny_t2)
-        e_temp = self.extractor.preprocess(template_img, canny_t1, canny_t2)
-
-        g_target = cv2.cvtColor(target_img, cv2.COLOR_BGR2GRAY) if len(target_img.shape) == 3 else target_img
-        g_temp = cv2.cvtColor(template_img, cv2.COLOR_BGR2GRAY) if len(template_img.shape) == 3 else template_img
-
-        scale_base = min(m_w / float(t_w), m_h / float(t_h)) if t_w > 0 and t_h > 0 else 1.0
-        best_score = 0.0
-        best_pos = None
-
-        for rel_scale in [0.85, 0.95, 1.0, 1.05, 1.15]:
-            s_w = int(t_w * scale_base * rel_scale)
-            s_h = int(t_h * scale_base * rel_scale)
-            if s_w <= 0 or s_h <= 0 or s_w > m_w or s_h > m_h:
-                continue
-
-            resized_e_temp = cv2.resize(e_temp, (s_w, s_h))
-            resized_g_temp = cv2.resize(g_temp, (s_w, s_h))
-
-            res_gray = cv2.matchTemplate(g_target, resized_g_temp, cv2.TM_CCOEFF_NORMED)
-            _, max_val_gray, _, max_loc_g = cv2.minMaxLoc(res_gray)
-            max_val_gray = max(0.0, float(max_val_gray))
-
-            res_edge = cv2.matchTemplate(e_target, resized_e_temp, cv2.TM_CCOEFF_NORMED)
-            _, max_val_edge, _, max_loc_e = cv2.minMaxLoc(res_edge)
-            max_val_edge = max(0.0, float(max_val_edge))
-
-            score = max(max_val_edge * 1.2, max_val_gray)
-            if score > best_score:
-                best_score = float(score)
-                best_loc = max_loc_e if (max_val_edge * 1.2 >= max_val_gray) else max_loc_g
-                best_pos = (round(best_loc[0] + s_w / 2.0, 1), round(best_loc[1] + s_h / 2.0, 1))
-
-        return round(min(1.0, best_score), 4), best_pos
+        g_t = cv2.cvtColor(template_img, cv2.COLOR_BGR2GRAY) if len(template_img.shape) == 3 else template_img
+        g_m = cv2.cvtColor(target_img, cv2.COLOR_BGR2GRAY) if len(target_img.shape) == 3 else target_img
+        best_score, best_pos = 0.0, None
+        for s in [0.90, 0.95, 1.0, 1.05]:
+            sw, sh = int(t_w * s), int(t_h * s)
+            if 0 < sw <= m_w and 0 < sh <= m_h:
+                resized = cv2.resize(g_t, (sw, sh))
+                r = cv2.matchTemplate(g_m, resized, cv2.TM_CCOEFF_NORMED)
+                _, mv, _, ml = cv2.minMaxLoc(r)
+                if mv > best_score:
+                    best_score = float(mv)
+                    best_pos = (round(ml[0] + sw / 2.0, 1), round(ml[1] + sh / 2.0, 1))
+        return round(min(1.0, max(0.0, best_score)), 4), best_pos
 
     def _match_orb_features(
         self,
@@ -292,70 +267,125 @@ class RoomClassifier:
         target_kp: List,
         target_des: np.ndarray,
         template_entry: Dict[str, Any],
+        search_roi: Optional[Tuple[int, int, int, int]] = None,
+        expected_pos: Optional[Tuple[float, float]] = None,
     ) -> Tuple[float, Optional[Tuple[float, float]], int]:
-        """Matches ORB features using 2D Rigid Affine Transformation."""
+        """Matches ORB features using strict rigid affine estimation and translation consensus."""
         temp_des = template_entry["descriptors"]
         temp_kp = template_entry["keypoints"]
         temp_img = template_entry["img"]
-
-        corr_score, corr_pos = self._match_template_multiscale(target_img, temp_img)
         m_h, m_w = target_edges.shape[:2]
         t_h, t_w = temp_img.shape[:2]
+        corr_score, corr_pos = self._match_template_multiscale(target_img, temp_img)
         default_pos = corr_pos or (round(t_w / 2.0, 1), round(t_h / 2.0, 1))
 
         if target_des is None or temp_des is None or len(target_des) < 2 or len(temp_des) < 2:
-            return corr_score, default_pos, 0
+            return corr_score, (default_pos if corr_score >= 0.35 else None), 0
 
-        raw_matches = self.bf_matcher.match(temp_des, target_des)
+        # Pre-filter template keypoints by search_roi or expected_pos to eliminate cross-room false matches
+        cur_temp_kp = temp_kp
+        cur_temp_des = temp_des
+        if (t_w > 400 or t_h > 400) and (search_roi is not None or expected_pos is not None):
+            if search_roi is not None:
+                rx1, ry1, rx2, ry2 = search_roi
+                margin = 70.0
+                roi_indices = [
+                    i for i, k in enumerate(temp_kp)
+                    if (rx1 - margin <= k.pt[0] <= rx2 + margin) and (ry1 - margin <= k.pt[1] <= ry2 + margin)
+                ]
+            else:
+                ex, ey = expected_pos
+                rad = 180.0
+                roi_indices = [
+                    i for i, k in enumerate(temp_kp)
+                    if abs(k.pt[0] - ex) <= rad and abs(k.pt[1] - ey) <= rad
+                ]
+            if len(roi_indices) >= 12:
+                cur_temp_kp = [temp_kp[i] for i in roi_indices]
+                cur_temp_des = temp_des[roi_indices]
+
+        raw_matches = self.bf_matcher.match(cur_temp_des, target_des)
         matches = sorted(raw_matches, key=lambda x: x.distance)
         good_matches = [m for m in matches if m.distance < 65]
 
         if len(good_matches) < 3:
-            combined_score = max(corr_score, float(len(good_matches)) / 10.0)
-            return round(min(1.0, combined_score), 4), default_pos, len(good_matches)
+            combined = max(corr_score, float(len(good_matches)) / 10.0)
+            c_pos = default_pos if corr_score >= 0.35 else None
+            return round(min(1.0, combined), 4), c_pos, len(good_matches)
 
-        src_pts = np.float32([temp_kp[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        src_pts = np.float32([cur_temp_kp[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
         dst_pts = np.float32([target_kp[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
 
+        # 1. Rigid partial affine estimation with RANSAC
         M_affine, inliers_mask = cv2.estimateAffinePartial2D(
             src_pts, dst_pts, method=cv2.RANSAC, ransacReprojThreshold=3.5, maxIters=2000
         )
 
-        if M_affine is None or inliers_mask is None:
-            return corr_score, default_pos, len(good_matches)
+        affine_valid = False
+        affine_pos = None
+        affine_inliers = 0
+        if M_affine is not None and inliers_mask is not None:
+            affine_inliers = int(np.sum(inliers_mask))
+            min_inliers_required = 4 if self.is_locked else 5
+            if affine_inliers >= min_inliers_required:
+                theta = math.atan2(M_affine[1, 0], M_affine[0, 0])
+                scale_est = math.hypot(M_affine[0, 0], M_affine[0, 1])
+                # Minimap orientation & scale sanity check: PoE2 minimap does not wildly rotate
+                if abs(theta) <= math.radians(12) and abs(scale_est - 1.0) <= 0.20:
+                    try:
+                        center_pt = np.array([[[m_w / 2.0, m_h / 2.0]]], dtype=np.float32)
+                        M_inv = cv2.invertAffineTransform(M_affine)
+                        transformed = cv2.transform(center_pt, M_inv)
+                        raw_char_x = float(transformed[0][0][0])
+                        raw_char_y = float(transformed[0][0][1])
+                        affine_pos = (
+                            round(max(0.0, min(raw_char_x, float(t_w))), 1),
+                            round(max(0.0, min(raw_char_y, float(t_h))), 1),
+                        )
+                        affine_valid = True
+                    except Exception:
+                        affine_valid = False
 
-        inliers = int(np.sum(inliers_mask))
-        # Adaptive threshold: when already locked onto the player, allow 4 inliers to maintain lock smoothly
-        min_inliers_required = 4 if self.is_locked else 5
-        if inliers < min_inliers_required:
-            return corr_score, default_pos, inliers
+        # 2. Translation Consensus Fallback (recovers frames where unconstrained affine rotated/scaled spuriously)
+        consensus_pos = None
+        consensus_inliers = 0
+        if not affine_valid or affine_inliers < 6:
+            cands = []
+            for m in good_matches:
+                pt_m = cur_temp_kp[m.queryIdx].pt
+                pt_t = target_kp[m.trainIdx].pt
+                px = pt_m[0] - (pt_t[0] - m_w / 2.0)
+                py = pt_m[1] - (pt_t[1] - m_h / 2.0)
+                cands.append((px, py))
+            best_cluster = []
+            for p in cands:
+                cluster = [q for q in cands if math.hypot(p[0] - q[0], p[1] - q[1]) <= 4.5]
+                if len(cluster) > len(best_cluster):
+                    best_cluster = cluster
+            min_consensus = 3 if self.is_locked else 4
+            if len(best_cluster) >= min_consensus:
+                cx = round(sum(c[0] for c in best_cluster) / len(best_cluster), 1)
+                cy = round(sum(c[1] for c in best_cluster) / len(best_cluster), 1)
+                consensus_pos = (
+                    round(max(0.0, min(cx, float(t_w))), 1),
+                    round(max(0.0, min(cy, float(t_h))), 1),
+                )
+                consensus_inliers = len(best_cluster)
 
-        # Sanity check rotation & scale: PoE2 minimap does NOT rotate or scale wildly
-        theta = math.atan2(M_affine[1, 0], M_affine[0, 0])
-        scale_est = math.hypot(M_affine[0, 0], M_affine[0, 1])
-        if abs(theta) > math.radians(12) or abs(scale_est - 1.0) > 0.20:
-            # False correlation caused by background floor noise/particles
-            err_pos = None if (t_w > 400 or t_h > 400) else default_pos
-            return corr_score, err_pos, inliers
+        # Select best candidate
+        if affine_valid and (consensus_pos is None or affine_inliers >= consensus_inliers):
+            final_pos = affine_pos
+            inliers = affine_inliers
+        elif consensus_pos is not None:
+            final_pos = consensus_pos
+            inliers = consensus_inliers
+        else:
+            final_pos = default_pos if corr_score >= 0.35 else None
+            inliers = max(affine_inliers, consensus_inliers)
 
-        center_pt = np.array([[[m_w / 2.0, m_h / 2.0]]], dtype=np.float32)
-
-        try:
-            M_inv = cv2.invertAffineTransform(M_affine)
-            transformed = cv2.transform(center_pt, M_inv)
-            raw_char_x = float(transformed[0][0][0])
-            raw_char_y = float(transformed[0][0][1])
-
-            char_x_clamped = round(max(0.0, min(raw_char_x, float(t_w))), 1)
-            char_y_clamped = round(max(0.0, min(raw_char_y, float(t_h))), 1)
-            char_pos = (char_x_clamped, char_y_clamped)
-        except Exception:
-            char_pos = default_pos
-
-        feature_score = min(1.0, float(inliers) / 7.0)
-        final_score = round(max(feature_score, corr_score), 4)
-
-        return final_score, char_pos, inliers
+        feature_score = min(1.0, float(inliers) / 6.0) if (final_pos is not None and inliers > 0) else 0.0
+        score = round(max(feature_score, corr_score if final_pos is not None else 0.0), 4)
+        return score, final_pos, inliers
 
     def classify(
         self,
@@ -416,12 +446,8 @@ class RoomClassifier:
                 best_threshold = self.r7_threshold
                 best_inliers = r7_inliers
                 all_scores["room_7"] = {
-                    "name": "Room 7",
-                    "score": round(r7_score, 4),
-                    "best_variant": best_variant,
-                    "character_position": r7_pos,
-                    "inliers": r7_inliers,
-                    "threshold": self.r7_threshold,
+                    "name": "Room 7", "score": round(r7_score, 4), "best_variant": best_variant,
+                    "character_position": r7_pos, "inliers": r7_inliers, "threshold": self.r7_threshold,
                     "status": "matched",
                 }
                 recognized = True
@@ -431,19 +457,11 @@ class RoomClassifier:
 
         if not recognized and has_active_templates:
             for r in self.rooms:
-                r_id = r["id"]
-                r_name = r["name"]
-                threshold = r["threshold"]
-                templates = r["templates"]
-
+                r_id, r_name, threshold, templates = r["id"], r["name"], r["threshold"], r["templates"]
                 if not templates:
                     all_scores[r_id] = {
-                        "name": r_name,
-                        "score": 0.0,
-                        "best_variant": None,
-                        "character_position": None,
-                        "inliers": 0,
-                        "status": "template_missing",
+                        "name": r_name, "score": 0.0, "best_variant": None, "character_position": None,
+                        "inliers": 0, "status": "template_missing",
                     }
                     continue
 
@@ -455,7 +473,8 @@ class RoomClassifier:
                 for tmpl in templates:
                     variant_name = tmpl["variant"]
                     score, char_pos, inliers = self._match_orb_features(
-                        minimap_crop, target_edges, target_kp, target_des, tmpl
+                        minimap_crop, target_edges, target_kp, target_des, tmpl,
+                        search_roi=search_roi, expected_pos=expected_pos,
                     )
 
                     # Spatial prior bonus/penalty if search_roi or expected_pos is configured
@@ -465,13 +484,8 @@ class RoomClassifier:
                         if search_roi is not None:
                             rx1, ry1, rx2, ry2 = search_roi
                             in_roi = (rx1 - 35 <= cx <= rx2 + 35) and (ry1 - 35 <= cy <= ry2 + 35)
-                            if in_roi:
-                                effective_score = max(effective_score, score + 0.05)
-                            else:
-                                # Candidate is outside active route room zone - hard reject
-                                effective_score = -1.0
-
-                        if search_roi is None and expected_pos is not None:
+                            effective_score = max(effective_score, score + 0.05) if in_roi else -1.0
+                        elif expected_pos is not None:
                             d_exp = math.hypot(cx - expected_pos[0], cy - expected_pos[1])
                             if d_exp < 60.0:
                                 effective_score += 0.03
@@ -485,12 +499,9 @@ class RoomClassifier:
                         room_best_inliers = inliers
 
                 all_scores[r_id] = {
-                    "name": r_name,
-                    "score": round(min(1.0, max(0.0, room_best_score)), 4),
-                    "best_variant": room_best_variant,
-                    "character_position": room_best_pos,
-                    "inliers": room_best_inliers,
-                    "threshold": threshold,
+                    "name": r_name, "score": round(min(1.0, max(0.0, room_best_score)), 4),
+                    "best_variant": room_best_variant, "character_position": room_best_pos,
+                    "inliers": room_best_inliers, "threshold": threshold,
                     "status": "matched" if room_best_score >= threshold else "below_threshold",
                 }
 
@@ -551,53 +562,69 @@ class RoomClassifier:
                         self.pending_jump_pos = None
                         self.pending_jump_count = 0
                     elif dist_moved > self.jump_threshold:
-                        # Potential wild jump / teleport anomaly
-                        jump_anomaly = True
-                        if self.pending_jump_pos is not None:
-                            cluster_dist = math.hypot(
-                                best_char_pos[0] - self.pending_jump_pos[0],
-                                best_char_pos[1] - self.pending_jump_pos[1],
-                            )
-                            if cluster_dist <= 30.0:
-                                self.pending_jump_count += 1
-                                if self.pending_jump_count >= self.jump_consensus_frames or best_inliers >= 10:
-                                    # Confirmed legitimate teleport/leap after consensus frames
-                                    self.pending_jump_pos = None
-                                    self.pending_jump_count = 0
-                                    self.last_known_pos = best_char_pos
-                                    final_char_pos = best_char_pos
-                                    jump_anomaly = False
+                        # Check if this is a legitimate forward movement or recovery along route
+                        is_likely_recovery = False
+                        if expected_pos is not None and math.hypot(best_char_pos[0] - expected_pos[0], best_char_pos[1] - expected_pos[1]) <= 65.0 and best_inliers >= 5:
+                            is_likely_recovery = True
+                        elif search_roi is not None:
+                            rx1, ry1, rx2, ry2 = search_roi
+                            if (rx1 <= best_char_pos[0] <= rx2 and ry1 <= best_char_pos[1] <= ry2) and best_inliers >= 6:
+                                is_likely_recovery = True
+
+                        if is_likely_recovery:
+                            self.pending_jump_pos = None
+                            self.pending_jump_count = 0
+                            self.last_known_pos = best_char_pos
+                            final_char_pos = best_char_pos
+                            jump_anomaly = False
+                        else:
+                            # Potential wild jump / teleport anomaly
+                            jump_anomaly = True
+                            if self.pending_jump_pos is not None:
+                                cluster_dist = math.hypot(
+                                    best_char_pos[0] - self.pending_jump_pos[0],
+                                    best_char_pos[1] - self.pending_jump_pos[1],
+                                )
+                                if cluster_dist <= 30.0:
+                                    self.pending_jump_count += 1
+                                    if self.pending_jump_count >= self.jump_consensus_frames or best_inliers >= 10:
+                                        # Confirmed legitimate teleport/leap after consensus frames
+                                        self.pending_jump_pos = None
+                                        self.pending_jump_count = 0
+                                        self.last_known_pos = best_char_pos
+                                        final_char_pos = best_char_pos
+                                        jump_anomaly = False
+                                    else:
+                                        # Awaiting confirmation: hold last known position
+                                        final_char_pos = self.last_known_pos
+                                        self.jump_rejections_total += 1
+                                        jump_rejected = True
                                 else:
-                                    # Awaiting confirmation: hold last known position
+                                    # Inconsistent jump targets (spurious noise)
+                                    self.pending_jump_pos = best_char_pos
+                                    self.pending_jump_count = 1
                                     final_char_pos = self.last_known_pos
                                     self.jump_rejections_total += 1
                                     jump_rejected = True
                             else:
-                                # Inconsistent jump targets (spurious noise)
+                                # First anomalous jump frame: hold position and start consensus counter
                                 self.pending_jump_pos = best_char_pos
                                 self.pending_jump_count = 1
                                 final_char_pos = self.last_known_pos
                                 self.jump_rejections_total += 1
                                 jump_rejected = True
-                        else:
-                            # First anomalous jump frame: hold position and start consensus counter
-                            self.pending_jump_pos = best_char_pos
-                            self.pending_jump_count = 1
-                            final_char_pos = self.last_known_pos
-                            self.jump_rejections_total += 1
-                            jump_rejected = True
-                        
-                        # Log jump anomaly diagnostics
-                        self._dump_tracker_loss_diagnostics(
-                            minimap_crop=minimap_crop,
-                            raw_char_pos=best_char_pos,
-                            score=highest_score,
-                            inliers=best_inliers,
-                            search_roi=search_roi,
-                            expected_pos=expected_pos,
-                            reason=f"jump_dist_{int(dist_moved)}px",
-                            all_scores=all_scores,
-                        )
+                            
+                            # Log jump anomaly diagnostics
+                            self._dump_tracker_loss_diagnostics(
+                                minimap_crop=minimap_crop,
+                                raw_char_pos=best_char_pos,
+                                score=highest_score,
+                                inliers=best_inliers,
+                                search_roi=search_roi,
+                                expected_pos=expected_pos,
+                                reason=f"jump_dist_{int(dist_moved)}px",
+                                all_scores=all_scores,
+                            )
                     else:
                         # Genuine smooth movement (<= jump_threshold)
                         self.pending_jump_pos = None
@@ -616,9 +643,19 @@ class RoomClassifier:
                 self.last_known_pos = final_char_pos
                 self.last_room_id = best_room_id
         else:
-            # Hysteresis grace period: if previously locked, hold last position for up to max_lost_frames
+            # Hysteresis grace period: if previously locked, hold/dead-reckon position for up to max_lost_frames
             if self.is_locked and self.last_known_pos is not None and self.lost_frame_count < self.max_lost_frames:
                 self.lost_frame_count += 1
+                # Dead reckoning: softly project last position towards expected route progress
+                if expected_pos is not None and self.lost_frame_count > 1:
+                    exp_dx = expected_pos[0] - self.last_known_pos[0]
+                    exp_dy = expected_pos[1] - self.last_known_pos[1]
+                    exp_dist = math.hypot(exp_dx, exp_dy)
+                    if 0 < exp_dist:
+                        step = min(2.5, exp_dist)
+                        dr_x = round(self.last_known_pos[0] + (exp_dx / exp_dist) * step, 1)
+                        dr_y = round(self.last_known_pos[1] + (exp_dy / exp_dist) * step, 1)
+                        self.last_known_pos = (dr_x, dr_y)
                 final_char_pos = self.last_known_pos
                 recognized = True
                 best_room_id = self.last_room_id
@@ -650,16 +687,12 @@ class RoomClassifier:
                     )
 
         return {
-            "recognized": recognized,
-            "room_id": best_room_id if recognized else None,
-            "room_name": best_room_name if recognized else "Unknown",
-            "matched_variant": best_variant if recognized else None,
+            "recognized": recognized, "room_id": best_room_id if recognized else None,
+            "room_name": best_room_name if recognized else "Unknown", "matched_variant": best_variant if recognized else None,
             "character_position": final_char_pos if recognized else None,
             "confidence": round(min(1.0, max(0.0, highest_score)), 4) if highest_score >= 0 else 0.0,
-            "all_scores": all_scores,
-            "minimap_roi_shape": minimap_crop.shape,
-            "jump_rejected": jump_rejected,
-            "jump_rejections_total": self.jump_rejections_total,
+            "all_scores": all_scores, "minimap_roi_shape": minimap_crop.shape,
+            "jump_rejected": jump_rejected, "jump_rejections_total": self.jump_rejections_total,
             "jump_anomaly": jump_anomaly,
         }
 
@@ -675,42 +708,27 @@ class RoomClassifier:
         all_scores: Optional[Dict[str, Any]] = None,
     ):
         """Saves timestamped minimap crop and JSON telemetry to debug_logs/tracker_lost/."""
-        import time
+        import time, datetime
         now = time.time()
-        if (now - self.last_debug_dump_time) < self.min_debug_dump_interval:
+        if (now - self.last_debug_dump_time) < self.min_debug_dump_interval or self.debug_dump_count >= self.max_debug_dumps:
             return
-        if self.debug_dump_count >= self.max_debug_dumps:
-            return
-
         self.last_debug_dump_time = now
         self.debug_dump_count += 1
-
         try:
             os.makedirs(self.debug_log_dir, exist_ok=True)
-            import datetime
             ts_str = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:19]
             base_name = f"loss_{ts_str}_score{max(0.0, score):.2f}_{reason}"
-            img_path = os.path.join(self.debug_log_dir, f"{base_name}.png")
-            json_path = os.path.join(self.debug_log_dir, f"{base_name}.json")
-
             if minimap_crop is not None and isinstance(minimap_crop, np.ndarray) and minimap_crop.size > 0:
-                cv2.imwrite(img_path, minimap_crop)
-
+                cv2.imwrite(os.path.join(self.debug_log_dir, f"{base_name}.png"), minimap_crop)
             meta = {
-                "timestamp": ts_str,
-                "reason": reason,
-                "confidence_score": round(score, 4),
-                "inliers": inliers,
-                "raw_char_pos": raw_char_pos,
-                "last_known_pos": self.last_known_pos,
-                "last_room_name": self.last_room_name,
-                "search_roi": search_roi,
-                "expected_pos": expected_pos,
-                "all_scores": all_scores,
+                "timestamp": ts_str, "reason": reason, "confidence_score": round(score, 4),
+                "inliers": inliers, "raw_char_pos": raw_char_pos, "last_known_pos": self.last_known_pos,
+                "last_room_name": self.last_room_name, "search_roi": search_roi,
+                "expected_pos": expected_pos, "all_scores": all_scores,
             }
+            json_path = os.path.join(self.debug_log_dir, f"{base_name}.json")
             with open(json_path, "w", encoding="utf-8") as f:
                 json.dump(meta, f, indent=2)
-
             print(f"[TRACKER DIAGNOSTIC] Dumped loss telemetry to {json_path} (Reason: {reason}, Score: {score:.2f})")
         except Exception:
             pass

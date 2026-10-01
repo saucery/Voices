@@ -104,9 +104,14 @@ class MinimapExtractor:
             kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
             cleaned = cv2.morphologyEx(wall_mask, cv2.MORPH_OPEN, kernel)
 
-            # 3. Suppress orange player marker so movement doesn't create shifting false edges
+            # 3. Suppress orange player marker ONLY near center (radius ~18px around w//2, h//2)
+            # This prevents Delirium fog, ground fire, and lighting across the rest of the minimap
+            # from falsely punching holes through genuine wall outlines.
             mask_orange = cv2.inRange(hsv, np.array([8, 100, 100]), np.array([26, 255, 255]))
-            dilated_orange = cv2.dilate(mask_orange, np.ones((7, 7), np.uint8))
+            center_mask = np.zeros((h, w), dtype=np.uint8)
+            cv2.circle(center_mask, (w // 2, h // 2), 18, 255, -1)
+            player_orange = cv2.bitwise_and(mask_orange, center_mask)
+            dilated_orange = cv2.dilate(player_orange, np.ones((5, 5), np.uint8))
             cleaned = cv2.bitwise_and(cleaned, cv2.bitwise_not(dilated_orange))
 
             # 4. Suppress outer 6px frame border
@@ -118,15 +123,25 @@ class MinimapExtractor:
             contours, _ = cv2.findContours(cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             wall_canvas = np.zeros((h, w), dtype=np.uint8)
             for c in contours:
-                if cv2.contourArea(c) >= 10 or cv2.arcLength(c, False) >= 14:
+                if cv2.contourArea(c) >= 5 or cv2.arcLength(c, False) >= 8:
                     cv2.drawContours(wall_canvas, [c], -1, 255, -1)
 
             # If clean wall contours found, return them directly
-            if np.count_nonzero(wall_canvas) > 80:
+            if np.count_nonzero(wall_canvas) > 40:
+                if np.count_nonzero(wall_canvas) < 180:
+                    # Sparse wall contours: augment with masked Canny edges to avoid losing thin features
+                    gray_sub = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    blurred_sub = cv2.GaussianBlur(gray_sub, blur_kernel, 0)
+                    canny_sub = cv2.Canny(blurred_sub, canny_t1, canny_t2)
+                    canny_sub = cv2.bitwise_and(canny_sub, border_mask)
+                    wall_canvas = cv2.bitwise_or(wall_canvas, canny_sub)
                 return wall_canvas
 
         # Fallback to Canny edge detection for grayscale or non-color inputs
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img.copy()
         blurred = cv2.GaussianBlur(gray, blur_kernel, 0)
         edges = cv2.Canny(blurred, canny_t1, canny_t2)
+        border_mask = np.zeros((h, w), dtype=np.uint8)
+        border_mask[6:h - 6, 6:w - 6] = 255
+        edges = cv2.bitwise_and(edges, border_mask)
         return edges

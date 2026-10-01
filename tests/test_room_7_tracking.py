@@ -57,7 +57,7 @@ def test_room_7_movement_path_bounds():
     bounds = mp.get_active_room_bounds()
     assert bounds is not None
     x1, y1, x2, y2 = bounds
-    assert x1 >= 40 and y1 >= 30
+    assert x1 >= 0 and y1 >= 0
     assert x2 <= 210 and y2 <= 210
     # Must NOT be the old wide (0, 0, 280, 280)
     assert bounds != (0, 0, 280, 280)

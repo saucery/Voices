@@ -32,6 +32,15 @@ keyboard = DynamicModuleProxy("keyboard")
 class HideoutTraverseMixin:
     """Map insertion into Simulacrum popup, Traverse button clicking, and hideout portal interaction."""
 
+    def _get_monitor_offsets(self) -> Tuple[int, int]:
+        capt = self._get_capturer()
+        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
+            monitors = capt._sct.monitors
+            if 0 <= self.monitor_idx < len(monitors):
+                return monitors[self.monitor_idx].get("left", 0), monitors[self.monitor_idx].get("top", 0)
+        return 0, 0
+
+
     def locate_tier15_maps_in_inventory(
         self,
         screen: Optional[np.ndarray] = None,
@@ -62,15 +71,7 @@ class HideoutTraverseMixin:
         row_centers = inv_info["row_centers"]
         col_centers = inv_info["col_centers"]
         scale = inv_info["scale"]
-
-        mon_left = 0
-        mon_top = 0
-        capt = self._get_capturer()
-        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
-            monitors = capt._sct.monitors
-            if 0 <= self.monitor_idx < len(monitors):
-                mon_left = monitors[self.monitor_idx].get("left", 0)
-                mon_top = monitors[self.monitor_idx].get("top", 0)
+        mon_left, mon_top = self._get_monitor_offsets()
 
         sh, sw = screen.shape[:2]
         eff_thresh = threshold if threshold is not None else self.tier15_map_match_threshold
@@ -153,14 +154,7 @@ class HideoutTraverseMixin:
 
         sh, sw = screen.shape[:2]
         scale_est = sh / 1080.0
-
-        mon_left = 0
-        mon_top = 0
-        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
-            monitors = capt._sct.monitors
-            if 0 <= self.monitor_idx < len(monitors):
-                mon_left = monitors[self.monitor_idx].get("left", 0)
-                mon_top = monitors[self.monitor_idx].get("top", 0)
+        mon_left, mon_top = self._get_monitor_offsets()
 
         # 1. Ensure inventory is open
         # NOTE: In PoE, when the Atlas / Simulacrum popup is open, the inventory is already open
@@ -226,20 +220,10 @@ class HideoutTraverseMixin:
             dst_screen_y = dst_y - mon_top
             _log(f"  [MAP TRANSFER] Using detected 4-square popup Slot #{target_slot_idx+1} at desktop ({dst_x}, {dst_y}) [screen: ({dst_screen_x}, {dst_screen_y})].")
         else:
-            popup_cx = sw // 2
-            popup_cy = int(sh * 0.48)
-            slot_delta = int(32 * scale_est)
-            slot_offsets = [
-                (-slot_delta, -slot_delta),  # Slot 0: Top-Left
-                (slot_delta, -slot_delta),   # Slot 1: Top-Right
-                (-slot_delta, slot_delta),   # Slot 2: Bottom-Left
-                (slot_delta, slot_delta),    # Slot 3: Bottom-Right
-            ]
-            target_off = slot_offsets[target_slot_idx % len(slot_offsets)]
-            dst_screen_x = popup_cx + target_off[0]
-            dst_screen_y = popup_cy + target_off[1]
-            dst_x = dst_screen_x + mon_left
-            dst_y = dst_screen_y + mon_top
+            sd = int(32 * scale_est)
+            ox, oy = [(-sd, -sd), (sd, -sd), (-sd, sd), (sd, sd)][target_slot_idx % 4]
+            dst_screen_x, dst_screen_y = sw // 2 + ox, int(sh * 0.48) + oy
+            dst_x, dst_y = dst_screen_x + mon_left, dst_screen_y + mon_top
             _log(f"  [MAP TRANSFER] Target Delusion popup Slot #{target_slot_idx+1} at desktop ({dst_x}, {dst_y}) [screen: ({dst_screen_x}, {dst_screen_y})].")
 
         if dry_run:
@@ -279,9 +263,7 @@ class HideoutTraverseMixin:
             if pydirectinput:
                 pydirectinput.mouseDown(button="left")
                 time.sleep(0.10)
-                mid_x = (src_x + dst_x) // 2
-                mid_y = (src_y + dst_y) // 2
-                self.move_mouse_inside_game(mid_x, mid_y)
+                self.move_mouse_inside_game((src_x + dst_x) // 2, (src_y + dst_y) // 2)
                 time.sleep(0.05)
                 self.move_mouse_inside_game(dst_x, dst_y)
                 time.sleep(0.10)
@@ -321,13 +303,7 @@ class HideoutTraverseMixin:
             return None
 
         sh, sw = screen.shape[:2]
-        mon_left = 0
-        mon_top = 0
-        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
-            monitors = capt._sct.monitors
-            if 0 <= self.monitor_idx < len(monitors):
-                mon_left = monitors[self.monitor_idx].get("left", 0)
-                mon_top = monitors[self.monitor_idx].get("top", 0)
+        mon_left, mon_top = self._get_monitor_offsets()
 
         eff_thresh = threshold if threshold is not None else getattr(self, "traverse_match_threshold", 0.60)
         btn_h, btn_w = self.delusion_traverse_tpl.shape[:2]
@@ -405,22 +381,18 @@ class HideoutTraverseMixin:
 
         if dry_run:
             _log(f"    [DRY RUN] Would click TRAVERSE button at ({tx}, {ty}).")
-            self.delusion_detected_traverse = None
-            self.delusion_detected_slots = []
+            self.delusion_detected_traverse, self.delusion_detected_slots = None, []
             return True
 
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
         self.move_mouse_inside_game(tx, ty)
         time.sleep(0.10)
         if pydirectinput:
-            pydirectinput.mouseDown(button="left")
-            time.sleep(0.08)
-            pydirectinput.mouseUp(button="left")
+            pydirectinput.click()
         time.sleep(0.55)
 
         # Clear popup state after clicking TRAVERSE
-        self.delusion_detected_traverse = None
-        self.delusion_detected_slots = []
+        self.delusion_detected_traverse, self.delusion_detected_slots = None, []
 
         # In PoE, clicking TRAVERSE automatically activates the map and closes all Atlas / Delusion popup dialogs.
         # No Escape key is needed (pressing Escape would open the PoE options menu).
@@ -434,18 +406,21 @@ class HideoutTraverseMixin:
         screen: Optional[np.ndarray] = None,
         threshold: Optional[float] = None,
         preferred_pos: Optional[Tuple[int, int]] = None,
+        allow_completed: bool = False,
+        click_target: Optional[str] = None,
     ) -> Optional[Tuple[int, int]]:
         """
-        Locates a spawned Map Device portal in the hideout using template matching with portal.png.
-        Supports multi-scale matching and picks the best portal closest to preferred_pos (or last Map Device pos).
-        Returns desktop absolute (x, y) coordinates of the portal center, or None if not found.
+        Locates the Simulacrum Map Device portal in hideout.
+        Distinguishes active 'SIMULACRUM OF DELUSION' from old 'SIMULACRUM OF DELUSION (COMPLETED)'.
+        Skips completed portals unless allow_completed=True.
+        Supports targeting either 'sign' (letters banner) or 'body' (blue portal rift).
+        Falls back to legacy portal template if needed for backward compatibility.
         """
-        if self.portal_template_img is None or self.portal_mask is None:
+        if getattr(self, "hideout_portal_label_tpl", None) is None:
             self._load_delirium_and_portal_templates()
-        if self.portal_template_img is None or self.portal_mask is None:
-            return None
 
-        eff_threshold = threshold if threshold is not None else getattr(self, "hideout_portal_match_threshold", 0.65)
+        eff_thresh = threshold if threshold is not None else getattr(self, "hideout_portal_match_threshold", 0.70)
+        target = (click_target or getattr(self, "hideout_portal_click_target", "sign")).lower().strip()
 
         capt = self._get_capturer()
         if screen is None:
@@ -458,65 +433,125 @@ class HideoutTraverseMixin:
             return None
 
         sh, sw = screen.shape[:2]
-        mon_left = 0
-        mon_top = 0
-        if getattr(capt, "_sct", None) and getattr(capt._sct, "monitors", None):
-            monitors = capt._sct.monitors
-            if 0 <= self.monitor_idx < len(monitors):
-                mon_left = monitors[self.monitor_idx].get("left", 0)
-                mon_top = monitors[self.monitor_idx].get("top", 0)
-
-        pth, ptw = self.portal_template_img.shape[:2]
-        scales = [0.75, 0.85, 0.95, 1.0, 1.10]
+        mon_left, mon_top = self._get_monitor_offsets()
         candidates = []
+        found_completed = False
+        scale_est = sh / 1080.0
+        scales = [1.0] if abs(scale_est - 1.0) < 0.05 else [round(scale_est, 2), 1.0]
 
-        anchor_pos = preferred_pos or getattr(self, "last_map_device_pos", None)
+        # 1. Primary: 'SIMULACRUM OF DELUSION' text banner
+        lbl = getattr(self, "hideout_portal_label_tpl", None)
+        comp_badge = getattr(self, "hideout_portal_completed_tpl", None)
+        if lbl is not None:
+            lw, lh = lbl.shape[1], lbl.shape[0]
+            bw, bh = (comp_badge.shape[1], comp_badge.shape[0]) if comp_badge is not None else (0, 0)
+            for s in scales:
+                r_lbl = lbl if abs(s - 1.0) < 0.01 else cv2.resize(lbl, (max(20, int(lw * s)), max(10, int(lh * s))))
+                rw, rh = r_lbl.shape[1], r_lbl.shape[0]
+                if rw > sw or rh > sh:
+                    continue
+                try:
+                    res_copy = cv2.matchTemplate(screen, r_lbl, cv2.TM_CCOEFF_NORMED)
+                    while True:
+                        _, max_v, _, (px, py) = cv2.minMaxLoc(res_copy)
+                        if max_v < eff_thresh:
+                            break
+                        is_comp = False
+                        if comp_badge is not None:
+                            roi = screen[max(0, py - int(6 * s)):min(sh, py + rh + int(6 * s)), max(0, px + rw - int(20 * s)):min(sw, px + rw + int(bw * s) + int(25 * s))]
+                            r_comp = comp_badge if abs(s - 1.0) < 0.01 else cv2.resize(comp_badge, (max(10, int(bw * s)), max(5, int(bh * s))))
+                            if roi.shape[0] >= r_comp.shape[0] and roi.shape[1] >= r_comp.shape[1]:
+                                if float(np.max(cv2.matchTemplate(roi, r_comp, cv2.TM_CCOEFF_NORMED))) >= 0.65:
+                                    is_comp = True
+                        if is_comp:
+                            found_completed = True
+                        sign_cx, sign_cy = px + rw // 2, py + rh // 2
+                        body_cx, body_cy = sign_cx + (int(55 * s) if is_comp else 0), sign_cy + int(120 * s)
+                        if not is_comp or allow_completed:
+                            candidates.append({
+                                "desktop_sign": (mon_left + sign_cx, mon_top + sign_cy),
+                                "desktop_body": (mon_left + body_cx, mon_top + body_cy),
+                                "confidence": float(max_v),
+                                "is_completed": is_comp,
+                                "scale": s,
+                            })
+                        else:
+                            _log("  [HIDEOUT PORTAL] Detected portal is COMPLETED ('SIMULACRUM OF DELUSION (COMPLETED)'). Skipping...")
+                        cv2.rectangle(res_copy, (max(0, px - int(50 * s)), max(0, py - int(20 * s))), (min(sw, px + rw + int(120 * s)), min(sh, py + rh + int(20 * s))), 0, -1)
+                except Exception as e:
+                    _log(f"  [HIDEOUT PORTAL] Label matching error: {e}")
 
-        for s in scales:
-            sc_w = int(ptw * s)
-            sc_h = int(pth * s)
-            if sc_w > sw or sc_h > sh or sc_w < 40 or sc_h < 40:
-                continue
-            r_tpl = self.portal_template_img if abs(s - 1.0) < 0.01 else cv2.resize(
-                self.portal_template_img, (sc_w, sc_h), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR
-            )
-            r_mask = self.portal_mask if abs(s - 1.0) < 0.01 else cv2.resize(
-                self.portal_mask, (sc_w, sc_h), interpolation=cv2.INTER_NEAREST
-            )
-
+        # 2. Secondary: Blue portal body if banner was hidden/unmatched
+        ho_img, ho_mask = getattr(self, "hideout_portal_template_img", None), getattr(self, "hideout_portal_mask", None)
+        if not candidates and ho_img is not None and ho_mask is not None:
             try:
-                res = cv2.matchTemplate(screen, r_tpl, cv2.TM_SQDIFF_NORMED, mask=r_mask)
-                res = np.where(np.isnan(res) | (res < 0.0) | (res > 1.0), 1.0, res)
-                min_v, _, min_l, _ = cv2.minMaxLoc(res)
-                conf = 1.0 - float(min_v)
-                if conf >= eff_threshold and min_l is not None:
-                    cx = min_l[0] + sc_w // 2
-                    cy = min_l[1] + sc_h // 2
-                    desktop_x = mon_left + cx
-                    desktop_y = mon_top + cy
-                    candidates.append({
-                        "desktop_pos": (desktop_x, desktop_y),
-                        "screen_pos": (cx, cy),
-                        "confidence": conf,
-                        "scale": s,
-                    })
+                res_b = cv2.matchTemplate(screen, ho_img, cv2.TM_SQDIFF_NORMED, mask=ho_mask)
+                res_b = np.where(np.isnan(res_b) | (res_b < 0.0) | (res_b > 1.0), 1.0, res_b)
+                min_v, _, (bx, by), _ = cv2.minMaxLoc(res_b)
+                b_conf = 1.0 - float(min_v)
+                if b_conf >= eff_thresh:
+                    bcx, bcy = bx + ho_img.shape[1] // 2, by + ho_img.shape[0] // 2
+                    is_comp = False
+                    if comp_badge is not None:
+                        roi = screen[max(0, bcy - 160):max(0, bcy - 70), max(0, bcx - 180):min(sw, bcx + 180)]
+                        if roi.shape[0] >= comp_badge.shape[0] and roi.shape[1] >= comp_badge.shape[1]:
+                            if float(np.max(cv2.matchTemplate(roi, comp_badge, cv2.TM_CCOEFF_NORMED))) >= 0.65:
+                                is_comp = True
+                    if is_comp:
+                        found_completed = True
+                    if not is_comp or allow_completed:
+                        candidates.append({
+                            "desktop_sign": (mon_left + bcx, mon_top + max(0, bcy - 120)),
+                            "desktop_body": (mon_left + bcx, mon_top + bcy),
+                            "confidence": b_conf,
+                            "is_completed": is_comp,
+                            "scale": 1.0,
+                        })
             except Exception as e:
-                _log(f"  [HIDEOUT PORTAL] Matching error at scale {s:.2f}: {e}")
+                _log(f"  [HIDEOUT PORTAL] Body matching error: {e}")
 
         if candidates:
-            # Sort candidates: if anchor_pos is known, prioritize portal closest to Map Device, then confidence
-            if anchor_pos:
-                ax, ay = anchor_pos
-                candidates.sort(key=lambda c: (math.hypot(c["desktop_pos"][0] - ax, c["desktop_pos"][1] - ay), -c["confidence"]))
+            anchor = preferred_pos or getattr(self, "last_map_device_pos", None)
+            if anchor:
+                ax, ay = anchor
+                candidates.sort(key=lambda c: (math.hypot(c["desktop_body"][0] - ax, c["desktop_body"][1] - ay), -c["confidence"]))
             else:
                 candidates.sort(key=lambda c: -c["confidence"])
-
             best = candidates[0]
-            _log(f"  [HIDEOUT PORTAL MATCH] Found portal (conf={best['confidence']:.3f} >= {eff_threshold:.2f}, scale={best['scale']:.2f}) at screen {best['desktop_pos']}")
-            return best["desktop_pos"]
+            chosen = best["desktop_body"] if target == "body" else best["desktop_sign"]
+            status_desc = "COMPLETED" if best["is_completed"] else "ACTIVE"
+            _log(f"  [HIDEOUT PORTAL MATCH] Found {status_desc} portal (target={target}, conf={best['confidence']:.3f}, scale={best['scale']:.2f}) at screen {chosen}")
+            return chosen
 
-        # Fallback to single-scale locate_portal()
-        std_portal = self.locate_portal(threshold=eff_threshold, screen=screen)
+        if found_completed and not allow_completed:
+            _log("  [HIDEOUT PORTAL] Only completed portal(s) detected on screen. Waiting for active portal...")
+            return None
+
+        # 3. Fallback: multi-scale legacy portal matching for backward compatibility
+        if self.portal_template_img is not None and self.portal_mask is not None:
+            pth, ptw = self.portal_template_img.shape[:2]
+            anchor_pos = preferred_pos or getattr(self, "last_map_device_pos", None)
+            legacy_cands = []
+            for s in [0.75, 0.85, 0.95, 1.0, 1.10]:
+                sc_w, sc_h = int(ptw * s), int(pth * s)
+                if sc_w > sw or sc_h > sh or sc_w < 40 or sc_h < 40:
+                    continue
+                r_tpl = self.portal_template_img if abs(s - 1.0) < 0.01 else cv2.resize(self.portal_template_img, (sc_w, sc_h), interpolation=cv2.INTER_AREA if s < 1.0 else cv2.INTER_LINEAR)
+                r_mask = self.portal_mask if abs(s - 1.0) < 0.01 else cv2.resize(self.portal_mask, (sc_w, sc_h), interpolation=cv2.INTER_NEAREST)
+                try:
+                    res = cv2.matchTemplate(screen, r_tpl, cv2.TM_SQDIFF_NORMED, mask=r_mask)
+                    res = np.where(np.isnan(res) | (res < 0.0) | (res > 1.0), 1.0, res)
+                    min_v, _, (lx, ly), _ = cv2.minMaxLoc(res)
+                    conf = 1.0 - float(min_v)
+                    if conf >= eff_thresh:
+                        legacy_cands.append({"desktop_pos": (mon_left + lx + sc_w // 2, mon_top + ly + sc_h // 2), "confidence": conf, "scale": s})
+                except Exception:
+                    pass
+            if legacy_cands:
+                legacy_cands.sort(key=lambda c: (math.hypot(c["desktop_pos"][0] - anchor_pos[0], c["desktop_pos"][1] - anchor_pos[1]) if anchor_pos else 0, -c["confidence"]))
+                return legacy_cands[0]["desktop_pos"]
+
+        std_portal = self.locate_portal(threshold=eff_thresh, screen=screen)
         if std_portal is not None:
             return std_portal
 
@@ -534,23 +569,28 @@ class HideoutTraverseMixin:
         hold_w_seconds: Optional[float] = None,
         settle_wait: Optional[float] = None,
         dry_run: bool = False,
+        click_target: Optional[str] = None,
+        allow_completed: bool = False,
     ) -> bool:
         """
-        Polls for spawned Map Device portal(s) in the hideout, left-clicks one of the visible
-        portals to enter the danger zone (Simulacrum), waits for area transition (loading screen),
-        holds 'W' for configured duration (1.3s default) to step away from portal spawn so player
-        coordinates can be localized, and optionally starts the standard navigation routine.
+        Polls for spawned Map Device portal(s) in the hideout, left-clicks the active portal
+        (either on the SIMULACRUM OF DELUSION letters sign or the blue portal body) to enter
+        the danger zone, waits for area transition, holds 'W' (default 1.3s), and starts route.
         """
         self.release_all_keys()
         self.status_message = "Looking for Portals..."
-        _log("\n[HIDEOUT PORTAL] Looking for spawned Map Device portal(s) in hideout...")
+        eff_target = (click_target or getattr(self, "hideout_portal_click_target", "sign")).lower().strip()
+        _log(f"\n[HIDEOUT PORTAL] Looking for spawned active portal ({eff_target}) in hideout...")
 
         poll_start = time.time()
         portal_pos = None
         while (time.time() - poll_start) < timeout:
             if stop_handler.is_stopped():
                 return False
-            portal_pos = self.locate_hideout_portal()
+            portal_pos = self.locate_hideout_portal(
+                allow_completed=allow_completed,
+                click_target=click_target,
+            )
             if portal_pos is not None:
                 break
             time.sleep(0.4)
@@ -607,8 +647,7 @@ class HideoutTraverseMixin:
         # Clean reset: entering new enemy area must ALWAYS start from first pink dot (WP #0)
         self.interacted_pink_dots.clear()
         self.interacted_zones.clear()
-        self.latest_pos = None
-        self.last_known_pos = None
+        self.latest_pos, self.last_known_pos = None, None
         self.is_completed = False
         self.start_at_pink_dot = 0
         self._route_reset_to_start = True

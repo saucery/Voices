@@ -5,6 +5,16 @@
 - **RouteNavigator Architecture**: Assembled via multiple inheritance (mixins) in `src/route_navigator.py`. Shared state lives on `src/navigator_base.py`.
 - **Testing**: Run `pytest tests/` after modifying modules to ensure backward compatibility and no syntax or regression issues.
 
+## Testing Rules & Boundaries
+
+- **NEVER** run the full test suite (`pytest`, `python -m unittest`, etc.).
+- When testing changes, **ONLY** run the test file or specific test function related to the modified code:
+  - By function: `pytest <path_to_test_file>.py -k "<test_function_name>" --tb=short`
+  - By file: `pytest <path_to_test_file>.py --tb=short`
+- Always use `--tb=short` or `--tb=line` to minimize terminal output tokens.
+- Never run more than 5 tests in a single command.
+- If multiple tests fail, only inspect the traceback of the first failing test.
+
 ## Modular Responsibility Map
 
 ### `src/hideout/` (Hideout & Preparation)

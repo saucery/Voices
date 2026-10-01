@@ -296,6 +296,10 @@ class RouteNavigator(
         self.simulacrum_node_v1_template_file: str = "templates/ui/simulacrum_node_v1.png"
         self.simulacrum_node_v2_template_file: str = "templates/ui/simulacrum_node_v2.png"
         self.simulacrum_node_v3_template_file: str = "templates/ui/simulacrum_node_v3.png"
+        self.simulacrum_node_v4_template_file: str = "templates/ui/simulacrum_node_v4.png"
+        self.simulacrum_node_v5_template_file: str = "templates/ui/simulacrum_node_v5.png"
+        self.simulacrum_node_v6_template_file: str = "templates/ui/simulacrum_node_v6.png"
+        self.simulacrum_node_v7_template_file: str = "templates/ui/simulacrum_node_v7.png"
         self.simulacrum_match_threshold: float = 0.78
         self.simulacrum_click_y_offset: float = 26.0
         self.simulacrum_icon_tpl: Optional[np.ndarray] = None
@@ -305,6 +309,10 @@ class RouteNavigator(
         self.simulacrum_node_v1_tpl: Optional[np.ndarray] = None
         self.simulacrum_node_v2_tpl: Optional[np.ndarray] = None
         self.simulacrum_node_v3_tpl: Optional[np.ndarray] = None
+        self.simulacrum_node_v4_tpl: Optional[np.ndarray] = None
+        self.simulacrum_node_v5_tpl: Optional[np.ndarray] = None
+        self.simulacrum_node_v6_tpl: Optional[np.ndarray] = None
+        self.simulacrum_node_v7_tpl: Optional[np.ndarray] = None
 
         self.delusion_popup_template_file: str = "templates/ui/delusion_popup.png"
         self.delusion_popup_full_template_file: str = "templates/ui/delusion_popup_full.png"
@@ -320,9 +328,17 @@ class RouteNavigator(
         self.delusion_detected_traverse: Optional[Tuple[int, int]] = None
         self.last_map_device_pos: Optional[Tuple[int, int]] = None
         self.traverse_match_threshold: float = 0.60
-        self.hideout_portal_match_threshold: float = 0.65
+        self.hideout_portal_match_threshold: float = 0.70
         self.portal_entry_hold_w_seconds: float = 1.3
         self.portal_entry_settle_seconds: float = 1.5
+        self.hideout_portal_template_file: str = "templates/ui/hideout_portal.png"
+        self.hideout_portal_label_template_file: str = "templates/ui/portal_delusion_label.png"
+        self.hideout_portal_completed_template_file: str = "templates/ui/portal_delusion_completed.png"
+        self.hideout_portal_click_target: str = "sign"
+        self.hideout_portal_template_img: Optional[np.ndarray] = None
+        self.hideout_portal_mask: Optional[np.ndarray] = None
+        self.hideout_portal_label_tpl: Optional[np.ndarray] = None
+        self.hideout_portal_completed_tpl: Optional[np.ndarray] = None
 
         self.tier15_map_template_file: str = "templates/ui/tier15_map.png"
         self.tier15_map_tpl: Optional[np.ndarray] = None
@@ -392,6 +408,8 @@ class RouteNavigator(
                 self.reclick_after_approach = bool(ap_cfg.get("reclick_after_approach", self.reclick_after_approach))
                 self.portal_entry_hold_w_seconds = float(ap_cfg.get("portal_entry_hold_w_seconds", self.portal_entry_hold_w_seconds))
                 self.portal_entry_settle_seconds = float(ap_cfg.get("portal_entry_settle_seconds", self.portal_entry_settle_seconds))
+                self.hideout_portal_click_target = str(ap_cfg.get("hideout_portal_click_target", self.hideout_portal_click_target)).lower().strip()
+                self.hideout_portal_match_threshold = float(ap_cfg.get("hideout_portal_match_threshold", self.hideout_portal_match_threshold))
                 self.pink_dot_stop_seconds = float(ap_cfg.get("pink_dot_stop_seconds", self.pink_dot_stop_seconds))
                 self.sim1_template_file = ap_cfg.get("sim1_template_file", self.sim1_template_file)
                 self.sim2_template_file = ap_cfg.get("sim2_template_file", self.sim2_template_file)
@@ -415,6 +433,10 @@ class RouteNavigator(
                 self.simulacrum_node_v1_template_file = ap_cfg.get("simulacrum_node_v1_template_file", self.simulacrum_node_v1_template_file)
                 self.simulacrum_node_v2_template_file = ap_cfg.get("simulacrum_node_v2_template_file", self.simulacrum_node_v2_template_file)
                 self.simulacrum_node_v3_template_file = ap_cfg.get("simulacrum_node_v3_template_file", self.simulacrum_node_v3_template_file)
+                self.simulacrum_node_v4_template_file = ap_cfg.get("simulacrum_node_v4_template_file", self.simulacrum_node_v4_template_file)
+                self.simulacrum_node_v5_template_file = ap_cfg.get("simulacrum_node_v5_template_file", self.simulacrum_node_v5_template_file)
+                self.simulacrum_node_v6_template_file = ap_cfg.get("simulacrum_node_v6_template_file", self.simulacrum_node_v6_template_file)
+                self.simulacrum_node_v7_template_file = ap_cfg.get("simulacrum_node_v7_template_file", self.simulacrum_node_v7_template_file)
                 self.loot1_template_file = ap_cfg.get("loot1_template_file", self.loot1_template_file)
                 self.loot_match_threshold = float(ap_cfg.get("loot_match_threshold", self.loot_match_threshold))
                 self.loot_pickup_wait_seconds = float(ap_cfg.get("loot_pickup_wait_seconds", self.loot_pickup_wait_seconds))

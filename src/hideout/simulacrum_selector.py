@@ -57,12 +57,10 @@ class HideoutSimulacrumMixin:
             self._load_stash_and_inventory_templates()
 
         templates_to_try = []
-        if getattr(self, "simulacrum_node_v1_tpl", None) is not None:
-            templates_to_try.append(("node_v1", self.simulacrum_node_v1_tpl, 0, 0))
-        if getattr(self, "simulacrum_node_v2_tpl", None) is not None:
-            templates_to_try.append(("node_v2", self.simulacrum_node_v2_tpl, 0, 0))
-        if getattr(self, "simulacrum_node_v3_tpl", None) is not None:
-            templates_to_try.append(("node_v3", self.simulacrum_node_v3_tpl, 0, 0))
+        for i in range(1, 8):
+            tpl = getattr(self, f"simulacrum_node_v{i}_tpl", None)
+            if tpl is not None:
+                templates_to_try.append((f"node_v{i}", tpl, 0, 0))
         if self.simulacrum_medal_tpl is not None:
             templates_to_try.append(("medal", self.simulacrum_medal_tpl, 0, 0))
         if self.simulacrum_icon_tpl is not None:
@@ -105,7 +103,7 @@ class HideoutSimulacrumMixin:
             inv_open = self.is_inventory_open(screen=screen)
         except Exception:
             inv_open = False
-        max_map_x = int(0.58 * sw) if inv_open else int(0.66 * sw)
+        max_map_x = int(0.655 * sw) if inv_open else int(0.68 * sw)
 
         raw_candidates = []
 

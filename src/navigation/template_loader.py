@@ -75,7 +75,36 @@ class TemplateLoaderMixin:
                     )
                     break
 
-        # 2. Delirium statue templates (supporting both clean ground and heavy burning ground fire)
+        # 2. Hideout Portal templates (SIMULACRUM OF DELUSION label, Completed badge, and blue rift body)
+        self.hideout_portal_label_tpl = None
+        for candidate in [getattr(self, "hideout_portal_label_template_file", None), "templates/ui/portal_delusion_label.png", "ui/portal_delusion_label.png"]:
+            if candidate and os.path.exists(candidate):
+                lbl = cv2.imread(candidate)
+                if lbl is not None:
+                    self.hideout_portal_label_tpl = lbl
+                    break
+
+        self.hideout_portal_completed_tpl = None
+        for candidate in [getattr(self, "hideout_portal_completed_template_file", None), "templates/ui/portal_delusion_completed.png", "ui/portal_delusion_completed.png"]:
+            if candidate and os.path.exists(candidate):
+                comp = cv2.imread(candidate)
+                if comp is not None:
+                    self.hideout_portal_completed_tpl = comp
+                    break
+
+        self.hideout_portal_template_img = None
+        self.hideout_portal_mask = None
+        for candidate in [getattr(self, "hideout_portal_template_file", None), "templates/ui/hideout_portal.png", "ui/hideout_portal.png"]:
+            if candidate and os.path.exists(candidate):
+                ho_img = cv2.imread(candidate)
+                if ho_img is not None:
+                    self.hideout_portal_template_img = ho_img
+                    self.hideout_portal_mask = np.uint8(
+                        ~((ho_img[:, :, 0] >= 245) & (ho_img[:, :, 1] >= 245) & (ho_img[:, :, 2] >= 245)) * 255
+                    )
+                    break
+
+        # 3. Delirium statue templates (supporting both clean ground and heavy burning ground fire)
         self.delirium_templates = []
         loaded_candidates = set()
         for name, candidate_list in [
@@ -110,6 +139,10 @@ class TemplateLoaderMixin:
             self.simulacrum_node_v1_tpl = None
             self.simulacrum_node_v2_tpl = None
             self.simulacrum_node_v3_tpl = None
+            self.simulacrum_node_v4_tpl = None
+            self.simulacrum_node_v5_tpl = None
+            self.simulacrum_node_v6_tpl = None
+            self.simulacrum_node_v7_tpl = None
             self.delusion_popup_tpl = None
             self.delusion_4square_tpl = None
             self.delusion_traverse_tpl = None
@@ -204,13 +237,12 @@ class TemplateLoaderMixin:
                         self.simulacrum_circle_tpl = img
                         break
 
-        for attr, fname, cands in [
-            ("simulacrum_node_v1_tpl", self.simulacrum_node_v1_template_file, ["templates/ui/simulacrum_node_v1.png", "ui/simulacrum_node_v1.png"]),
-            ("simulacrum_node_v2_tpl", self.simulacrum_node_v2_template_file, ["templates/ui/simulacrum_node_v2.png", "ui/simulacrum_node_v2.png"]),
-            ("simulacrum_node_v3_tpl", self.simulacrum_node_v3_template_file, ["templates/ui/simulacrum_node_v3.png", "ui/simulacrum_node_v3.png"]),
-        ]:
+        for idx in range(1, 8):
+            attr = f"simulacrum_node_v{idx}_tpl"
+            fname = getattr(self, f"simulacrum_node_v{idx}_template_file", f"templates/ui/simulacrum_node_v{idx}.png")
+            cands = [fname, f"templates/ui/simulacrum_node_v{idx}.png", f"ui/simulacrum_node_v{idx}.png"]
             if getattr(self, attr, None) is None:
-                for cand in [fname] + cands:
+                for cand in cands:
                     if cand and os.path.exists(cand):
                         img = cv2.imread(cand)
                         if img is not None:

@@ -145,6 +145,10 @@ class RouteNavigator(
         self.last_distance: float = 0.0
         self.status_message: str = "Autopilot Ready (Press 'A' to start)"
 
+        # Human-like Mouse Movement State & Configuration
+        self.human_mouse_enabled: bool = True
+        self.mouse_speed_variation_pct: float = 20.0
+
         # Stuck & Recovery Detection State
         self.last_known_pos: Optional[Tuple[float, float]] = None
         self.last_known_time: float = time.time()
@@ -383,6 +387,8 @@ class RouteNavigator(
                 with open(config_path, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
                 ap_cfg = cfg.get("autopilot", {})
+                self.human_mouse_enabled = bool(ap_cfg.get("human_mouse_enabled", self.human_mouse_enabled))
+                self.mouse_speed_variation_pct = float(ap_cfg.get("mouse_speed_variation_pct", self.mouse_speed_variation_pct))
                 self.orbit_yellow_zone_enabled = bool(ap_cfg.get("orbit_yellow_zone_enabled", self.orbit_yellow_zone_enabled))
                 self.orbit_constant_right_click_enabled = bool(ap_cfg.get("orbit_constant_right_click_enabled", self.orbit_constant_right_click_enabled))
                 self.orbit_right_click_interval_seconds = float(ap_cfg.get("orbit_right_click_interval_seconds", self.orbit_right_click_interval_seconds))

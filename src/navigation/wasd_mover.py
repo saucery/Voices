@@ -22,6 +22,8 @@ from src.minimap_extractor import MinimapExtractor
 from src.enemy_detector import EnemyDetector
 from src.navigator_base import DynamicModuleProxy, log_msg
 
+from src.navigation.human_mouse import human_move_to
+
 _log = log_msg
 pydirectinput = DynamicModuleProxy("pydirectinput")
 window_focuser = DynamicModuleProxy("window_focuser")
@@ -116,27 +118,45 @@ class WasdMoverMixin:
         return x, y
 
 
-    def move_mouse_inside_game(self, x: Optional[int] = None, y: Optional[int] = None) -> Tuple[int, int]:
+    def move_mouse_inside_game(
+        self,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+        human_like: Optional[bool] = None,
+    ) -> Tuple[int, int]:
         """
         Moves the mouse cursor to (x, y) or game center, strictly clamped to the game window.
-        Uses Win32 SetCursorPos and MOUSEEVENTF_VIRTUALDESK SendInput for multi-monitor accuracy.
+        Uses human-like curved movement with random speed (+/- 20%) to avoid robotic cursor jumps.
         """
         if x is None or y is None:
-            x, y = self.get_game_center_coords()
+            target_x, target_y = self.get_game_center_coords()
         else:
-            x, y = self.clamp_coords_to_game_window(x, y)
+            target_x, target_y = self.clamp_coords_to_game_window(x, y)
 
         window_focuser.ensure_focused(monitor_idx=self.monitor_idx)
 
-        # 1. Direct Win32 SetCursorPos with input desktop attachment
+        # Check if human_like is enabled (defaulting to True or config value)
+        use_human = getattr(self, "human_mouse_enabled", True) if human_like is None else human_like
+        speed_var = getattr(self, "mouse_speed_variation_pct", 20.0)
+
+        if use_human:
+            return human_move_to(
+                target_x,
+                target_y,
+                clamp_fn=self.clamp_coords_to_game_window,
+                speed_variance_pct=speed_var,
+                monitor_idx=self.monitor_idx,
+            )
+
+        # Direct instant snap fallback (if human movement is explicitly disabled)
         window_focuser._attach_input_desktop()
         try:
             import ctypes
-            ctypes.windll.user32.SetCursorPos(int(x), int(y))
+            ctypes.windll.user32.SetCursorPos(int(target_x), int(target_y))
         except Exception:
             pass
 
-        # 2. Multi-monitor absolute virtual desktop mouse event
+        # Multi-monitor absolute virtual desktop mouse event
         try:
             import ctypes
             u32 = ctypes.windll.user32
@@ -145,20 +165,20 @@ class WasdMoverMixin:
             v_width = u32.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
             v_height = u32.GetSystemMetrics(79) # SM_CYVIRTUALSCREEN
             if v_width > 0 and v_height > 0:
-                norm_x = int(((x - v_left) * 65535) / v_width)
-                norm_y = int(((y - v_top) * 65535) / v_height)
+                norm_x = int(((target_x - v_left) * 65535) / v_width)
+                norm_y = int(((target_y - v_top) * 65535) / v_height)
                 u32.mouse_event(0x8000 | 0x4000 | 0x0001, norm_x, norm_y, 0, 0)
         except Exception:
             pass
 
         if pydirectinput:
             try:
-                pydirectinput.moveTo(int(x), int(y))
+                pydirectinput.moveTo(int(target_x), int(target_y), _pause=False)
             except Exception:
                 pass
 
         time.sleep(0.04)
-        return x, y
+        return target_x, target_y
 
 
     def release_all_keys(self, force: bool = False):

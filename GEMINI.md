@@ -37,6 +37,7 @@
 
 ### `src/navigation/` (Movement & Wayfinding)
 - `wasd_mover.py`: Direct WASD movement and directional vector execution.
+- `human_mouse.py`: Human-like mouse movement with Bezier curves, easing, and speed variance.
 - `orbit_controller.py`: Orbiting around waypoints and points of interest.
 - `stuck_recovery.py`: Unsticking routines, movement skill jumps, jittering.
 - `navigator_controls.py`: Movement states, mouse click pathing.

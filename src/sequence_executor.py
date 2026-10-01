@@ -57,6 +57,9 @@ class SequenceExecutor:
             pydirectinput.FAILSAFE = False
             pydirectinput.PAUSE = 0.05
 
+        self.human_mouse_enabled = True
+        self.mouse_speed_variation_pct = 20.0
+
     def press_key(self, key: str, duration: float = 1.0):
         """
         Executes a key press or holds key for specified duration.
@@ -162,17 +165,27 @@ class SequenceExecutor:
         else:
             print(f"  [ACTION] Executing single {button_str.upper()}-click at cursor...")
 
-        if pydirectinput:
-            if x is not None and y is not None:
+        if x is not None and y is not None:
+            if getattr(self, "human_mouse_enabled", True):
+                try:
+                    from src.navigation.human_mouse import human_move_to
+                    human_move_to(x, y, speed_variance_pct=getattr(self, "mouse_speed_variation_pct", 20.0))
+                except Exception:
+                    if pydirectinput:
+                        pydirectinput.moveTo(x, y)
+                    elif pyautogui:
+                        pyautogui.moveTo(x, y)
+            elif pydirectinput:
                 pydirectinput.moveTo(x, y)
                 time.sleep(0.05)
+            elif pyautogui:
+                pyautogui.moveTo(x, y)
 
+        if pydirectinput:
             pydirectinput.click()
             time.sleep(0.05)
             pydirectinput.mouseUp(button="left")
         elif pyautogui:
-            if x is not None and y is not None:
-                pyautogui.moveTo(x, y)
             pyautogui.click(button=button_str, clicks=1)
         else:
             print(f"  [SIMULATED] Single {button_str.upper()}-click at ({x}, {y})")

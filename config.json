@@ -16,6 +16,8 @@
     "orb_features": 2500
   },
   "autopilot": {
+    "human_mouse_enabled": true,
+    "mouse_speed_variation_pct": 20.0,
     "emergency_stop_key": "f2",
     "auto_click_encounters": false,
     "interaction_key": "e",

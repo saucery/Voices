@@ -6,10 +6,14 @@ Unit tests validating tracker improvements:
 - Smart forward jump recovery
 """
 
+import os
+import sys
 import math
 import numpy as np
 import cv2
 import pytest
+
+sys.path.insert(0, os.path.abspath("."))
 
 from src.minimap_extractor import MinimapExtractor
 from src.room_classifier import RoomClassifier

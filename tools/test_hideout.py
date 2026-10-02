@@ -293,10 +293,11 @@ def run_interactive_menu(monitor: int):
     print("   [7] Test Hideout Portal Detection & Click (Spawned Map Device portal -> Enter danger zone)")
     print("   [8] Live Dry Run (Scan & diagnose elements on screen without clicks/keys)")
     print("   [9] Screenshot Diagnostic Mode (Analyze a saved screenshot file)")
+    print("   [10] Interactive Simulacrum Node Finder & Feedback UI (Mark nodes, save templates, generate report)")
     print("   [Q] Quit")
     print("-" * 68)
 
-    choice = input("Enter choice [1-9, Q]: ").strip().lower()
+    choice = input("Enter choice [1-10, Q]: ").strip().lower()
     if choice == "1":
         run_full_cycle_test(monitor=monitor, dry_run=False, traverse_and_enter=True)
     elif choice == "2":
@@ -319,6 +320,12 @@ def run_interactive_menu(monitor: int):
             print(f"[ERROR] File not found: '{img_path}'")
             return
         run_file_test(image_path=img_path, monitor=monitor)
+    elif choice == "10":
+        import tkinter as tk
+        from tools.simulacrum_feedback_ui import SimulacrumFeedbackUI
+        root = tk.Tk()
+        app = SimulacrumFeedbackUI(root, monitor_idx=monitor)
+        root.mainloop()
     else:
         print("Exiting...")
 
@@ -541,6 +548,12 @@ def main():
         help="Skip stash click and test inventory screenshot + quick-deposit only.",
     )
     parser.add_argument(
+        "--sim-ui",
+        "--sim-inspector",
+        action="store_true",
+        help="Launch interactive Simulacrum Node Finder & Feedback Inspector UI.",
+    )
+    parser.add_argument(
         "--map-device",
         action="store_true",
         help="Test locating and clicking the Map Device.",
@@ -585,7 +598,13 @@ def main():
 
     args = parser.parse_args()
 
-    if args.input:
+    if args.sim_ui:
+        import tkinter as tk
+        from tools.simulacrum_feedback_ui import SimulacrumFeedbackUI
+        root = tk.Tk()
+        app = SimulacrumFeedbackUI(root, initial_image=args.input, monitor_idx=args.monitor)
+        root.mainloop()
+    elif args.input:
         run_file_test(image_path=args.input, monitor=args.monitor)
     elif args.full_cycle:
         run_full_cycle_test(monitor=args.monitor, dry_run=args.dry_run, traverse_and_enter=True)

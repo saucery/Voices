@@ -11,24 +11,6 @@
           "description": "Halt character movement"
         },
         {
-          "action": "navigate_to_sim_location",
-          "timeout": 8.0,
-          "arrival_threshold": 15.0,
-          "description": "Walk to SIM location (cyan dot)"
-        },
-        {
-          "action": "detect_and_click_sims",
-          "priority": [
-            "sim1",
-            "sim3",
-            "sim2"
-          ],
-          "click_y_offset": 100,
-          "click_x_offset": 0,
-          "approach_wait": 2.0,
-          "description": "Attempt to detect and select sim banners with approach wait"
-        },
-        {
           "action": "navigate_to_pink_location",
           "timeout": 8.0,
           "arrival_threshold": 15.0,
@@ -58,7 +40,10 @@
           "pre_cast_interval": 4.0,
           "follow_up_key": "r",
           "follow_up_delay": 2.0,
-          "click_offset": [60, 40],
+          "click_offset": [
+            60,
+            40
+          ],
           "combat_interval": 0.65,
           "combat_action": "key",
           "combat_key": "t",

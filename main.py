@@ -153,6 +153,12 @@ def main():
         help="Launch interactive Loot Item Selector & Filter Builder UI to crop/name loot items from screenshots.",
     )
     parser.add_argument(
+        "--sim-ui",
+        "--sim-inspector",
+        action="store_true",
+        help="Launch interactive Simulacrum Node Finder & Feedback Inspector UI (detection only, mark feedback, save templates, generate report).",
+    )
+    parser.add_argument(
         "--hideout",
         "--test-hideout",
         action="store_true",
@@ -188,6 +194,15 @@ def main():
         from tools.loot_item_selector_ui import LootItemSelectorUI
         root = tk.Tk()
         app = LootItemSelectorUI(root, initial_image=args.input)
+        root.mainloop()
+        return
+
+    # 0.2 Simulacrum Node Finder & Feedback Inspector UI Mode
+    if getattr(args, "sim_ui", False):
+        import tkinter as tk
+        from tools.simulacrum_feedback_ui import SimulacrumFeedbackUI
+        root = tk.Tk()
+        app = SimulacrumFeedbackUI(root, initial_image=args.input, monitor_idx=args.monitor)
         root.mainloop()
         return
 

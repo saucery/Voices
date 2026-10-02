@@ -86,6 +86,8 @@ class PlayerTrackerVisualizer:
         self.btn_early_exit_hover: bool = False
         self.btn_hideout_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
         self.btn_hideout_hover: bool = False
+        self.btn_sim_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
+        self.btn_sim_hover: bool = False
         self.hideout_test_active: bool = False
         self.hideout_routine_active: bool = False
         self.btn_green_light_rect: Tuple[int, int, int, int] = (0, 0, 0, 0)
@@ -258,6 +260,16 @@ class PlayerTrackerVisualizer:
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
+    def launch_simulacrum_inspector(self):
+        """Launches the interactive Simulacrum Node Finder & Feedback Inspector UI in a non-blocking process."""
+        import subprocess
+        self.notification_msg = "LAUNCHING SIMULACRUM FINDER & FEEDBACK UI..."
+        self.notification_expiry = time.time() + 3.0
+        try:
+            subprocess.Popen([sys.executable, "tools/simulacrum_feedback_ui.py", "--monitor", str(self.monitor_idx)])
+        except Exception as e:
+            print(f"[ERROR] Failed to launch Simulacrum UI: {e}")
+
     def nudge_active_room_box(self, dx: int, dy: int, dw: int, dh: int):
         """Nudges or resizes the selected room bounding box."""
         cur_box = self.movement_path.get_room_bounding_box(self.selected_room_for_edit, margin=35.0)
@@ -291,6 +303,10 @@ class PlayerTrackerVisualizer:
         ho_x, ho_y, ho_w, ho_h = self.btn_hideout_rect
         is_ho_inside = (ho_x <= x <= ho_x + ho_w and ho_y <= y <= ho_y + ho_h)
         self.btn_hideout_hover = is_ho_inside
+
+        sx, sy, sw, sh = self.btn_sim_rect
+        is_sim_inside = (sx <= x <= sx + sw and sy <= y <= sy + sh)
+        self.btn_sim_hover = is_sim_inside
 
         gx, gy, gw, gh = self.btn_green_light_rect
         is_green_inside = (gx <= x <= gx + gw and gy <= y <= gy + gh)
@@ -362,6 +378,10 @@ class PlayerTrackerVisualizer:
 
             if is_ho_inside:
                 self.start_hideout_full_routine()
+                return
+
+            if is_sim_inside:
+                self.launch_simulacrum_inspector()
                 return
 
             if is_refresh_inside:
@@ -968,6 +988,38 @@ class PlayerTrackerVisualizer:
             cv2.FONT_HERSHEY_SIMPLEX,
             0.35,
             ho_text_col,
+            1,
+            cv2.LINE_AA,
+        )
+
+        # Interactive Button: [U] SIMULACRUM FINDER & FEEDBACK
+        sim_btn_w, sim_btn_h = 175, 30
+        sim_btn_x = ho_btn_x - sim_btn_w - 12
+        sim_btn_y = 12
+        self.btn_sim_rect = (sim_btn_x, sim_btn_y, sim_btn_w, sim_btn_h)
+
+        if self.btn_sim_hover:
+            sim_bg = (30, 75, 105)
+            sim_border = (0, 230, 255)
+            sim_text_col = (255, 255, 255)
+            sim_dot_col = (0, 255, 255)
+        else:
+            sim_bg = (25, 45, 60)
+            sim_border = (0, 160, 200)
+            sim_text_col = (200, 235, 250)
+            sim_dot_col = (0, 200, 230)
+
+        cv2.rectangle(dashboard, (sim_btn_x, sim_btn_y), (sim_btn_x + sim_btn_w, sim_btn_y + sim_btn_h), sim_bg, -1)
+        cv2.rectangle(dashboard, (sim_btn_x, sim_btn_y), (sim_btn_x + sim_btn_w, sim_btn_y + sim_btn_h), sim_border, 1)
+        cv2.circle(dashboard, (sim_btn_x + 14, sim_btn_y + 15), 5, sim_dot_col, -1, cv2.LINE_AA)
+        cv2.circle(dashboard, (sim_btn_x + 14, sim_btn_y + 15), 2, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.putText(
+            dashboard,
+            "[U] SIMULACRUM FINDER",
+            (sim_btn_x + 24, sim_btn_y + 20),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            sim_text_col,
             1,
             cv2.LINE_AA,
         )
@@ -1753,6 +1805,7 @@ class PlayerTrackerVisualizer:
         print(f" Target Display:  Monitor {self.monitor_idx} (Path of Exile 2)")
         print(" Controls:")
         print("   [H]     Start Bot from Hideout (Stash -> Map Device -> SIM -> Portal -> Route)")
+        print("   [U]     Launch Simulacrum Node Finder & Feedback Inspector UI")
         print("   [A / G] Toggle Autopilot Navigation (WASD along route)")
         print("   [B / E] Toggle Room Bounding Box Editor (interactive drag/resize)")
         print("   [1 .. 7] Select Room 1..7 for Bounding Box editing")
@@ -1858,6 +1911,8 @@ class PlayerTrackerVisualizer:
                         self.notification_expiry = time.time() + 3.0
                 elif key in [ord("h"), ord("H")]:
                     self.start_hideout_full_routine()
+                elif key in [ord("u"), ord("U")]:
+                    self.launch_simulacrum_inspector()
                 elif key in [ord("a"), ord("A")]:
                     if self.navigator.is_simulating_key or "a" in self.navigator.held_keys or "A" in self.navigator.held_keys:
                         pass

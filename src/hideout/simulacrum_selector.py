@@ -57,7 +57,7 @@ class HideoutSimulacrumMixin:
             self._load_stash_and_inventory_templates()
 
         templates_to_try = []
-        for i in range(1, 8):
+        for i in range(1, 25):
             tpl = getattr(self, f"simulacrum_node_v{i}_tpl", None)
             if tpl is not None:
                 templates_to_try.append((f"node_v{i}", tpl, 0, 0))
@@ -92,9 +92,9 @@ class HideoutSimulacrumMixin:
                 mon_top = monitors[self.monitor_idx].get("top", 0)
 
         sh, sw = screen.shape[:2]
-        scale_est = sh / 1080.0
+        base_scale = (sh / 1080.0) if sh >= 650 else 1.0
         scales = sorted(set([
-            round(scale_est * f, 3) for f in [0.92, 0.96, 1.0, 1.04, 1.08]
+            round(base_scale * f, 3) for f in [0.88, 0.94, 1.0, 1.06, 1.12]
         ]))
 
         # Check if inventory panel is visible on right to constrain map search area
@@ -103,7 +103,10 @@ class HideoutSimulacrumMixin:
             inv_open = self.is_inventory_open(screen=screen)
         except Exception:
             inv_open = False
-        max_map_x = int(0.655 * sw) if inv_open else int(0.68 * sw)
+        max_map_x = int(0.655 * sw) if inv_open else int(0.97 * sw)
+        min_map_x = int(0.04 * sw)
+        min_map_y = int(0.04 * sh)
+        max_map_y = int(0.92 * sh)
 
         raw_candidates = []
 
@@ -124,8 +127,8 @@ class HideoutSimulacrumMixin:
                     cx = int(pt_x + scaled_w // 2 + x_off * s)
                     cy = int(pt_y + (scaled_h // 2 if tname != "node_full" else 17 * s) + y_off * s)
 
-                    # Exclude HUD, inventory area, and borders
-                    if cx > max_map_x or cx < int(0.12 * sw) or cy < int(0.08 * sh) or cy > int(0.85 * sh):
+                    # Exclude HUD, inventory area (if open), and screen edges
+                    if cx > max_map_x or cx < min_map_x or cy < min_map_y or cy > max_map_y:
                         continue
 
                     raw_candidates.append({
@@ -207,14 +210,12 @@ class HideoutSimulacrumMixin:
             if score == 3:
                 acc_str = f"ACCESSIBLE (Connected to {len(r['connected_greens'])} green node(s) & glowing blue portal)"
             elif score == 2:
-                acc_str = f"ACCESSIBLE (Connected to {len(r['connected_greens'])} green node(s))"
-            elif score == 1:
                 acc_str = "ACCESSIBLE (Glowing blue portal core)"
+            elif score == 1:
+                acc_str = "ACCESSIBLE (Candidate portal core)"
             else:
-                acc_str = "INACCESSIBLE (Not connected to any green node)"
+                acc_str = "INACCESSIBLE (No active blue portal)"
             _log(f"    - Node #{idx+1}: medal={r['screen_medal_pos']}, circle={r['screen_circle_pos']}, conf={r['confidence']:.3f}, scale={r['scale']:.2f} [{acc_str}]")
-
-        return results
 
         return results
 

@@ -237,7 +237,7 @@ class TemplateLoaderMixin:
                         self.simulacrum_circle_tpl = img
                         break
 
-        for idx in range(1, 8):
+        for idx in range(1, 25):
             attr = f"simulacrum_node_v{idx}_tpl"
             fname = getattr(self, f"simulacrum_node_v{idx}_template_file", f"templates/ui/simulacrum_node_v{idx}.png")
             cands = [fname, f"templates/ui/simulacrum_node_v{idx}.png", f"ui/simulacrum_node_v{idx}.png"]
@@ -312,4 +312,21 @@ class TemplateLoaderMixin:
                     if img is not None:
                         self.map_node_inaccessible_tpl = img
                         break
+
+    def reload_simulacrum_templates(self) -> int:
+        """Forces a reload of all simulacrum node templates from disk. Returns count of templates loaded."""
+        loaded = 0
+        for idx in range(1, 25):
+            attr = f"simulacrum_node_v{idx}_tpl"
+            setattr(self, attr, None)
+            fname = getattr(self, f"simulacrum_node_v{idx}_template_file", f"templates/ui/simulacrum_node_v{idx}.png")
+            cands = [fname, f"templates/ui/simulacrum_node_v{idx}.png", f"ui/simulacrum_node_v{idx}.png"]
+            for cand in cands:
+                if cand and os.path.exists(cand):
+                    img = cv2.imread(cand)
+                    if img is not None:
+                        setattr(self, attr, img[:, :, :3] if img.shape[-1] == 4 else img)
+                        loaded += 1
+                        break
+        return loaded
 

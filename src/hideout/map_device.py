@@ -266,22 +266,30 @@ class HideoutMapDeviceMixin:
             return []
 
         sh, sw = screen.shape[:2]
-        scale = (sh / 1080.0) if sh >= 720 else (sh / 563.0 * 0.52)
+        scale = (sh / 1080.0) if sh >= 720 else 1.0
         b_ch, g_ch, r_ch = cv2.split(screen)
         hsv_img = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV)
 
         # 1. Emerald green color dominance with neon brightness & morphological closing
-        neon = (g_ch >= 160) & (g_ch.astype(np.int32) >= r_ch.astype(np.int32) * 1.25) & (g_ch.astype(np.int32) >= b_ch.astype(np.int32) * 1.05)
-        neon = neon & (hsv_img[:, :, 0] >= 35) & (hsv_img[:, :, 0] <= 85) & (hsv_img[:, :, 1] >= 65) & (hsv_img[:, :, 2] >= 85)
+        neon = (g_ch >= 150) & (g_ch.astype(np.int32) >= r_ch.astype(np.int32) * 1.20) & (g_ch.astype(np.int32) >= b_ch.astype(np.int32) * 1.02)
+        neon = neon & (hsv_img[:, :, 0] >= 35) & (hsv_img[:, :, 0] <= 85) & (hsv_img[:, :, 1] >= 55) & (hsv_img[:, :, 2] >= 80)
         neon_u8 = neon.astype(np.uint8) * 255
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         closed = cv2.morphologyEx(neon_u8, cv2.MORPH_CLOSE, kernel)
 
         cnts, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         min_a = max(10, int(15 * (scale ** 2)))
-        max_a = max(80, int(250 * (scale ** 2)))
+        max_a = max(120, int(350 * (scale ** 2)))
 
-        greens = []
+        # Check inventory visibility to constrain search bounds appropriately
+        inv_open = False
+        try:
+            inv_open = self.is_inventory_open(screen=screen)
+        except Exception:
+            pass
+        max_g_x = int(0.66 * sw) if inv_open else int(0.97 * sw)
+
+        raw_greens = []
         for c in cnts:
             area = cv2.contourArea(c)
             if min_a <= area <= max_a:
@@ -293,22 +301,20 @@ class HideoutMapDeviceMixin:
                         if M["m00"] > 0:
                             cx = int(M["m10"] / M["m00"])
                             cy = int(M["m01"] / M["m00"])
-                            # Exclude map legend in top-left
                             if cx < int(180 * scale) and cy < int(240 * scale):
                                 continue
-                            # Exclude inventory panel on right (x > 0.66 * sw)
-                            if cx > int(0.66 * sw):
+                            if cx > max_g_x:
                                 continue
-                            # Exclude bottom HUD / top menu bar
-                            if cy > int(0.85 * sh) or cy < int(40 * scale):
+                            if cy > int(0.92 * sh) or cy < int(35 * scale):
                                 continue
-                            # Exclude pure foliage by checking surrounding annular neighborhood
-                            r_ring = max(6, int(14 * scale))
-                            ring_roi = screen[max(0, cy - r_ring) : cy + r_ring + 1, max(0, cx - r_ring) : cx + r_ring + 1]
-                            if ring_roi.size > 0:
-                                _, rg, rr = cv2.split(ring_roi)
-                                if np.mean(rg > rr * 1.25) < 0.65:
-                                    greens.append({"center": (cx, cy), "area": area, "circularity": circ})
+                            raw_greens.append({"center": (cx, cy), "area": area, "circularity": circ})
+
+        # Merge nearby duplicate green detections (within 16px)
+        greens = []
+        for g in raw_greens:
+            cx, cy = g["center"]
+            if not any(np.hypot(cx - mg["center"][0], cy - mg["center"][1]) < 16 for mg in greens):
+                greens.append(g)
         return greens
 
 
@@ -331,25 +337,25 @@ class HideoutMapDeviceMixin:
             0: Inaccessible (dark circle, not connected to any green node)
         """
         sh, sw = screen.shape[:2]
-        scale = (sh / 1080.0) if sh >= 720 else (sh / 563.0 * 0.52)
+        scale = (sh / 1080.0) if sh >= 720 else 1.0
         cx, cy = circle_pos
 
-        # Check circle appearance (white core + blue glow)
-        # Check vertical strip between medal_pos and circle to reliably detect glowing blue portal core
-        if medal_pos is not None:
-            mx, my = medal_pos
-            patch = screen[max(0, my + int(12 * scale)) : min(sh, my + int(32 * scale)), max(0, mx - int(8 * scale)) : min(sw, mx + int(8 * scale))]
-        else:
-            r_patch = max(3, int(8 * scale))
-            patch = screen[max(0, cy - r_patch) : cy + r_patch + 1, max(0, cx - r_patch) : cx + r_patch + 1]
+        # Check circle appearance (white core + blue/cyan portal ring)
+        r_w = max(12, int(15 * scale))
+        r_h = max(10, int(12 * scale))
+        patch = screen[max(0, cy - r_h) : min(sh, cy + r_h + 1), max(0, cx - r_w) : min(sw, cx + r_w + 1)]
         has_blue_glow = False
         has_white_core = False
         if patch.size > 0:
-            b_p, g_p, r_p = cv2.split(patch)
-            blue_excess = int(np.mean(b_p)) - int(np.mean(r_p))
+            hsv_patch = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+            blue_mask = (hsv_patch[:, :, 0] >= 95) & (hsv_patch[:, :, 0] <= 135) & (hsv_patch[:, :, 1] >= 55) & (hsv_patch[:, :, 2] >= 75)
+            blue_portal_px = int(np.count_nonzero(blue_mask))
+            white_mask = (patch[:, :, 0] >= 195) & (patch[:, :, 1] >= 195) & (patch[:, :, 2] >= 195)
+            white_portal_px = int(np.count_nonzero(white_mask))
             max_lum = int(np.max(patch))
-            has_blue_glow = (blue_excess >= 12)
-            has_white_core = (max_lum >= 220)
+
+            has_blue_glow = (blue_portal_px >= max(8, int(10 * scale * scale)))
+            has_white_core = (white_portal_px >= 1) or (max_lum >= 235)
 
         # Check dashed line connectivity
         hsv_local = cv2.cvtColor(screen, cv2.COLOR_BGR2HSV)
@@ -359,7 +365,7 @@ class HideoutMapDeviceMixin:
         )
         line_mask_u8 = line_mask.astype(np.uint8) * 255
 
-        scaled_max_dist = min(220, int(max_dist * (scale / 0.52 if scale < 0.7 else scale)))
+        scaled_max_dist = min(350, int(max_dist * (scale / 0.52 if scale < 0.7 else scale) * 1.6))
         margin = max(4, int(8 * scale))
         connected_greens = []
 
@@ -383,22 +389,24 @@ class HideoutMapDeviceMixin:
                     if np.any(line_mask_u8[max(0, y - box) : y + box + 1, max(0, x - box) : x + box + 1] > 0):
                         hits += 1
             hit_ratio = hits / float(len(xs))
-            if hit_ratio >= 0.22:
+            if hit_ratio >= 0.18:
                 connected_greens.append({"green_pos": (gx, gy), "dist": float(dist), "hit_ratio": float(hit_ratio)})
 
         has_green_link = bool(len(connected_greens) > 0)
         has_portal = bool(has_blue_glow and has_white_core)
 
-        if has_green_link and has_portal:
+        # In PoE2, accessible nodes have an active blue portal at their base
+        if has_portal and has_green_link:
             acc_score = 3
-        elif has_green_link:
-            acc_score = 2
         elif has_portal:
-            acc_score = 1
+            acc_score = 2
+        elif has_green_link:
+            # Linked to green but no open blue portal
+            acc_score = 0
         else:
             acc_score = 0
 
-        is_accessible = bool(acc_score > 0)
+        is_accessible = bool(has_portal)
         return {
             "is_accessible": is_accessible,
             "acc_score": acc_score,
